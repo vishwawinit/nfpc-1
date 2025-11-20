@@ -2,6 +2,41 @@ import { useState, useEffect, useCallback, useMemo } from 'react'
 import { dataService } from '@/services/dataService'
 import type { DashboardKPI, SalesTrendData, Customer, Product, Transaction, FilterOptions } from '@/types'
 
+// Helper function for safe fetch - no timeout to allow slow database queries
+const safeFetch = async (url: string): Promise<Response> => {
+  // Ensure we're in the browser
+  if (typeof window === 'undefined') {
+    throw new Error('Fetch can only be called in the browser')
+  }
+
+  try {
+    const response = await globalThis.fetch(url, {
+      method: 'GET',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      cache: 'no-store' as RequestCache,
+    })
+    
+    // If response is ok, return it
+    if (response.ok) {
+      return response
+    }
+    
+    // If not ok, throw with status
+    const errorText = await response.text().catch(() => 'Unknown error')
+    throw new Error(`HTTP ${response.status}: ${errorText}`)
+  } catch (error) {
+    // Check if it's a network error
+    if (error instanceof TypeError && error.message === 'Failed to fetch') {
+      throw new Error('Network error: Unable to connect to the server. Please check if the Next.js dev server is running on port 3000.')
+    }
+    
+    // Re-throw other errors
+    throw error
+  }
+}
+
 interface UseDataServiceOptions {
   enabled?: boolean
   refreshInterval?: number // in milliseconds
@@ -45,6 +80,9 @@ export function useDashboardKPI(
 
   const fetchData = useCallback(async () => {
     if (!enabled) return
+    
+    // Ensure we're in the browser
+    if (typeof window === 'undefined') return
 
     try {
       setLoading(true)
@@ -66,7 +104,22 @@ export function useDashboardKPI(
       console.log('KPI Hook: Fetching with params:', params.toString())
 
       // Use real API endpoint with date range and filters
-      const response = await fetch(`/api/dashboard/kpi?${params}`)
+      // Use longer timeout for KPI as it may involve complex aggregations
+      const url = `/api/dashboard/kpi?${params}`
+      const response = await safeFetch(url)
+      
+      if (!response.ok) {
+        const errorText = await response.text()
+        let errorMessage = `HTTP ${response.status}: ${response.statusText}`
+        try {
+          const errorJson = JSON.parse(errorText)
+          errorMessage = errorJson.error || errorJson.message || errorMessage
+        } catch {
+          errorMessage = errorText || errorMessage
+        }
+        throw new Error(errorMessage)
+      }
+
       const result = await response.json()
 
       if (result.success) {
@@ -81,9 +134,24 @@ export function useDashboardKPI(
       }
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Unknown error'
-      setError(errorMessage)
-      onError?.(errorMessage)
-      console.error('Dashboard KPI error:', err)
+      
+      // Handle timeout errors gracefully
+      if (errorMessage.includes('timeout') || errorMessage.includes('Request timeout')) {
+        const timeoutError = 'Query is taking longer than expected. This may be due to a large dataset or slow database. Try selecting a smaller date range or refreshing the page.'
+        setError(timeoutError)
+        onError?.(timeoutError)
+        console.warn('Dashboard KPI timeout - query may be slow:', errorMessage)
+        // Don't keep loading state - show error immediately
+      } else if (err instanceof TypeError && err.message === 'Failed to fetch') {
+        const networkError = 'Network error: Unable to connect to the server. Please check if the server is running.'
+        setError(networkError)
+        onError?.(networkError)
+        console.error('Dashboard KPI network error:', networkError)
+      } else {
+        setError(errorMessage)
+        onError?.(errorMessage)
+        console.error('Dashboard KPI error:', err)
+      }
     } finally {
       setLoading(false)
     }
@@ -120,6 +188,9 @@ export function useSalesTrend(param: number | string = 30, options: UseDataServi
 
   const fetchData = useCallback(async () => {
     if (!enabled) return
+    
+    // Ensure we're in the browser
+    if (typeof window === 'undefined') return
 
     try {
       setLoading(true)
@@ -127,7 +198,16 @@ export function useSalesTrend(param: number | string = 30, options: UseDataServi
 
       // Build query params
       const params = new URLSearchParams()
-      if (typeof param === 'string') {
+      
+      // Check if custom dates are provided in additionalParams
+      const additionalURLParams = paramsString ? new URLSearchParams(paramsString) : null
+      const hasCustomDates = additionalURLParams && additionalURLParams.has('startDate') && additionalURLParams.has('endDate')
+      
+      // If custom dates are provided, use 'custom' as range to ensure API prioritizes them
+      // Otherwise, use the provided range parameter
+      if (hasCustomDates) {
+        params.append('range', 'custom')
+      } else if (typeof param === 'string') {
         // Date range parameter
         params.append('range', param)
       } else {
@@ -135,15 +215,35 @@ export function useSalesTrend(param: number | string = 30, options: UseDataServi
         params.append('days', param.toString())
       }
 
-      // Add additional params if provided
+      // Add additional params if provided (this includes startDate and endDate)
       if (paramsString) {
-        const additionalURLParams = new URLSearchParams(paramsString)
-        additionalURLParams.forEach((value, key) => {
+        additionalURLParams!.forEach((value, key) => {
           params.append(key, value)
         })
       }
+      
+      console.log('useSalesTrend - Query params:', {
+        range: params.get('range'),
+        startDate: params.get('startDate'),
+        endDate: params.get('endDate'),
+        hasCustomDates,
+        allParams: params.toString()
+      })
 
-      const response = await fetch(`/api/dashboard/sales-trend?${params}`)
+      const response = await safeFetch(`/api/dashboard/sales-trend?${params}`)
+      
+      if (!response.ok) {
+        const errorText = await response.text()
+        let errorMessage = `HTTP ${response.status}: ${response.statusText}`
+        try {
+          const errorJson = JSON.parse(errorText)
+          errorMessage = errorJson.error || errorJson.message || errorMessage
+        } catch {
+          errorMessage = errorText || errorMessage
+        }
+        throw new Error(errorMessage)
+      }
+
       const result = await response.json()
 
       if (result.success) {
@@ -153,9 +253,22 @@ export function useSalesTrend(param: number | string = 30, options: UseDataServi
       }
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Unknown error'
-      setError(errorMessage)
-      onError?.(errorMessage)
-      console.error('Sales trend error:', err)
+      // Handle timeout errors gracefully
+      if (errorMessage.includes('timeout') || errorMessage.includes('Request timeout')) {
+        const timeoutError = 'Query is taking longer than expected. Try selecting a smaller date range.'
+        setError(timeoutError)
+        onError?.(timeoutError)
+        console.warn('Sales trend timeout:', errorMessage)
+      } else if (err instanceof TypeError && err.message === 'Failed to fetch') {
+        const networkError = 'Network error: Unable to connect to the server. Please check if the server is running.'
+        setError(networkError)
+        onError?.(networkError)
+        console.error('Sales trend network error:', networkError)
+      } else {
+        setError(errorMessage)
+        onError?.(errorMessage)
+        console.error('Sales trend error:', err)
+      }
     } finally {
       setLoading(false)
     }
@@ -190,6 +303,9 @@ export function useTopCustomers(limit: number = 20, dateRange: string = 'thisMon
 
   const fetchData = useCallback(async () => {
     if (!enabled) return
+    
+    // Ensure we're in the browser
+    if (typeof window === 'undefined') return
 
     try {
       setLoading(true)
@@ -208,7 +324,20 @@ export function useTopCustomers(limit: number = 20, dateRange: string = 'thisMon
         })
       }
 
-      const response = await fetch(`/api/customers/top?${params}`)
+      const response = await safeFetch(`/api/customers/top?${params}`)
+      
+      if (!response.ok) {
+        const errorText = await response.text()
+        let errorMessage = `HTTP ${response.status}: ${response.statusText}`
+        try {
+          const errorJson = JSON.parse(errorText)
+          errorMessage = errorJson.error || errorJson.message || errorMessage
+        } catch {
+          errorMessage = errorText || errorMessage
+        }
+        throw new Error(errorMessage)
+      }
+
       const result = await response.json()
 
       if (result.success) {
@@ -218,9 +347,22 @@ export function useTopCustomers(limit: number = 20, dateRange: string = 'thisMon
       }
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Unknown error'
-      setError(errorMessage)
-      onError?.(errorMessage)
-      console.error('Top customers error:', err)
+      // Handle timeout errors gracefully
+      if (errorMessage.includes('timeout') || errorMessage.includes('Request timeout')) {
+        const timeoutError = 'Query is taking longer than expected. Try selecting a smaller date range.'
+        setError(timeoutError)
+        onError?.(timeoutError)
+        console.warn('Top customers timeout:', errorMessage)
+      } else if (err instanceof TypeError && err.message === 'Failed to fetch') {
+        const networkError = 'Network error: Unable to connect to the server. Please check if the server is running.'
+        setError(networkError)
+        onError?.(networkError)
+        console.error('Top customers network error:', networkError)
+      } else {
+        setError(errorMessage)
+        onError?.(errorMessage)
+        console.error('Top customers error:', err)
+      }
     } finally {
       setLoading(false)
     }
@@ -255,6 +397,9 @@ export function useTopProducts(limit: number = 20, dateRange: string = 'thisMont
 
   const fetchData = useCallback(async () => {
     if (!enabled) return
+    
+    // Ensure we're in the browser
+    if (typeof window === 'undefined') return
 
     try {
       setLoading(true)
@@ -273,7 +418,20 @@ export function useTopProducts(limit: number = 20, dateRange: string = 'thisMont
         })
       }
 
-      const response = await fetch(`/api/products/top?${params}`)
+      const response = await safeFetch(`/api/products/top?${params}`)
+      
+      if (!response.ok) {
+        const errorText = await response.text()
+        let errorMessage = `HTTP ${response.status}: ${response.statusText}`
+        try {
+          const errorJson = JSON.parse(errorText)
+          errorMessage = errorJson.error || errorJson.message || errorMessage
+        } catch {
+          errorMessage = errorText || errorMessage
+        }
+        throw new Error(errorMessage)
+      }
+
       const result = await response.json()
 
       if (result.success) {
@@ -283,9 +441,22 @@ export function useTopProducts(limit: number = 20, dateRange: string = 'thisMont
       }
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Unknown error'
-      setError(errorMessage)
-      onError?.(errorMessage)
-      console.error('Top products error:', err)
+      // Handle timeout errors gracefully
+      if (errorMessage.includes('timeout') || errorMessage.includes('Request timeout')) {
+        const timeoutError = 'Query is taking longer than expected. Try selecting a smaller date range.'
+        setError(timeoutError)
+        onError?.(timeoutError)
+        console.warn('Top products timeout:', errorMessage)
+      } else if (err instanceof TypeError && err.message === 'Failed to fetch') {
+        const networkError = 'Network error: Unable to connect to the server. Please check if the server is running.'
+        setError(networkError)
+        onError?.(networkError)
+        console.error('Top products network error:', networkError)
+      } else {
+        setError(errorMessage)
+        onError?.(errorMessage)
+        console.error('Top products error:', err)
+      }
     } finally {
       setLoading(false)
     }
@@ -320,6 +491,9 @@ export function useSalesByChannel(options: UseDataServiceOptions & { additionalP
 
   const fetchData = useCallback(async () => {
     if (!enabled) return
+    
+    // Ensure we're in the browser
+    if (typeof window === 'undefined') return
 
     try {
       setLoading(true)
@@ -336,7 +510,20 @@ export function useSalesByChannel(options: UseDataServiceOptions & { additionalP
         })
       }
 
-      const response = await fetch(`/api/dashboard/sales-by-channel?${params}`)
+      const response = await safeFetch(`/api/dashboard/sales-by-channel?${params}`)
+      
+      if (!response.ok) {
+        const errorText = await response.text()
+        let errorMessage = `HTTP ${response.status}: ${response.statusText}`
+        try {
+          const errorJson = JSON.parse(errorText)
+          errorMessage = errorJson.error || errorJson.message || errorMessage
+        } catch {
+          errorMessage = errorText || errorMessage
+        }
+        throw new Error(errorMessage)
+      }
+
       const result = await response.json()
 
       if (result.success) {
@@ -346,9 +533,22 @@ export function useSalesByChannel(options: UseDataServiceOptions & { additionalP
       }
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Unknown error'
-      setError(errorMessage)
-      onError?.(errorMessage)
-      console.error('Sales by channel error:', err)
+      // Handle timeout errors gracefully
+      if (errorMessage.includes('timeout') || errorMessage.includes('Request timeout')) {
+        const timeoutError = 'Query is taking longer than expected. Try selecting a smaller date range.'
+        setError(timeoutError)
+        onError?.(timeoutError)
+        console.warn('Sales by channel timeout:', errorMessage)
+      } else if (err instanceof TypeError && err.message === 'Failed to fetch') {
+        const networkError = 'Network error: Unable to connect to the server. Please check if the server is running.'
+        setError(networkError)
+        onError?.(networkError)
+        console.error('Sales by channel network error:', networkError)
+      } else {
+        setError(errorMessage)
+        onError?.(errorMessage)
+        console.error('Sales by channel error:', err)
+      }
     } finally {
       setLoading(false)
     }
@@ -372,7 +572,7 @@ export function useSalesByChannel(options: UseDataServiceOptions & { additionalP
 }
 
 // Transactions hook using real API - now supports limit parameter for dashboard display
-export function useTransactions(filters: FilterOptions = {}, limit: number = 20, options: UseDataServiceOptions & { additionalParams?: URLSearchParams } = {}) {
+export function useTransactions(filters: Partial<FilterOptions> = {}, limit: number = 20, options: UseDataServiceOptions & { additionalParams?: URLSearchParams } = {}) {
   const { enabled = true, refreshInterval, onError, additionalParams } = options
   const [data, setData] = useState<Transaction[] | null>(null)
   const [loading, setLoading] = useState<boolean>(true)
@@ -393,6 +593,9 @@ export function useTransactions(filters: FilterOptions = {}, limit: number = 20,
 
   const fetchData = useCallback(async () => {
     if (!enabled) return
+    
+    // Ensure we're in the browser
+    if (typeof window === 'undefined') return
 
     try {
       setLoading(true)
@@ -422,7 +625,20 @@ export function useTransactions(filters: FilterOptions = {}, limit: number = 20,
         })
       }
 
-      const response = await fetch(`/api/transactions/recent?${params.toString()}`)
+      const response = await safeFetch(`/api/transactions/recent?${params.toString()}`)
+      
+      if (!response.ok) {
+        const errorText = await response.text()
+        let errorMessage = `HTTP ${response.status}: ${response.statusText}`
+        try {
+          const errorJson = JSON.parse(errorText)
+          errorMessage = errorJson.error || errorJson.message || errorMessage
+        } catch {
+          errorMessage = errorText || errorMessage
+        }
+        throw new Error(errorMessage)
+      }
+
       const result = await response.json()
 
       if (result.success) {
@@ -466,12 +682,28 @@ export function useRecentTransactions(limit: number = 5, options: UseDataService
 
   const fetchData = useCallback(async () => {
     if (!enabled) return
+    
+    // Ensure we're in the browser
+    if (typeof window === 'undefined') return
 
     try {
       setLoading(true)
       setError(null)
 
-      const response = await fetch(`/api/transactions/recent?limit=${limit}`)
+      const response = await safeFetch(`/api/transactions/recent?limit=${limit}`)
+      
+      if (!response.ok) {
+        const errorText = await response.text()
+        let errorMessage = `HTTP ${response.status}: ${response.statusText}`
+        try {
+          const errorJson = JSON.parse(errorText)
+          errorMessage = errorJson.error || errorJson.message || errorMessage
+        } catch {
+          errorMessage = errorText || errorMessage
+        }
+        throw new Error(errorMessage)
+      }
+
       const result = await response.json()
 
       if (result.success) {
@@ -515,6 +747,9 @@ export function useTargetsAchievement(dateRange: string = 'thisYear', userId?: s
 
   const fetchData = useCallback(async () => {
     if (!enabled) return
+    
+    // Ensure we're in the browser
+    if (typeof window === 'undefined') return
 
     try {
       setLoading(true)
@@ -524,7 +759,20 @@ export function useTargetsAchievement(dateRange: string = 'thisYear', userId?: s
       const params = new URLSearchParams({ range: dateRange })
       if (userId) params.append('userId', userId)
 
-      const response = await fetch(`/api/targets/achievement?${params.toString()}`)
+      const response = await safeFetch(`/api/targets/achievement?${params.toString()}`)
+      
+      if (!response.ok) {
+        const errorText = await response.text()
+        let errorMessage = `HTTP ${response.status}: ${response.statusText}`
+        try {
+          const errorJson = JSON.parse(errorText)
+          errorMessage = errorJson.error || errorJson.message || errorMessage
+        } catch {
+          errorMessage = errorText || errorMessage
+        }
+        throw new Error(errorMessage)
+      }
+
       const result = await response.json()
 
       if (result.success) {
@@ -569,13 +817,29 @@ export function useCategoryPerformance(limit: number = 10, dateRange: string = '
 
   const fetchData = useCallback(async () => {
     if (!enabled) return
+    
+    // Ensure we're in the browser
+    if (typeof window === 'undefined') return
 
     try {
       setLoading(true)
       setError(null)
 
       // Use new category performance API
-      const response = await fetch(`/api/categories/performance?limit=${limit}&range=${dateRange}`)
+      const response = await safeFetch(`/api/categories/performance?limit=${limit}&range=${dateRange}`)
+      
+      if (!response.ok) {
+        const errorText = await response.text()
+        let errorMessage = `HTTP ${response.status}: ${response.statusText}`
+        try {
+          const errorJson = JSON.parse(errorText)
+          errorMessage = errorJson.error || errorJson.message || errorMessage
+        } catch {
+          errorMessage = errorText || errorMessage
+        }
+        throw new Error(errorMessage)
+      }
+
       const result = await response.json()
 
       if (result.success) {
@@ -650,6 +914,9 @@ export function useCustomerAnalytics(
 
   const fetchData = useCallback(async () => {
     if (!enabled) return
+    
+    // Ensure we're in the browser
+    if (typeof window === 'undefined') return
 
     try {
       setLoading(true)
@@ -683,7 +950,20 @@ export function useCustomerAnalytics(
         params.append('limit', stablePagination.limit.toString())
       }
 
-      const response = await fetch(`/api/customers/analytics?${params.toString()}`)
+      const response = await safeFetch(`/api/customers/analytics?${params.toString()}`)
+      
+      if (!response.ok) {
+        const errorText = await response.text()
+        let errorMessage = `HTTP ${response.status}: ${response.statusText}`
+        try {
+          const errorJson = JSON.parse(errorText)
+          errorMessage = errorJson.error || errorJson.message || errorMessage
+        } catch {
+          errorMessage = errorText || errorMessage
+        }
+        throw new Error(errorMessage)
+      }
+
       const result = await response.json()
 
       if (result.success) {

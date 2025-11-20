@@ -179,7 +179,17 @@ export const DynamicWorkingDashboard: React.FC = () => {
   // Memoize query params to prevent infinite re-renders
   const queryParams = useMemo(() => {
     const params = getQueryParams()
-    console.log('Dashboard: Query params updated:', params.toString())
+    console.log('Dashboard: Query params updated:', {
+      paramsString: params.toString(),
+      startDate: params.get('startDate'),
+      endDate: params.get('endDate'),
+      filters: {
+        startDate: filters.startDate,
+        endDate: filters.endDate,
+        regionCode: filters.regionCode,
+        cityCode: filters.cityCode
+      }
+    })
     return params
   }, [
     filters.startDate,
@@ -231,38 +241,73 @@ export const DynamicWorkingDashboard: React.FC = () => {
   }, [salesByChannelData])
 
   // Transform sales trend data for chart with appropriate date formatting
-  const chartData = salesTrendData?.map(item => {
-    const date = new Date(item.date)
-    let formattedDate = ''
-    let fullDate = '' // For tooltip
-
-    // Format date based on selected range for better readability
-    switch(selectedDateRange) {
-      case 'thisYear':
-        // Monthly aggregates - show month names
-        formattedDate = date.toLocaleDateString('en-US', { month: 'short', year: '2-digit' })
-        fullDate = date.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
-        break
-      case 'thisQuarter':
-      case 'lastQuarter':
-        // Weekly aggregates - show week starting date
-        formattedDate = date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
-        fullDate = 'Week of ' + date.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
-        break
-      default:
-        // Daily aggregates - show month and day
-        formattedDate = date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
-        fullDate = date.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
+  const chartData = useMemo(() => {
+    if (!salesTrendData || salesTrendData.length === 0) {
+      return []
     }
 
-    return {
-      date: formattedDate,
-      fullDate: fullDate,
-      sales: item.sales,
-      orders: item.orders,
-      customers: item.customers
-    }
-  }) || []
+    // Process and sort data by date
+    const processedData = salesTrendData
+      .map(item => {
+        if (!item.date) return null
+
+        let date: Date
+        try {
+          // Handle different date formats from API
+          if (typeof item.date === 'string') {
+            date = new Date(item.date)
+          } else if (item.date instanceof Date) {
+            date = item.date
+          } else {
+            return null
+          }
+
+          // Validate date
+          if (isNaN(date.getTime())) {
+            console.warn('Invalid date in sales trend data:', item.date)
+            return null
+          }
+
+          let formattedDate = ''
+          let fullDate = '' // For tooltip
+
+          // Format date based on selected range for better readability
+          switch(selectedDateRange) {
+            case 'thisYear':
+              // Monthly aggregates - show month names
+              formattedDate = date.toLocaleDateString('en-US', { month: 'short', year: '2-digit' })
+              fullDate = date.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
+              break
+            case 'thisQuarter':
+            case 'lastQuarter':
+              // Weekly aggregates - show week starting date
+              formattedDate = date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+              fullDate = 'Week of ' + date.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
+              break
+            default:
+              // Daily aggregates - show month and day
+              formattedDate = date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+              fullDate = date.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
+          }
+
+          return {
+            date: formattedDate,
+            fullDate: fullDate,
+            dateObj: date, // Keep original date object for sorting
+            sales: parseFloat(item.sales?.toString() || '0') || 0,
+            orders: parseInt(item.orders?.toString() || '0') || 0,
+            customers: parseInt(item.customers?.toString() || '0') || 0
+          }
+        } catch (error) {
+          console.warn('Error processing sales trend data point:', item, error)
+          return null
+        }
+      })
+      .filter((item): item is NonNullable<typeof item> => item !== null)
+      .sort((a, b) => a.dateObj.getTime() - b.dateObj.getTime()) // Sort chronologically
+
+    return processedData
+  }, [salesTrendData, selectedDateRange])
 
   // View customer orders in dialog
   const viewCustomerOrders = async (customer: any) => {

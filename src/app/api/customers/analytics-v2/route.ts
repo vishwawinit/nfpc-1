@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { query, db } from '@/lib/database'
+import { resolveTransactionsTable, getTransactionColumnExpressions } from '@/services/dailySalesService'
 
 // Force dynamic rendering for routes that use searchParams
 export const dynamic = 'force-dynamic'
@@ -78,35 +79,56 @@ export async function GET(request: NextRequest) {
     const { startStr: startDate, endStr: endDate } = getDateRangeFromString(dateRange)
     
     await db.initialize()
+    
+    // Get table info and column expressions
+    const tableInfo = await resolveTransactionsTable()
+    const transactionsTable = tableInfo.name
+    const col = getTransactionColumnExpressions(tableInfo.columns)
+    
+    // Check if route_code column exists
+    const hasRouteCode = tableInfo.columns.has('route_code') || tableInfo.columns.has('user_route_code')
+    const routeCodeExpr = hasRouteCode 
+      ? (tableInfo.columns.has('route_code') ? 't.route_code' : 't.user_route_code')
+      : 'NULL'
 
     // Build WHERE clause
     let whereConditions: string[] = [
-      `trx_type = 5`,  // Sales Orders (the actual sales data)
-      `trx_date_only >= '${startDate}'`,
-      `trx_date_only <= '${endDate}'`
+      `${col.trxDateOnly} >= '${startDate}'`,
+      `${col.trxDateOnly} <= '${endDate}'`
     ]
 
     if (search) {
       whereConditions.push(`(
-        LOWER(store_code) LIKE LOWER('%${search}%') OR 
-        LOWER(store_name) LIKE LOWER('%${search}%')
+        LOWER(${col.storeCode}) LIKE LOWER('%${search}%') OR 
+        LOWER(COALESCE(${col.storeName}, c.customer_name, '')) LIKE LOWER('%${search}%')
       )`)
     }
 
-    const whereClause = `WHERE ${whereConditions.join(' AND ')}`
+    // Add region, city, chain filters if provided
+    if (region && region !== 'all') {
+      whereConditions.push(`(c.state = '${region}' OR ${col.storeRegion} = '${region}')`)
+    }
+    if (type && type !== 'all') {
+      whereConditions.push(`(c.customer_type = '${type}')`)
+    }
+
+    const whereClause = whereConditions.length > 0 
+      ? `WHERE ${whereConditions.join(' AND ')}`
+      : ''
 
     // Get overall metrics
     const metricsQuery = `
       WITH customer_data AS (
         SELECT
-          store_code,
-          store_name,
-          SUM(net_amount) as total_sales,
-          COUNT(DISTINCT trx_code) as order_count,
-          MAX(trx_date_only) as last_order_date
-        FROM flat_sales_transactions
+          ${col.storeCode} as store_code,
+          COALESCE(${col.storeName}, c.customer_name, 'Unknown') as store_name,
+          SUM(${col.netAmountValue}) as total_sales,
+          COUNT(DISTINCT ${col.trxCode}) as order_count,
+          MAX(${col.trxDateOnly}) as last_order_date
+        FROM ${transactionsTable} t
+        LEFT JOIN flat_customers_master c ON ${col.storeCode} = c.customer_code
         ${whereClause}
-        GROUP BY store_code, store_name
+        GROUP BY ${col.storeCode}, COALESCE(${col.storeName}, c.customer_name, 'Unknown')
       )
       SELECT
         COUNT(DISTINCT store_code) as total_customers,
@@ -122,8 +144,8 @@ export async function GET(request: NextRequest) {
       FROM customer_data
     `
 
-    const metricsResult = await query(metricsQuery, [])
-    const metrics = metricsResult.rows[0] || {
+    let metricsResult
+    let metrics = {
       total_customers: 0,
       active_customers: 0,
       total_sales: 0,
@@ -131,35 +153,50 @@ export async function GET(request: NextRequest) {
       avg_order_value: 0,
       total_outstanding: 0
     }
+    try {
+      metricsResult = await query(metricsQuery, [])
+      metrics = metricsResult.rows[0] || metrics
+    } catch (error) {
+      console.error('Error fetching metrics:', error)
+    }
 
-    // Get sales by channel (chain code)
+    // Get sales by channel (chain code) - Use customer_type from customers_master
     const channelQuery = `
       SELECT
-        COALESCE(chain_code, 'Unknown') as channel,
-        COUNT(DISTINCT store_code) as customer_count,
-        SUM(net_amount) as total_sales
-      FROM flat_sales_transactions
+        COALESCE(c.customer_type, 'Unknown') as channel,
+        COUNT(DISTINCT ${col.storeCode}) as customer_count,
+        SUM(${col.netAmountValue}) as total_sales
+      FROM ${transactionsTable} t
+      LEFT JOIN flat_customers_master c ON ${col.storeCode} = c.customer_code
       ${whereClause}
-      GROUP BY chain_code
+      GROUP BY COALESCE(c.customer_type, 'Unknown')
       ORDER BY total_sales DESC
     `
 
-    const channelResult = await query(channelQuery, [])
-    const salesByChannel = channelResult.rows.map(row => ({
+    let channelResult
+    let salesByChannel = []
+    try {
+      channelResult = await query(channelQuery, [])
+      salesByChannel = channelResult.rows.map(row => ({
       name: row.channel || 'Unknown',
       value: parseFloat(row.total_sales || '0'),
       customers: parseInt(row.customer_count || '0')
     }))
+    } catch (error) {
+      console.error('Error fetching sales by channel:', error)
+      salesByChannel = []
+    }
 
     // Customer classification based on sales
     const classificationQuery = `
       WITH customer_sales AS (
         SELECT
-          store_code,
-          SUM(net_amount) as total_sales
-        FROM flat_sales_transactions
+          ${col.storeCode} as store_code,
+          SUM(${col.netAmountValue}) as total_sales
+        FROM ${transactionsTable} t
+        LEFT JOIN flat_customers_master c ON ${col.storeCode} = c.customer_code
         ${whereClause}
-        GROUP BY store_code
+        GROUP BY ${col.storeCode}
       )
       SELECT
         CASE
@@ -185,23 +222,31 @@ export async function GET(request: NextRequest) {
       ORDER BY MIN(total_sales) DESC
     `
 
-    const classificationResult = await query(classificationQuery, [])
-    const customerClassification = classificationResult.rows.map(row => ({
+    let classificationResult
+    let customerClassification = []
+    try {
+      classificationResult = await query(classificationQuery, [])
+      customerClassification = classificationResult.rows.map(row => ({
       classification: row.classification,
       customerCount: parseInt(row.customer_count || '0'),
       totalSales: parseFloat(row.total_sales || '0')
     }))
+    } catch (error) {
+      console.error('Error fetching customer classification:', error)
+      customerClassification = []
+    }
 
     // ABC Analysis (Pareto - 80/20 rule)
     const abcQuery = `
       WITH customer_sales AS (
         SELECT
-          store_code,
-          store_name,
-          SUM(net_amount) as total_sales
-        FROM flat_sales_transactions
+          ${col.storeCode} as store_code,
+          COALESCE(${col.storeName}, c.customer_name, 'Unknown') as store_name,
+          SUM(${col.netAmountValue}) as total_sales
+        FROM ${transactionsTable} t
+        LEFT JOIN flat_customers_master c ON ${col.storeCode} = c.customer_code
         ${whereClause}
-        GROUP BY store_code, store_name
+        GROUP BY ${col.storeCode}, COALESCE(${col.storeName}, c.customer_name, 'Unknown')
       ),
       ranked_customers AS (
         SELECT
@@ -228,8 +273,11 @@ export async function GET(request: NextRequest) {
       ORDER BY MIN(running_total)
     `
 
-    const abcResult = await query(abcQuery, [])
-    const abcAnalysis = abcResult.rows.map(row => ({
+    let abcResult
+    let abcAnalysis = []
+    try {
+      abcResult = await query(abcQuery, [])
+      abcAnalysis = abcResult.rows.map(row => ({
       category: row.category,
       customerCount: parseInt(row.customer_count || '0'),
       totalSales: parseFloat(row.total_sales || '0'),
@@ -237,6 +285,10 @@ export async function GET(request: NextRequest) {
         ? (parseFloat(row.total_sales || '0') / metrics.total_sales * 100) 
         : 0
     }))
+    } catch (error) {
+      console.error('Error fetching ABC analysis:', error)
+      abcAnalysis = []
+    }
 
     // Get top customers with pagination
     let customerWhereConditions = whereConditions.slice() // Copy base conditions
@@ -262,34 +314,35 @@ export async function GET(request: NextRequest) {
     const customersQuery = `
       WITH customer_data AS (
         SELECT
-          store_code,
-          MAX(store_name) as store_name,
-          MAX(region_code) as region_code,
-          MAX(region_name) as region_name,
-          MAX(city_code) as city_code,
-          MAX(city_name) as city_name,
-          MAX(chain_code) as chain_code,
-          MAX(chain_name) as chain_name,
-          MAX(user_route_code) as route_code,
-          MAX(user_route_code) as route_name,
-          MAX(field_user_code) as salesman_code,
-          MAX(field_user_name) as salesman_name,
-          SUM(net_amount) as total_sales,
-          COUNT(DISTINCT trx_code) as order_count,
-          AVG(net_amount) as avg_order_value,
-          MAX(trx_date_only) as last_order_date,
-          CURRENT_DATE - MAX(trx_date_only) as days_since_last_order
-        FROM flat_sales_transactions
+          ${col.storeCode} as store_code,
+          MAX(COALESCE(${col.storeName}, c.customer_name, 'Unknown')) as store_name,
+          MAX(COALESCE(${col.storeRegion}, c.region_code, 'N/A')) as region_code,
+          MAX(COALESCE(c.state, ${col.storeRegion}, 'Unknown')) as region_name,
+          MAX(COALESCE(${col.storeCity}, c.city_code, 'N/A')) as city_code,
+          MAX(COALESCE(c.city, ${col.storeCity}, 'Unknown')) as city_name,
+          MAX(COALESCE(c.customer_type, 'Unknown')) as chain_code,
+          MAX(COALESCE(c.customer_type, 'Unknown')) as chain_name,
+          MAX(COALESCE(${routeCodeExpr === 'NULL' ? "'N/A'" : routeCodeExpr}, 'N/A')) as route_code,
+          MAX(COALESCE(${routeCodeExpr === 'NULL' ? "'N/A'" : routeCodeExpr}, 'N/A')) as route_name,
+          MAX(${col.fieldUserCode}) as salesman_code,
+          MAX(${col.fieldUserName}) as salesman_name,
+          SUM(${col.netAmountValue}) as total_sales,
+          COUNT(DISTINCT ${col.trxCode}) as order_count,
+          AVG(${col.netAmountValue}) as avg_order_value,
+          MAX(${col.trxDateOnly}) as last_order_date,
+          CURRENT_DATE - MAX(${col.trxDateOnly}) as days_since_last_order
+        FROM ${transactionsTable} t
+        LEFT JOIN flat_customers_master c ON ${col.storeCode} = c.customer_code
         ${whereClause}
-        GROUP BY store_code
+        GROUP BY ${col.storeCode}
         ${classification && classification !== 'all' ? 
           `HAVING ${
-            classification === 'vip' ? 'SUM(net_amount) >= 100000' :
-            classification === 'key' ? 'SUM(net_amount) >= 50000 AND SUM(net_amount) < 100000' :
-            classification === 'a' ? 'SUM(net_amount) >= 20000 AND SUM(net_amount) < 50000' :
-            classification === 'b' ? 'SUM(net_amount) >= 10000 AND SUM(net_amount) < 20000' :
-            classification === 'c' ? 'SUM(net_amount) >= 5000 AND SUM(net_amount) < 10000' :
-            'SUM(net_amount) < 5000'
+            classification === 'vip' ? `SUM(${col.netAmountValue}) >= 100000` :
+            classification === 'key' ? `SUM(${col.netAmountValue}) >= 50000 AND SUM(${col.netAmountValue}) < 100000` :
+            classification === 'a' ? `SUM(${col.netAmountValue}) >= 20000 AND SUM(${col.netAmountValue}) < 50000` :
+            classification === 'b' ? `SUM(${col.netAmountValue}) >= 10000 AND SUM(${col.netAmountValue}) < 20000` :
+            classification === 'c' ? `SUM(${col.netAmountValue}) >= 5000 AND SUM(${col.netAmountValue}) < 10000` :
+            `SUM(${col.netAmountValue}) < 5000`
           }` : ''}
       ),
       counted AS (
@@ -305,11 +358,16 @@ export async function GET(request: NextRequest) {
       LIMIT ${limit} OFFSET ${offset}
     `
 
-    const customersResult = await query(customersQuery, [])
-    const totalCount = customersResult.rows[0]?.total_count || 0
-    const totalPages = Math.ceil(totalCount / limit)
+    let customersResult
+    let topCustomers = []
+    let totalCount = 0
+    let totalPages = 0
+    try {
+      customersResult = await query(customersQuery, [])
+      totalCount = customersResult.rows[0]?.total_count || 0
+      totalPages = Math.ceil(totalCount / limit)
 
-    const topCustomers = customersResult.rows.map(row => ({
+      topCustomers = customersResult.rows.map(row => ({
       customerCode: row.store_code,
       customerName: row.store_name || 'Unknown',
       region: row.region_name || row.region_code || 'Unknown',
@@ -336,6 +394,10 @@ export async function GET(request: NextRequest) {
         rawStoreName: customersResult.rows[0]?.store_name,
         rawStoreCode: customersResult.rows[0]?.store_code
       })
+      }
+    } catch (error) {
+      console.error('Error fetching top customers:', error)
+      topCustomers = []
     }
 
     return NextResponse.json({

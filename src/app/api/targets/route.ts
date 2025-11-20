@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { query } from '@/lib/database'
-import { getChildUsers, isAdmin } from '@/lib/mssql'
-import { validateApiUser } from '@/lib/apiUserValidation'
+import { query, db } from '@/lib/database'
+import { resolveTransactionsTable, getTransactionColumnExpressions } from '@/services/dailySalesService'
 
 // Force dynamic rendering for routes that use searchParams
 export const dynamic = 'force-dynamic'
@@ -12,144 +11,223 @@ export const revalidate = 60
 export async function GET(request: NextRequest) {
   try {
     const searchParams = request.nextUrl.searchParams
-    const loginUserCode = searchParams.get('loginUserCode')
+    // Authentication removed - no user validation needed
     
-    // Validate user access
-    const validation = await validateApiUser(loginUserCode)
-    if (!validation.isValid) {
-      return validation.response!
+    await db.initialize()
+    
+    // Detect which targets table exists - with better error handling
+    let targetsTable: string | null = null
+    
+    // Try to directly query each potential table - simplest approach
+    const potentialTables = ['tblcommontarget', 'flat_targets']
+    
+    for (const tableName of potentialTables) {
+      try {
+        // Try a simple SELECT 1 query to see if table exists
+        await query(`SELECT 1 FROM ${tableName} LIMIT 1`)
+        targetsTable = tableName
+        console.log(`✅ Found targets table: ${tableName}`)
+        break
+      } catch (e: any) {
+        // Table doesn't exist or query failed - continue to next
+        if (e?.message?.includes('does not exist')) {
+          // Expected - table doesn't exist
+          continue
+        }
+        // Other error - log but continue
+        console.warn(`Could not access table ${tableName}:`, e?.message)
+      }
     }
     
-    // Get hierarchy-based allowed users
-    let allowedUserCodes: string[] = []
-    if (loginUserCode && !isAdmin(loginUserCode)) {
-      allowedUserCodes = await getChildUsers(loginUserCode)
+    // If still not found, search information_schema
+    if (!targetsTable) {
+      try {
+        const tablesCheck = await query(`
+          SELECT table_name 
+          FROM information_schema.tables 
+          WHERE table_schema = 'public' 
+          AND (table_name LIKE '%target%' OR table_name LIKE '%common%')
+          ORDER BY table_name
+        `)
+        if (tablesCheck.rows.length > 0) {
+          const foundTable = tablesCheck.rows[0].table_name
+          // Verify we can actually query it
+          try {
+            await query(`SELECT 1 FROM ${foundTable} LIMIT 1`)
+            targetsTable = foundTable
+            console.log(`⚠️ Using detected targets table: ${targetsTable}`)
+          } catch (e) {
+            console.warn(`Detected table ${foundTable} but cannot query it:`, e)
+          }
+        }
+      } catch (e) {
+        console.warn('Could not search for target tables:', e)
+      }
     }
+    
+    // If no targets table found, return empty data
+    if (!targetsTable) {
+      console.warn('⚠️ No targets table found. Returning empty data.')
+      return NextResponse.json({
+        success: true,
+        data: [],
+        summary: {
+          totalTargets: 0,
+          totalTargetAmount: 0,
+          totalAchievement: 0,
+          overallAchievementPercentage: 0,
+          targetsAchieved: 0,
+          targetsNotAchieved: 0
+        },
+        count: 0,
+        timestamp: new Date().toISOString(),
+        source: 'postgresql - no targets table found',
+        message: 'No targets table found in database. Please check if tblcommontarget or flat_targets table exists.'
+      })
+    }
+    
+    // Get table info and column expressions for transactions
+    const tableInfo = await resolveTransactionsTable()
+    const transactionsTable = tableInfo.name
+    const col = getTransactionColumnExpressions(tableInfo.columns)
     
     const conditions: string[] = []
     const params: any[] = []
     let paramIndex = 1
     
-    // Add hierarchy filter if not admin
-    if (allowedUserCodes.length > 0) {
-      const placeholders = allowedUserCodes.map((_, index) => `$${paramIndex + index}`).join(', ')
-      conditions.push(`t.field_user_code IN (${placeholders})`)
-      params.push(...allowedUserCodes)
-      paramIndex += allowedUserCodes.length
-    }
+    // Authentication removed - no hierarchy filtering
 
+    // Use tblcommontarget table - map filters to actual column names
     if (searchParams.has('year')) {
-      conditions.push(`t.target_year = $${paramIndex}`)
+      conditions.push(`t.year = $${paramIndex}`)
       params.push(parseInt(searchParams.get('year')!))
       paramIndex++
     }
 
     if (searchParams.has('month')) {
-      conditions.push(`t.target_month = $${paramIndex}`)
+      conditions.push(`t.month = $${paramIndex}`)
       params.push(parseInt(searchParams.get('month')!))
       paramIndex++
     }
 
     if (searchParams.has('userCode')) {
-      conditions.push(`t.field_user_code = $${paramIndex}`)
+      // Use salesmancode from tblcommontarget
+      conditions.push(`t.salesmancode = $${paramIndex}`)
       params.push(searchParams.get('userCode'))
       paramIndex++
     }
 
+    // Note: tblcommontarget doesn't have customer_code or tl_code columns
+    // These filters will be ignored if the table doesn't support them
     if (searchParams.has('customerCode')) {
-      conditions.push(`t.customer_code = $${paramIndex}`)
-      params.push(searchParams.get('customerCode'))
-      paramIndex++
+      // tblcommontarget doesn't have customer_code - skip this filter
+      console.warn('⚠️ customerCode filter not supported by tblcommontarget table')
     }
 
-    // Team Leader filter
     if (searchParams.has('teamLeaderCode')) {
-      conditions.push(`t.tl_code = $${paramIndex}`)
-      params.push(searchParams.get('teamLeaderCode'))
-      paramIndex++
+      // tblcommontarget doesn't have tl_code - skip this filter
+      console.warn('⚠️ teamLeaderCode filter not supported by tblcommontarget table')
     }
 
+    // Always include isactive filter
+    conditions.push(`t.isactive = true`)
     const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : ''
     // No limit - get ALL data for comprehensive reporting
     const limit = parseInt(searchParams.get('limit') || '100000')
 
     // Query to get targets with achievement data from sales transactions
-    // NOTE: achieved_value and achievement_percentage are NULL in DB, so we calculate from flat_sales_transactions
+    // Use dynamic table and column expressions
+    let dateExpr: string
+    if (col.trxDateOnly.startsWith('DATE(')) {
+      // Handle DATE() function - replace table alias
+      dateExpr = col.trxDateOnly.replace(/t\.transaction_date/g, 's.transaction_date')
+        .replace(/t\.trx_date/g, 's.trx_date')
+    } else {
+      // Handle column name - add table alias
+      const colName = col.trxDateOnly.replace('t.', '')
+      dateExpr = `s.${colName}`
+    }
+    
+    // Build JOIN conditions properly
+    const userCodeJoin = col.fieldUserCode === 'NULL' 
+      ? 's.user_code' 
+      : col.fieldUserCode.replace(/t\./g, 's.')
+    
+    const storeCodeJoin = col.storeCode.replace(/t\./g, 's.')
+    
+    // Build net amount expression for sales table
+    const netAmountExpr = col.netAmountValue.replace(/t\./g, 's.')
+    
+    // Query using tblcommontarget table with proper column mapping
     const result = await query(`
       SELECT
-        t.target_year as "targetYear",
-        t.target_month as "targetMonth",
-        t.target_period as "targetPeriod",
-        t.field_user_code as "userCode",
-        t.field_user_name as "userName",
-        t.tl_code as "teamLeaderCode",
-        t.tl_name as "teamLeaderName",
-        t.user_role as "userRole",
-        t.customer_code as "customerCode",
-        t.customer_name as "customerName",
-        t.customer_level as "customerLevel",
-        t.chain_code as "chainCode",
-        t.target_amount as "targetAmount",
-        t.target_quantity as "targetQuantity",
-        t.target_volume as "targetVolume",
-        t.currency_code as "currencyCode",
-        t.uom as "uom",
-        t.sales_org_code as "salesOrgCode",
-        t.sales_org_name as "salesOrgName",
-        t.product_category as "productCategory",
-        t.product_brand as "productBrand",
-        t.target_type as "targetType",
-        t.target_level as "targetLevel",
-        t.target_frequency as "targetFrequency",
-        t.target_status as "targetStatus",
-        t.is_active as "isActive",
-        t.is_approved as "isApproved",
-        t.remarks as "remarks",
-        t.created_by as "createdBy",
-        t.created_on as "createdOn",
-        t.modified_by as "modifiedBy",
-        t.modified_on as "modifiedOn",
-        -- Calculate achievement from flat_sales_transactions (trx_type = 5 for Sales Orders)
+        t.year as "targetYear",
+        t.month as "targetMonth",
+        t.targetperiod as "targetPeriod",
+        t.salesmancode as "userCode",
+        COALESCE(u.username, t.salesmancode) as "userName",
+        NULL as "teamLeaderCode",
+        NULL as "teamLeaderName",
+        NULL as "userRole",
+        NULL as "customerCode",
+        NULL as "customerName",
+        NULL as "customerLevel",
+        NULL as "chainCode",
+        t.amount as "targetAmount",
+        NULL as "targetQuantity",
+        NULL as "targetVolume",
+        'INR' as "currencyCode",
+        NULL as "uom",
+        NULL as "salesOrgCode",
+        NULL as "salesOrgName",
+        NULL as "productCategory",
+        NULL as "productBrand",
+        t.targettype as "targetType",
+        NULL as "targetLevel",
+        t.timeframe as "targetFrequency",
+        CASE WHEN t.isactive THEN 'Active' ELSE 'Inactive' END as "targetStatus",
+        t.isactive as "isActive",
+        NULL as "isApproved",
+        NULL as "remarks",
+        NULL as "createdBy",
+        t.startdate as "createdOn",
+        NULL as "modifiedBy",
+        t.enddate as "modifiedOn",
+        -- Calculate achievement from transactions table
         COALESCE(
           SUM(CASE 
-            WHEN s.trx_type = 5 
-              AND EXTRACT(YEAR FROM s.trx_date_only) = t.target_year 
-              AND EXTRACT(MONTH FROM s.trx_date_only) = t.target_month
-            THEN s.net_amount 
+            WHEN EXTRACT(YEAR FROM ${dateExpr}) = t.year 
+              AND EXTRACT(MONTH FROM ${dateExpr}) = t.month
+            THEN ${netAmountExpr} 
             ELSE 0 
           END), 
           0
         ) as "achievementAmount",
         -- Calculate achievement percentage
         CASE 
-          WHEN t.target_amount = 0 OR t.target_amount IS NULL THEN 0
+          WHEN t.amount = 0 OR t.amount IS NULL THEN 0
           ELSE ROUND(
             (COALESCE(
               SUM(CASE 
-                WHEN s.trx_type = 5 
-                  AND EXTRACT(YEAR FROM s.trx_date_only) = t.target_year 
-                  AND EXTRACT(MONTH FROM s.trx_date_only) = t.target_month
-                THEN s.net_amount 
+                WHEN EXTRACT(YEAR FROM ${dateExpr}) = t.year 
+                  AND EXTRACT(MONTH FROM ${dateExpr}) = t.month
+                THEN ${netAmountExpr} 
                 ELSE 0 
               END), 
               0
-            ) / NULLIF(t.target_amount, 0)) * 100, 
+            ) / NULLIF(t.amount, 0)) * 100, 
             2
           )
         END as "achievementPercentage"
-      FROM flat_targets t
-      LEFT JOIN flat_sales_transactions s
-        ON t.field_user_code = s.field_user_code
-        AND t.customer_code = s.store_code
+      FROM ${targetsTable} t
+      LEFT JOIN tbluser u ON t.salesmancode = u.empcode
+      LEFT JOIN ${transactionsTable} s
+        ON t.salesmancode = ${userCodeJoin}
       ${whereClause}
       GROUP BY 
-        t.target_year, t.target_month, t.target_period, t.field_user_code, t.field_user_name,
-        t.tl_code, t.tl_name, t.user_role, t.customer_code, t.customer_name, t.customer_level,
-        t.chain_code, t.target_amount, t.target_quantity, t.target_volume, t.currency_code, t.uom,
-        t.sales_org_code, t.sales_org_name, t.product_category, t.product_brand,
-        t.target_type, t.target_level, t.target_frequency, t.target_status,
-        t.is_active, t.is_approved, t.remarks, t.created_by, t.created_on, t.modified_by, t.modified_on
-      ORDER BY t.target_year DESC, t.target_month DESC, t.field_user_name ASC
+        t.year, t.month, t.targetperiod, t.salesmancode, u.username,
+        t.amount, t.targettype, t.timeframe, t.isactive, t.startdate, t.enddate
+      ORDER BY t.year DESC, t.month DESC, u.username ASC
       LIMIT $${paramIndex}
     `, [...params, limit])
 
@@ -220,10 +298,31 @@ export async function GET(request: NextRequest) {
     })
   } catch (error) {
     console.error('Targets API error:', error)
+    // If error is about missing table, return empty data instead of 500
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error'
+    if (errorMessage.includes('does not exist') || errorMessage.includes('No targets table')) {
+      console.warn('⚠️ Targets table issue detected. Returning empty data.')
+      return NextResponse.json({
+        success: true,
+        data: [],
+        summary: {
+          totalTargets: 0,
+          totalTargetAmount: 0,
+          totalAchievement: 0,
+          overallAchievementPercentage: 0,
+          targetsAchieved: 0,
+          targetsNotAchieved: 0
+        },
+        count: 0,
+        timestamp: new Date().toISOString(),
+        source: 'postgresql - no targets table found',
+        message: 'No targets table found in database. Please check if tblcommontarget or flat_targets table exists.'
+      })
+    }
     return NextResponse.json({
       success: false,
       error: 'Failed to fetch targets',
-      message: error instanceof Error ? error.message : 'Unknown error'
+      message: errorMessage
     }, { status: 500 })
   }
 }

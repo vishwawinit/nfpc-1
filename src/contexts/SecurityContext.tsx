@@ -10,6 +10,7 @@ interface SecurityContextType {
   errorMessage: string | null
 }
 
+// Authentication removed - always authorized
 const defaultContextValue: SecurityContextType = {
   isAuthorized: true,
   isLoading: false,
@@ -23,7 +24,8 @@ const SecurityContext = createContext<SecurityContextType>(defaultContextValue)
 export const useSecurityContext = () => {
   const context = useContext(SecurityContext)
   if (!context) {
-    throw new Error('useSecurityContext must be used within a SecurityProvider')
+    // Return default context if not within provider (for backwards compatibility)
+    return defaultContextValue
   }
   return context
 }
@@ -32,6 +34,7 @@ interface SecurityProviderProps {
   children: ReactNode
 }
 
+// Authentication removed - just render children
 export const SecurityProvider: React.FC<SecurityProviderProps> = ({ children }) => {
   return (
     <SecurityContext.Provider value={defaultContextValue}>

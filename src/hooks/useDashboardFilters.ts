@@ -59,11 +59,23 @@ export interface HierarchyInfo {
   allowedFieldUserCount: number
 }
 
+// Helper function to get default date range (this month)
+const getDefaultDateRange = () => {
+  const currentDate = new Date()
+  const startDate = new Date(currentDate.getFullYear(), currentDate.getMonth(), 1)
+  const endDate = currentDate
+  return {
+    startDate: startDate.toISOString().split('T')[0],
+    endDate: endDate.toISOString().split('T')[0]
+  }
+}
+
 export const useDashboardFilters = () => {
-  // Initialize with default values
+  // Initialize with default values - set default date range to this month for faster initial load
+  const defaultDates = getDefaultDateRange()
   const [filters, setFilters] = useState<DashboardFilters>({
-    startDate: null,
-    endDate: null,
+    startDate: defaultDates.startDate,
+    endDate: defaultDates.endDate,
     regionCode: null,
     cityCode: null,
     fieldUserRole: null,
@@ -215,11 +227,12 @@ export const useDashboardFilters = () => {
     }))
   }, [])
 
-  // Reset all filters
+  // Reset all filters - reset to default date range
   const resetFilters = useCallback(() => {
+    const defaultDates = getDefaultDateRange()
     setFilters({
-      startDate: null,
-      endDate: null,
+      startDate: defaultDates.startDate,
+      endDate: defaultDates.endDate,
       regionCode: null,
       cityCode: null,
       fieldUserRole: null,

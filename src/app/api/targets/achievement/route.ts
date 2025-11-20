@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { db } from '@/lib/database'
+import { db, query } from '@/lib/database'
 import { unstable_cache } from 'next/cache'
 import { TargetService } from '@/lib/targetService'
+import { resolveTransactionsTable, getTransactionColumnExpressions } from '@/services/dailySalesService'
 
 // Helper function to create cache key
 function getCacheKey(dateRange: string, userId: string | null) {
@@ -40,32 +41,42 @@ export async function GET(request: NextRequest) {
     // Initialize database connection
     await db.initialize()
 
-    // Check if we have any data for this date range first - using correct table
+    // Get table info and column expressions
+    const tableInfo = await resolveTransactionsTable()
+    const transactionsTable = tableInfo.name
+    const col = getTransactionColumnExpressions(tableInfo.columns)
+    
+    // Build date expression for filtering
+    const dateExpr = col.trxDateOnly.startsWith('DATE(') 
+      ? col.trxDateOnly 
+      : `t.${col.trxDateOnly}`
+    
+    // Check if we have any data for this date range first - using dynamic table
     const dataCheckQuery = `
       SELECT COUNT(*) as count
-      FROM new_flat_transactions
+      FROM ${transactionsTable} t
       WHERE ${(() => {
         switch(dateRange) {
           case 'today':
-            return `DATE_TRUNC('day', trx_date_only) = DATE_TRUNC('day', CURRENT_DATE)`
+            return `DATE_TRUNC('day', ${dateExpr}) = DATE_TRUNC('day', CURRENT_DATE)`
           case 'yesterday':
-            return `DATE_TRUNC('day', trx_date_only) = DATE_TRUNC('day', CURRENT_DATE - INTERVAL '1 day')`
+            return `DATE_TRUNC('day', ${dateExpr}) = DATE_TRUNC('day', CURRENT_DATE - INTERVAL '1 day')`
           case 'thisWeek':
-            return `DATE_TRUNC('week', trx_date_only) = DATE_TRUNC('week', CURRENT_DATE)`
+            return `DATE_TRUNC('week', ${dateExpr}) = DATE_TRUNC('week', CURRENT_DATE)`
           case 'thisMonth':
-            return `DATE_TRUNC('month', trx_date_only) = DATE_TRUNC('month', CURRENT_DATE)`
+            return `DATE_TRUNC('month', ${dateExpr}) = DATE_TRUNC('month', CURRENT_DATE)`
           case 'lastMonth':
-            return `DATE_TRUNC('month', trx_date_only) = DATE_TRUNC('month', CURRENT_DATE - INTERVAL '1 month')`
+            return `DATE_TRUNC('month', ${dateExpr}) = DATE_TRUNC('month', CURRENT_DATE - INTERVAL '1 month')`
           case 'thisQuarter':
-            return `DATE_TRUNC('quarter', trx_date_only) = DATE_TRUNC('quarter', CURRENT_DATE)`
+            return `DATE_TRUNC('quarter', ${dateExpr}) = DATE_TRUNC('quarter', CURRENT_DATE)`
           case 'lastQuarter':
-            return `DATE_TRUNC('quarter', trx_date_only) = DATE_TRUNC('quarter', CURRENT_DATE - INTERVAL '3 months')`
+            return `DATE_TRUNC('quarter', ${dateExpr}) = DATE_TRUNC('quarter', CURRENT_DATE - INTERVAL '3 months')`
           case 'thisYear':
-            return `DATE_TRUNC('year', trx_date_only) = DATE_TRUNC('year', CURRENT_DATE)`
+            return `DATE_TRUNC('year', ${dateExpr}) = DATE_TRUNC('year', CURRENT_DATE)`
           default:
-            return `DATE_TRUNC('month', trx_date_only) = DATE_TRUNC('month', CURRENT_DATE)`
+            return `DATE_TRUNC('month', ${dateExpr}) = DATE_TRUNC('month', CURRENT_DATE)`
         }
-      })()} AND total_amount > 0
+      })()} AND ${col.netAmountValue} > 0
     `
 
     const dataCheck = await db.query(dataCheckQuery)
@@ -96,51 +107,51 @@ export async function GET(request: NextRequest) {
       })
     }
 
-    // Build date filter based on range - using new_flat_transactions for accurate data
+    // Build date filter based on range - using dynamic table and column expressions
     let dateFilter = ''
     switch(dateRange) {
       case 'today':
-        dateFilter = `DATE_TRUNC('day', trx_date_only) = DATE_TRUNC('day', CURRENT_DATE)`
+        dateFilter = `DATE_TRUNC('day', ${dateExpr}) = DATE_TRUNC('day', CURRENT_DATE)`
         break
       case 'yesterday':
-        dateFilter = `DATE_TRUNC('day', trx_date_only) = DATE_TRUNC('day', CURRENT_DATE - INTERVAL '1 day')`
+        dateFilter = `DATE_TRUNC('day', ${dateExpr}) = DATE_TRUNC('day', CURRENT_DATE - INTERVAL '1 day')`
         break
       case 'thisWeek':
-        dateFilter = `DATE_TRUNC('week', trx_date_only) = DATE_TRUNC('week', CURRENT_DATE)`
+        dateFilter = `DATE_TRUNC('week', ${dateExpr}) = DATE_TRUNC('week', CURRENT_DATE)`
         break
       case 'thisMonth':
-        dateFilter = `DATE_TRUNC('month', trx_date_only) = DATE_TRUNC('month', CURRENT_DATE)`
+        dateFilter = `DATE_TRUNC('month', ${dateExpr}) = DATE_TRUNC('month', CURRENT_DATE)`
         break
       case 'lastMonth':
-        dateFilter = `DATE_TRUNC('month', trx_date_only) = DATE_TRUNC('month', CURRENT_DATE - INTERVAL '1 month')`
+        dateFilter = `DATE_TRUNC('month', ${dateExpr}) = DATE_TRUNC('month', CURRENT_DATE - INTERVAL '1 month')`
         break
       case 'thisQuarter':
-        dateFilter = `DATE_TRUNC('quarter', trx_date_only) = DATE_TRUNC('quarter', CURRENT_DATE)`
+        dateFilter = `DATE_TRUNC('quarter', ${dateExpr}) = DATE_TRUNC('quarter', CURRENT_DATE)`
         break
       case 'lastQuarter':
-        dateFilter = `DATE_TRUNC('quarter', trx_date_only) = DATE_TRUNC('quarter', CURRENT_DATE - INTERVAL '3 months')`
+        dateFilter = `DATE_TRUNC('quarter', ${dateExpr}) = DATE_TRUNC('quarter', CURRENT_DATE - INTERVAL '3 months')`
         break
       case 'thisYear':
-        dateFilter = `DATE_TRUNC('year', trx_date_only) = DATE_TRUNC('year', CURRENT_DATE)`
+        dateFilter = `DATE_TRUNC('year', ${dateExpr}) = DATE_TRUNC('year', CURRENT_DATE)`
         break
       case 'Q1':
-        dateFilter = `DATE_TRUNC('quarter', trx_date_only) = '2025-01-01'::date`
+        dateFilter = `DATE_TRUNC('quarter', ${dateExpr}) = '2025-01-01'::date`
         break
       case 'Q2':
-        dateFilter = `DATE_TRUNC('quarter', trx_date_only) = '2025-04-01'::date`
+        dateFilter = `DATE_TRUNC('quarter', ${dateExpr}) = '2025-04-01'::date`
         break
       case 'Q3':
-        dateFilter = `DATE_TRUNC('quarter', trx_date_only) = '2025-07-01'::date`
+        dateFilter = `DATE_TRUNC('quarter', ${dateExpr}) = '2025-07-01'::date`
         break
       case 'Q4':
-        dateFilter = `DATE_TRUNC('quarter', trx_date_only) = '2025-10-01'::date`
+        dateFilter = `DATE_TRUNC('quarter', ${dateExpr}) = '2025-10-01'::date`
         break
       default:
-        dateFilter = `DATE_TRUNC('month', trx_date_only) = DATE_TRUNC('month', CURRENT_DATE)`
+        dateFilter = `DATE_TRUNC('month', ${dateExpr}) = DATE_TRUNC('month', CURRENT_DATE)`
     }
 
-    // Add user filter if specified
-    const userFilter = userId ? `AND salesman_code = '${userId}'` : ''
+    // Add user filter if specified - will be replaced with actual column name later
+    const userFilter = userId ? `AND ${col.fieldUserCode} = '${userId}'` : ''
 
     // Create cached version of the queries
     const cacheDuration = getCacheDuration(dateRange)
@@ -324,15 +335,15 @@ export async function GET(request: NextRequest) {
         let achievementFilter = dateFilter
         if (dateRange === 'thisYear' || dateRange === 'lastYear') {
           achievementFilter = `
-            EXTRACT(YEAR FROM trx_date_only) = ${targetYear}
-            AND salesman_code IN (
+            EXTRACT(YEAR FROM ${dateExpr}) = ${targetYear}
+            AND ${col.fieldUserCode} IN (
               SELECT DISTINCT salesmancode
               FROM tblcommontarget t2
               WHERE t2.isactive = true
                 AND t2.timeframe = 'M'
                 AND t2.year = ${targetYear}
-                AND t2.month = EXTRACT(MONTH FROM trx_date_only)
-                AND t2.salesmancode = salesman_code
+                AND t2.month = EXTRACT(MONTH FROM ${dateExpr})
+                AND t2.salesmancode = ${col.fieldUserCode}
             )
           `
         } else if (dateRange === 'Q1' || dateRange === 'Q2' || dateRange === 'Q3' || dateRange === 'Q4') {
@@ -344,15 +355,15 @@ export async function GET(request: NextRequest) {
           else if (dateRange === 'Q4') months = [10, 11, 12]
 
           achievementFilter = `
-            DATE_TRUNC('quarter', trx_date_only) = '2025-${months[0].toString().padStart(2, '0')}-01'::date
-            AND salesman_code IN (
+            DATE_TRUNC('quarter', ${dateExpr}) = '2025-${months[0].toString().padStart(2, '0')}-01'::date
+            AND ${col.fieldUserCode} IN (
               SELECT DISTINCT salesmancode
               FROM tblcommontarget t2
               WHERE t2.isactive = true
                 AND t2.timeframe = 'M'
                 AND t2.year = 2025
-                AND t2.month = EXTRACT(MONTH FROM trx_date_only)
-                AND t2.salesmancode = salesman_code
+                AND t2.month = EXTRACT(MONTH FROM ${dateExpr})
+                AND t2.salesmancode = ${col.fieldUserCode}
             )
           `
         }
@@ -360,14 +371,14 @@ export async function GET(request: NextRequest) {
         const targetCalculationQuery = `
       WITH transaction_totals AS (
         SELECT
-          trx_code,
-          salesman_code,
-          SUM(total_amount) as transaction_total
-        FROM new_flat_transactions
-        WHERE ${achievementFilter} ${userFilter}
-          AND total_amount > 0
-          AND salesman_code = ANY($1)
-        GROUP BY trx_code, salesman_code
+          ${col.trxCode} as trx_code,
+          ${col.fieldUserCode} as salesman_code,
+          SUM(${col.netAmountValue}) as transaction_total
+        FROM ${transactionsTable} t
+        WHERE ${achievementFilter.replace(/trx_date_only/g, dateExpr).replace(/salesman_code/g, col.fieldUserCode)} ${userFilter.replace(/salesman_code/g, col.fieldUserCode)}
+          AND ${col.netAmountValue} > 0
+          AND ${col.fieldUserCode} = ANY($1)
+        GROUP BY ${col.trxCode}, ${col.fieldUserCode}
       ),
       current_achievement AS (
         SELECT
@@ -399,12 +410,12 @@ export async function GET(request: NextRequest) {
         const monthlyQuery = `
       WITH months_in_range AS (
         SELECT DISTINCT
-          TO_CHAR(trx_date_only, 'Mon') as month_name,
-          EXTRACT(MONTH FROM trx_date_only) as month_num,
-          EXTRACT(YEAR FROM trx_date_only) as year_num
-        FROM new_flat_transactions
-        WHERE ${dateFilter} ${userFilter}
-          AND total_amount > 0
+          TO_CHAR(${dateExpr}, 'Mon') as month_name,
+          EXTRACT(MONTH FROM ${dateExpr}) as month_num,
+          EXTRACT(YEAR FROM ${dateExpr}) as year_num
+        FROM ${transactionsTable} t
+        WHERE ${dateFilter} ${userFilter.replace(/salesman_code/g, col.fieldUserCode)}
+          AND ${col.netAmountValue} > 0
       ),
       monthly_calculations AS (
         SELECT
@@ -416,14 +427,14 @@ export async function GET(request: NextRequest) {
             SELECT COALESCE(SUM(tt.transaction_total), 0)
             FROM (
               SELECT
-                trx_code,
-                salesman_code,
-                SUM(total_amount) as transaction_total
-              FROM new_flat_transactions nt
-              WHERE EXTRACT(MONTH FROM nt.trx_date_only) = mir.month_num
-                AND EXTRACT(YEAR FROM nt.trx_date_only) = mir.year_num
-                AND nt.total_amount > 0
-                AND nt.salesman_code IN (
+                ${col.trxCode} as trx_code,
+                ${col.fieldUserCode} as salesman_code,
+                SUM(${col.netAmountValue}) as transaction_total
+              FROM ${transactionsTable} nt
+              WHERE EXTRACT(MONTH FROM ${dateExpr.replace(/t\./g, 'nt.')}) = mir.month_num
+                AND EXTRACT(YEAR FROM ${dateExpr.replace(/t\./g, 'nt.')}) = mir.year_num
+                AND ${col.netAmountValue.replace(/t\./g, 'nt.')} > 0
+                AND ${col.fieldUserCode.replace(/t\./g, 'nt.')} IN (
                   SELECT DISTINCT salesmancode
                   FROM tblcommontarget
                   WHERE isactive = true
@@ -432,7 +443,7 @@ export async function GET(request: NextRequest) {
                     AND month = mir.month_num
                     AND salesmancode IS NOT NULL
                 )
-              GROUP BY trx_code, salesman_code
+              GROUP BY ${col.trxCode}, ${col.fieldUserCode}
             ) tt
           ) as achieved,
           -- Get targets for this specific month
@@ -464,15 +475,15 @@ export async function GET(request: NextRequest) {
         const performersQuery = `
       WITH transaction_performance AS (
         SELECT
-          trx_code,
-          salesman_code,
-          salesman_name,
-          SUM(total_amount) as transaction_total
-        FROM new_flat_transactions
-        WHERE ${dateFilter} ${userFilter}
-          AND total_amount > 0
-          AND salesman_code IN (${salesmenPlaceholders})
-        GROUP BY trx_code, salesman_code, salesman_name
+          ${col.trxCode} as trx_code,
+          ${col.fieldUserCode} as salesman_code,
+          ${col.fieldUserName === 'NULL' ? `${col.fieldUserCode}::text` : col.fieldUserName} as salesman_name,
+          SUM(${col.netAmountValue}) as transaction_total
+        FROM ${transactionsTable} t
+        WHERE ${dateFilter} ${userFilter.replace(/salesman_code/g, col.fieldUserCode)}
+          AND ${col.netAmountValue} > 0
+          AND ${col.fieldUserCode} IN (${salesmenPlaceholders})
+        GROUP BY ${col.trxCode}, ${col.fieldUserCode}, ${col.fieldUserName === 'NULL' ? `${col.fieldUserCode}::text` : col.fieldUserName}
       ),
       salesman_performance AS (
         SELECT
@@ -499,14 +510,14 @@ export async function GET(request: NextRequest) {
         const periodQuery = `
       WITH transaction_period AS (
         SELECT
-          trx_code,
-          salesman_code,
-          SUM(total_amount) as transaction_total
-        FROM new_flat_transactions
-        WHERE ${dateFilter} ${userFilter}
-          AND total_amount > 0
-          AND salesman_code IN (${salesmenPlaceholders})
-        GROUP BY trx_code, salesman_code
+          ${col.trxCode} as trx_code,
+          ${col.fieldUserCode} as salesman_code,
+          SUM(${col.netAmountValue}) as transaction_total
+        FROM ${transactionsTable} t
+        WHERE ${dateFilter} ${userFilter.replace(/salesman_code/g, col.fieldUserCode)}
+          AND ${col.netAmountValue} > 0
+          AND ${col.fieldUserCode} IN (${salesmenPlaceholders})
+        GROUP BY ${col.trxCode}, ${col.fieldUserCode}
       ),
       period_data AS (
         SELECT

@@ -56,19 +56,19 @@ export async function GET(request: NextRequest) {
       endDate: endDate.toISOString().split('T')[0]
     })
 
-    // Ultra-simple query
+    // Ultra-simple query - using order_total for transaction amounts
     const result = await query(`
       SELECT 
         COUNT(*) as total_transactions,
-        SUM(CASE WHEN net_amount > 0 THEN net_amount ELSE 0 END) as total_sales,
-        SUM(CASE WHEN net_amount < 0 THEN ABS(net_amount) ELSE 0 END) as total_returns,
-        SUM(net_amount) as net_sales,
+        SUM(CASE WHEN order_total > 0 THEN order_total ELSE 0 END) as total_sales,
+        SUM(CASE WHEN order_total < 0 THEN ABS(order_total) ELSE 0 END) as total_returns,
+        SUM(order_total) as net_sales,
         COUNT(DISTINCT customer_code) as unique_customers,
-        SUM(CASE WHEN net_amount > 0 THEN quantity_bu ELSE 0 END) as total_quantity,
+        SUM(CASE WHEN order_total > 0 THEN COALESCE(quantity_bu, 0) ELSE 0 END) as total_quantity,
         MAX(currency_code) as currency_code
       FROM flat_transactions 
       WHERE DATE(transaction_date) >= $1 AND DATE(transaction_date) <= $2
-        AND net_amount IS NOT NULL
+        AND order_total IS NOT NULL
     `, [
       startDate.toISOString().split('T')[0],
       endDate.toISOString().split('T')[0]

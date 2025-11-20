@@ -1,6 +1,9 @@
 import { NextResponse } from 'next/server'
 import { getDailyTrend } from '@/services/dailySalesService'
-import { getCacheDuration, getCacheControlHeader } from '@/lib/cache-utils'
+import { unstable_cache } from 'next/cache'
+import { shouldCacheFilters, generateFilterCacheKey, getCacheControlHeader, getCacheDuration } from '@/lib/cache-utils'
+
+export const dynamic = 'force-dynamic'
 
 export async function GET(request: Request) {
   try {
@@ -9,6 +12,7 @@ export async function GET(request: Request) {
     const startDate = searchParams.get('startDate')
     const endDate = searchParams.get('endDate')
     const regionCode = searchParams.get('regionCode')
+    const cityCode = searchParams.get('cityCode')
     const teamLeaderCode = searchParams.get('teamLeaderCode')
     const fieldUserRole = searchParams.get('fieldUserRole')
     const userCode = searchParams.get('userCode')
@@ -16,13 +20,13 @@ export async function GET(request: Request) {
     const storeCode = searchParams.get('storeCode')
     const productCode = searchParams.get('productCode')
     const productCategory = searchParams.get('productCategory')
-    // loginUserCode is accepted but no auth/hierarchy filtering is applied in local mode
 
     const filters: any = {}
     if (dateRange) filters.dateRange = dateRange
     if (startDate) filters.startDate = startDate
     if (endDate) filters.endDate = endDate
     if (regionCode) filters.regionCode = regionCode
+    if (cityCode) filters.cityCode = cityCode
     if (teamLeaderCode) filters.teamLeaderCode = teamLeaderCode
     if (fieldUserRole) filters.fieldUserRole = fieldUserRole
     if (userCode) filters.userCode = userCode
@@ -31,10 +35,40 @@ export async function GET(request: Request) {
     if (productCode) filters.productCode = productCode
     if (productCategory) filters.productCategory = productCategory
 
-    const data = await getDailyTrend(filters)
+    const shouldCache = shouldCacheFilters(dateRange || null, startDate, endDate)
     const hasCustomDates = !!(startDate && endDate)
     const cacheDuration = getCacheDuration(dateRange || 'thisMonth', hasCustomDates)
-    return NextResponse.json({ trend: data, cached: true, cacheInfo: { duration: cacheDuration, dateRange: dateRange || 'thisMonth' } }, { headers: { 'Cache-Control': getCacheControlHeader(cacheDuration) } })
+
+    let data
+    if (shouldCache) {
+      const cacheKey = generateFilterCacheKey('daily-sales-trend', filters)
+      const cachedFetchTrend = unstable_cache(
+        async () => getDailyTrend(filters),
+        [cacheKey],
+        {
+          revalidate: cacheDuration,
+          tags: ['daily-sales-trend']
+        }
+      )
+      data = await cachedFetchTrend()
+    } else {
+      data = await getDailyTrend(filters)
+    }
+
+    return NextResponse.json({ 
+      trend: data, 
+      cached: shouldCache, 
+      cacheInfo: { 
+        duration: shouldCache ? cacheDuration : 0,
+        reason: shouldCache ? undefined : (dateRange === 'today' ? 'today' : 'custom-range')
+      } 
+    }, { 
+      headers: { 
+        'Cache-Control': shouldCache 
+          ? getCacheControlHeader(cacheDuration)
+          : 'no-cache, no-store, must-revalidate'
+      } 
+    })
   } catch (error) {
     console.error('Error in daily trend API:', error)
     return NextResponse.json(

@@ -10,9 +10,12 @@
  * @returns Cache duration in seconds
  */
 export function getCacheDuration(dateRange: string, hasCustomDates: boolean = false): number {
-  // Custom dates get medium cache (15 minutes)
+  // If custom dates represent a standard range, use longer cache
+  // Otherwise use medium cache for custom dates
   if (hasCustomDates) {
-    return 900
+    // Check if it's likely "this month" or similar standard range
+    // Use longer cache for standard ranges, shorter for truly custom
+    return 1800 // 30 minutes - increased for better performance
   }
   
   switch(dateRange.toLowerCase()) {
@@ -27,7 +30,7 @@ export function getCacheDuration(dateRange: string, hasCustomDates: boolean = fa
     case 'last7days':
       return 900 // 15 minutes
     
-    // Long cache - Daily updates
+    // Long cache - Daily updates (default case - most common)
     case 'thismonth':
     case 'last30days':
       return 1800 // 30 minutes
@@ -40,16 +43,16 @@ export function getCacheDuration(dateRange: string, hasCustomDates: boolean = fa
     case 'lastyear':
       return 3600 // 60 minutes
     
-    // Default medium cache
+    // Default medium cache (for unknown ranges, treat as standard)
     default:
-      return 900 // 15 minutes
+      return 1800 // 30 minutes - increased for better performance
   }
 }
 
 /**
- * Standard cache duration for filters (15 minutes)
+ * Standard cache duration for filters (30 minutes - increased for better performance)
  */
-export const FILTERS_CACHE_DURATION = 900
+export const FILTERS_CACHE_DURATION = 1800
 
 /**
  * Standard cache duration for static/configuration data (30 minutes)
@@ -111,4 +114,89 @@ export function createCachedResponse(
       'Cache-Control': getCacheControlHeader(cacheDuration)
     }
   }
+}
+
+/**
+ * Check if the provided dates represent a standard range (this month, last month, etc.)
+ * This helps cache default filter combinations even when startDate/endDate are provided
+ */
+function isStandardDateRange(startDate: string | null, endDate: string | null): boolean {
+  if (!startDate || !endDate) return false
+  
+  const start = new Date(startDate)
+  const end = new Date(endDate)
+  const today = new Date()
+  
+  // Check if it's "this month" (start of current month to today)
+  const thisMonthStart = new Date(today.getFullYear(), today.getMonth(), 1)
+  if (start.getTime() === thisMonthStart.getTime() && 
+      end.toDateString() === today.toDateString()) {
+    return true
+  }
+  
+  // Check if it's "last month" (start to end of previous month)
+  const lastMonthStart = new Date(today.getFullYear(), today.getMonth() - 1, 1)
+  const lastMonthEnd = new Date(today.getFullYear(), today.getMonth(), 0)
+  if (start.getTime() === lastMonthStart.getTime() && 
+      end.getTime() === lastMonthEnd.getTime()) {
+    return true
+  }
+  
+  // Check if it's "last 30 days" (approximately)
+  const daysDiff = Math.floor((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24))
+  if (daysDiff >= 25 && daysDiff <= 35) {
+    // Check if end date is today or yesterday
+    const endDaysAgo = Math.floor((today.getTime() - end.getTime()) / (1000 * 60 * 60 * 24))
+    if (endDaysAgo <= 1) {
+      return true
+    }
+  }
+  
+  return false
+}
+
+/**
+ * Check if caching should be applied based on date range parameters
+ * Caches standard date ranges even when startDate/endDate are provided
+ * Excludes "today" and truly custom date ranges
+ * @param range - The date range string (today, yesterday, thisWeek, etc.)
+ * @param startDate - Optional custom start date
+ * @param endDate - Optional custom end date
+ * @returns true if caching should be applied, false otherwise
+ */
+export function shouldCacheFilters(range?: string | null, startDate?: string | null, endDate?: string | null): boolean {
+  // Don't cache if range is "today"
+  if (range?.toLowerCase() === 'today') {
+    return false
+  }
+  
+  // If startDate and endDate are provided, check if it's a standard range
+  if (startDate && endDate) {
+    // Cache if it represents a standard date range (this month, last month, last 30 days)
+    if (isStandardDateRange(startDate, endDate)) {
+      return true
+    }
+    // Don't cache truly custom date ranges
+    return false
+  }
+  
+  // Cache all other cases (preset ranges without explicit dates)
+  return true
+}
+
+/**
+ * Generate a cache key for filter queries
+ * @param endpoint - The API endpoint name
+ * @param params - Object with filter parameters
+ * @returns A unique cache key string
+ */
+export function generateFilterCacheKey(endpoint: string, params: Record<string, string | null | undefined>): string {
+  // Sort params to ensure consistent cache keys
+  const sortedParams = Object.keys(params)
+    .sort()
+    .filter(key => params[key] != null && params[key] !== '')
+    .map(key => `${key}:${params[key]}`)
+    .join('|')
+  
+  return `filters:${endpoint}:${sortedParams || 'default'}`
 }

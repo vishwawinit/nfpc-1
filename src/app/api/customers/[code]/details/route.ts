@@ -1,5 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { query, db } from '@/lib/database'
+import { resolveTransactionsTable, getTransactionColumnExpressions } from '@/services/dailySalesService'
+
+export const dynamic = 'force-dynamic'
 
 export async function GET(
   request: NextRequest,
@@ -31,22 +34,27 @@ export async function GET(
     const customerResult = await query(customerQuery, [customerCode])
     
     if (customerResult.rows.length === 0) {
-      // If not in master, try to get from transactions
+      // If not in master, try to get from transactions using dynamic columns
+      const tableInfo = await resolveTransactionsTable()
+      const transactionsTable = tableInfo.name
+      const col = getTransactionColumnExpressions(tableInfo.columns)
+      
       const transCustomerQuery = `
         SELECT 
-          store_code as "customerCode",
-          MAX(store_name) as "customerName",
+          ${col.storeCode} as "customerCode",
+          MAX(${col.storeName}) as "customerName",
           '' as "address",
-          MAX(city_name) as "city",
-          MAX(region_name) as "region",
+          MAX(COALESCE(${col.storeCity}, 'Unknown')) as "city",
+          MAX(COALESCE(${col.storeRegion}, 'Unknown')) as "region",
           '' as "phone",
           '' as "email",
-          MAX(chain_name) as "chain",
+          MAX(COALESCE(c.chain_name, 'N/A')) as "chain",
           'N/A' as "classification",
           true as "isActive"
-        FROM flat_sales_transactions
-        WHERE store_code = $1
-        GROUP BY store_code
+        FROM ${transactionsTable} t
+        LEFT JOIN flat_customers_master c ON ${col.storeCode} = c.customer_code
+        WHERE ${col.storeCode} = $1
+        GROUP BY ${col.storeCode}
         LIMIT 1
       `
       

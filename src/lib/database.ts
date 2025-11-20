@@ -67,7 +67,7 @@ class DatabaseConnection {
       return result
     } catch (error) {
       console.error('Database query error:', error)
-      console.error('Query:', text)
+      console.error('Query:', text.substring(0, 200))
       console.error('Params:', params)
       throw error
     }

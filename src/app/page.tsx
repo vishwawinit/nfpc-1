@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, Suspense } from 'react'
+import { useState, Suspense, useEffect } from 'react'
 import { DynamicWorkingDashboard } from '../components/pages/DynamicWorkingDashboard'
 import { UserAttendanceReport } from '../components/pages/UserAttendanceReport'
 import { UserWiseJourneyAttendance } from '../components/pages/UserWiseJourneyAttendance'
@@ -87,6 +87,31 @@ function HomePageContent() {
   const [sidebarExpanded, setSidebarExpanded] = useState(true)
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false)
   const [expandedCategories, setExpandedCategories] = useState<string[]>([])
+  
+  // Date state to prevent hydration mismatch
+  const [currentDate, setCurrentDate] = useState<{
+    fullDate: string
+    weekday: string
+    day: string
+  }>({
+    fullDate: '',
+    weekday: '',
+    day: ''
+  })
+
+  // Set date only on client side after hydration
+  useEffect(() => {
+    const now = new Date()
+    setCurrentDate({
+      fullDate: now.toLocaleDateString('en-US', {
+        month: 'short',
+        day: 'numeric',
+        year: 'numeric'
+      }),
+      weekday: now.toLocaleDateString('en-US', { weekday: 'long' }),
+      day: now.toLocaleDateString('en-US', { day: 'numeric' })
+    })
+  }, [])
 
   const toggleCategory = (categoryId: string) => {
     setExpandedCategories(prev =>
@@ -105,7 +130,7 @@ function HomePageContent() {
         { id: 'dailyStockSale' as PageType, label: 'Daily Sales Report', icon: TrendingUp },
         { id: 'customersReport' as PageType, label: 'Customers Report', icon: Users },
         { id: 'targetAchievement' as PageType, label: 'Target Vs Achievement', icon: Target },
-        { id: 'ogpReport' as PageType, label: 'OGP Report', icon: BarChart3 },
+        { id: 'ogpReport' as PageType, label: 'Endorsement Report', icon: BarChart3 },
         { id: 'lmtdSecondary' as PageType, label: 'LMTD Secondary Sales Vs MTD', icon: BarChart3 },
       ]
     },
@@ -279,19 +304,15 @@ function HomePageContent() {
               {sidebarExpanded ? (
                 <div>
                   <div className="font-semibold text-gray-800">
-                    {new Date().toLocaleDateString('en-US', {
-                      month: 'short',
-                      day: 'numeric',
-                      year: 'numeric'
-                    })}
+                    {currentDate.fullDate || 'Loading...'}
                   </div>
                   <div className="mt-1 text-gray-500">
-                    {new Date().toLocaleDateString('en-US', { weekday: 'long' })}
+                    {currentDate.weekday || 'Loading...'}
                   </div>
                 </div>
               ) : (
                 <div className="font-semibold text-gray-800">
-                  {new Date().toLocaleDateString('en-US', { day: 'numeric' })}
+                  {currentDate.day || '...'}
                 </div>
               )}
             </div>

@@ -210,78 +210,129 @@ export function LMTDSecondaryReport() {
 
   const totalPages = Math.ceil(data.length / itemsPerPage)
 
-  // Chart data
+  // Chart data - properly filtered and sorted
   const chartData = useMemo(() => {
     if (!data.length) return { daily: [], products: [], stores: [], users: [] }
 
-    // Daily trend
-    const dailyMap = new Map()
-    data.forEach(d => {
-      const date = new Date(d.date).toLocaleDateString('en-GB')
-      if (!dailyMap.has(date)) {
-        dailyMap.set(date, {
-          date,
-          mtdRevenue: 0,
-          lmtdRevenue: 0
-        })
-      }
-      const item = dailyMap.get(date)
-      item.mtdRevenue += d.secondarySalesRevenueCurrentMonth
-      item.lmtdRevenue += d.secondarySalesRevenueLastMonth
+    // Filter data based on active filters (data is already filtered from API, but ensure consistency)
+    const filteredData = data.filter(d => {
+      // All filters are already applied at API level, but we can add client-side validation if needed
+      if (teamLeaderCode && d.tlCode !== teamLeaderCode) return false
+      if (userCode && d.fieldUserCode !== userCode) return false
+      if (storeCode && d.storeCode !== storeCode) return false
+      if (chainName && d.chainName !== chainName) return false
+      if (productCode && d.productCode !== productCode) return false
+      return true
     })
 
-    // Product data
-    const productMap = new Map()
-    data.forEach(d => {
+    // Daily trend - aggregate by date and sort chronologically
+    // The date field from API is COALESCE(m.sale_date, l.sale_date), which gives us the date to use
+    const dailyMap = new Map<string, { date: string, dateObj: Date, mtdRevenue: number, lmtdRevenue: number }>()
+    
+    filteredData.forEach(d => {
+      // Use the date field from the API response
+      if (!d.date) {
+        // Try to get date from mtdDate or lmtdDate if available
+        const altDate = (d as any).mtdDate || (d as any).lmtdDate
+        if (!altDate) return
+        d.date = altDate
+      }
+      
+      try {
+        const dateObj = new Date(d.date)
+        if (isNaN(dateObj.getTime())) {
+          console.warn('Invalid date in LMTD data:', d.date, d)
+          return
+        }
+        
+        const dateKey = dateObj.toISOString().split('T')[0]
+        const dateLabel = dateObj.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' })
+        
+        if (!dailyMap.has(dateKey)) {
+          dailyMap.set(dateKey, {
+            date: dateLabel,
+            dateObj,
+            mtdRevenue: 0,
+            lmtdRevenue: 0
+          })
+        }
+        
+        const item = dailyMap.get(dateKey)!
+        // Aggregate MTD and LMTD revenue
+        item.mtdRevenue += d.secondarySalesRevenueCurrentMonth || 0
+        item.lmtdRevenue += d.secondarySalesRevenueLastMonth || 0
+      } catch (error) {
+        console.warn('Error processing date in LMTD data:', d.date, error)
+      }
+    })
+
+    // Product data - aggregate by product
+    const productMap = new Map<string, { name: string, mtdRevenue: number, lmtdRevenue: number }>()
+    filteredData.forEach(d => {
+      if (!d.productCode) return
       if (!productMap.has(d.productCode)) {
         productMap.set(d.productCode, {
-          name: d.productName,
+          name: d.productName || d.productCode,
           mtdRevenue: 0,
           lmtdRevenue: 0
         })
       }
-      const item = productMap.get(d.productCode)
-      item.mtdRevenue += d.secondarySalesRevenueCurrentMonth
-      item.lmtdRevenue += d.secondarySalesRevenueLastMonth
+      const item = productMap.get(d.productCode)!
+      item.mtdRevenue += d.secondarySalesRevenueCurrentMonth || 0
+      item.lmtdRevenue += d.secondarySalesRevenueLastMonth || 0
     })
 
-    // Store data
-    const storeMap = new Map()
-    data.forEach(d => {
+    // Store data - aggregate by store
+    const storeMap = new Map<string, { name: string, mtdRevenue: number, lmtdRevenue: number }>()
+    filteredData.forEach(d => {
+      if (!d.storeCode) return
       if (!storeMap.has(d.storeCode)) {
         storeMap.set(d.storeCode, {
-          name: d.storeName,
+          name: d.storeName || d.storeCode,
           mtdRevenue: 0,
           lmtdRevenue: 0
         })
       }
-      const item = storeMap.get(d.storeCode)
-      item.mtdRevenue += d.secondarySalesRevenueCurrentMonth
-      item.lmtdRevenue += d.secondarySalesRevenueLastMonth
+      const item = storeMap.get(d.storeCode)!
+      item.mtdRevenue += d.secondarySalesRevenueCurrentMonth || 0
+      item.lmtdRevenue += d.secondarySalesRevenueLastMonth || 0
     })
 
-    // User data
-    const userMap = new Map()
-    data.forEach(d => {
+    // User data - aggregate by user
+    const userMap = new Map<string, { name: string, mtdRevenue: number, lmtdRevenue: number }>()
+    filteredData.forEach(d => {
+      if (!d.fieldUserCode) return
       if (!userMap.has(d.fieldUserCode)) {
         userMap.set(d.fieldUserCode, {
-          name: d.fieldUserName,
+          name: d.fieldUserName || d.fieldUserCode,
           mtdRevenue: 0,
           lmtdRevenue: 0
         })
       }
-      const item = userMap.get(d.fieldUserCode)
-      item.mtdRevenue += d.secondarySalesRevenueCurrentMonth
-      item.lmtdRevenue += d.secondarySalesRevenueLastMonth
+      const item = userMap.get(d.fieldUserCode)!
+      item.mtdRevenue += d.secondarySalesRevenueCurrentMonth || 0
+      item.lmtdRevenue += d.secondarySalesRevenueLastMonth || 0
     })
 
+    // Sort daily data chronologically
+    const dailyArray = Array.from(dailyMap.values()).sort((a, b) => a.dateObj.getTime() - b.dateObj.getTime())
+
     return {
-      daily: Array.from(dailyMap.values()),
-      products: Array.from(productMap.values()).sort((a, b) => b.mtdRevenue - a.mtdRevenue).slice(0, 10),
-      stores: Array.from(storeMap.values()).sort((a, b) => b.mtdRevenue - a.mtdRevenue).slice(0, 10),
-      users: Array.from(userMap.values()).sort((a, b) => b.mtdRevenue - a.mtdRevenue).slice(0, 10)
+      daily: dailyArray,
+      products: Array.from(productMap.values())
+        .filter(p => p.mtdRevenue > 0 || p.lmtdRevenue > 0)
+        .sort((a, b) => b.mtdRevenue - a.mtdRevenue)
+        .slice(0, 10),
+      stores: Array.from(storeMap.values())
+        .filter(s => s.mtdRevenue > 0 || s.lmtdRevenue > 0)
+        .sort((a, b) => b.mtdRevenue - a.mtdRevenue)
+        .slice(0, 10),
+      users: Array.from(userMap.values())
+        .filter(u => u.mtdRevenue > 0 || u.lmtdRevenue > 0)
+        .sort((a, b) => b.mtdRevenue - a.mtdRevenue)
+        .slice(0, 10)
     }
-  }, [data])
+  }, [data, teamLeaderCode, userCode, storeCode, chainName, productCode])
 
   const formatCurrency = (amount: number) => {
     return new Intl.NumberFormat('en-IN', {
@@ -676,8 +727,17 @@ export function LMTDSecondaryReport() {
               <h3 className="text-lg font-semibold text-gray-900">Daily Sales Trend</h3>
               <InfoTooltip content="Comparison of daily sales between current month (MTD) and last month (LMTD)" />
             </div>
-            <ResponsiveContainer width="100%" height={350}>
-              <LineChart data={chartData.daily} margin={{ top: 5, right: 30, left: 20, bottom: 70 }}>
+            {chartData.daily.length === 0 ? (
+              <div className="flex items-center justify-center h-[350px] text-gray-500">
+                <div className="text-center">
+                  <BarChart3 className="mx-auto text-gray-400 mb-2" size={32} />
+                  <p className="text-sm">No daily trend data available</p>
+                  <p className="text-xs text-gray-400 mt-1">Try adjusting the date range or filters</p>
+                </div>
+              </div>
+            ) : (
+              <ResponsiveContainer width="100%" height={350}>
+                <LineChart data={chartData.daily} margin={{ top: 5, right: 30, left: 20, bottom: 70 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
                 <XAxis 
                   dataKey="date" 
@@ -720,6 +780,7 @@ export function LMTDSecondaryReport() {
                 />
               </LineChart>
             </ResponsiveContainer>
+            )}
           </div>
 
           {/* Top 10 Products by MTD Revenue */}

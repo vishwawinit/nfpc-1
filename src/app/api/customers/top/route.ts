@@ -134,12 +134,12 @@ export async function GET(request: NextRequest) {
     const params: any[] = []
     let paramIndex = 1
 
-    // Optimized date range filter for better performance
+    // Optimized date range filter - use direct date comparison for index usage
     if (startDate && endDate) {
-      conditions.push(`DATE(t.transaction_date) >= $${paramIndex}`)
+      conditions.push(`t.transaction_date >= $${paramIndex}::date`)
       params.push(startDate)
       paramIndex++
-      conditions.push(`DATE(t.transaction_date) <= $${paramIndex}`)
+      conditions.push(`t.transaction_date < ($${paramIndex}::date + INTERVAL '1 day')`)
       params.push(endDate)
       paramIndex++
     }
@@ -234,13 +234,13 @@ export async function GET(request: NextRequest) {
     let queryParams = []
     let currentParamIndex = 1
     
-    // Add date conditions if they exist
+    // Add date conditions if they exist - optimized for index usage
     if (startDate && endDate) {
-      finalConditions.push(`DATE(t.transaction_date) >= $${currentParamIndex}`)
+      finalConditions.push(`t.transaction_date >= $${currentParamIndex}::date`)
       queryParams.push(startDate)
       currentParamIndex++
       
-      finalConditions.push(`DATE(t.transaction_date) <= $${currentParamIndex}`)
+      finalConditions.push(`t.transaction_date < ($${currentParamIndex}::date + INTERVAL '1 day')`)
       queryParams.push(endDate)
       currentParamIndex++
     }
@@ -266,6 +266,7 @@ export async function GET(request: NextRequest) {
     
     // Always include these base conditions
     finalConditions.push('t.customer_code IS NOT NULL')
+    finalConditions.push('t.order_total IS NOT NULL')
     finalConditions.push('COALESCE(t.quantity_bu, 0) != 0')
     
     const finalWhere = finalConditions.length > 0 ? `WHERE ${finalConditions.join(' AND ')}` : ''
@@ -289,15 +290,15 @@ export async function GET(request: NextRequest) {
         COALESCE(MAX(c.state), 'Unknown') as "state",
         COALESCE(MAX(c.sales_person_code), 'Unknown') as "salesPerson",
         COUNT(DISTINCT t.product_code) as "uniqueProducts",
-        COALESCE(SUM(ABS(COALESCE(t.net_amount, 0))), 0) as "totalSales",
-        CASE WHEN COUNT(*) > 0 THEN COALESCE(SUM(ABS(COALESCE(t.net_amount, 0))), 0) / COUNT(*) ELSE 0 END as "avgOrderValue",
+        COALESCE(SUM(CASE WHEN t.order_total > 0 THEN t.order_total ELSE 0 END), 0) as "totalSales",
+        CASE WHEN COUNT(*) > 0 THEN COALESCE(SUM(CASE WHEN t.order_total > 0 THEN t.order_total ELSE 0 END), 0) / COUNT(*) ELSE 0 END as "avgOrderValue",
         MAX(t.transaction_date) as "lastOrderDate",
         COALESCE(MAX(t.currency_code), 'AED') as "currency"
       FROM flat_transactions t
       LEFT JOIN flat_customers_master c ON t.customer_code = c.customer_code
       ${finalWhere}
       GROUP BY t.customer_code
-      ORDER BY SUM(ABS(COALESCE(t.quantity_bu, 0))) DESC 
+      ORDER BY SUM(CASE WHEN t.order_total > 0 THEN t.order_total ELSE 0 END) DESC 
       LIMIT $${currentParamIndex}
     `, queryParams)
 

@@ -124,14 +124,30 @@ export function TargetReport() {
       if (selectedTeamLeader) params.append('teamLeaderCode', selectedTeamLeader)
       if (selectedUser) params.append('userCode', selectedUser)
       
+      console.log('🔍 Fetching filter options with params:', params.toString())
       const response = await fetch(`/api/targets/filters?${params}`)
+      
+      if (!response.ok) {
+        const errorText = await response.text()
+        console.error('❌ Filters API Error:', response.status, errorText)
+        return
+      }
+      
       const result = await response.json()
+      console.log('🔍 Filters API Response:', {
+        success: result.success,
+        usersCount: result.data?.users?.length || 0,
+        teamLeadersCount: result.data?.teamLeaders?.length || 0,
+        customersCount: result.data?.customers?.length || 0
+      })
 
-      if (result.success) {
+      if (result.success && result.data) {
         setFilterOptions(result.data)
+      } else {
+        console.warn('⚠️ Filters API returned no data or error:', result.error)
       }
     } catch (err) {
-      console.error('Failed to fetch filter options:', err)
+      console.error('❌ Failed to fetch filter options:', err)
     }
   }
 
@@ -147,19 +163,56 @@ export function TargetReport() {
       if (selectedUser) params.append('userCode', selectedUser)
       if (selectedCustomer) params.append('customerCode', selectedCustomer)
       
+      console.log('📊 Fetching targets with params:', params.toString())
       const response = await fetch(`/api/targets?${params}`)
+      
+      if (!response.ok) {
+        const errorText = await response.text()
+        console.error('❌ API Error Response:', response.status, errorText)
+        throw new Error(`API returned ${response.status}: ${errorText}`)
+      }
+      
       const result = await response.json()
+      console.log('📊 Targets API Response:', {
+        success: result.success,
+        dataCount: result.data?.length || 0,
+        summary: result.summary,
+        error: result.error
+      })
 
       if (result.success) {
-        setTargets(result.data)
-        setSummary(result.summary)
+        // Ensure data is an array
+        const targetsData = Array.isArray(result.data) ? result.data : []
+        setTargets(targetsData)
+        
+        // Ensure summary exists with default values
+        setSummary(result.summary || {
+          totalTargets: targetsData.length,
+          totalTargetAmount: targetsData.reduce((sum: number, t: TargetData) => sum + (t.targetAmount || 0), 0),
+          totalAchievement: targetsData.reduce((sum: number, t: TargetData) => sum + (t.achievementAmount || 0), 0),
+          overallAchievementPercentage: 0,
+          targetsAchieved: targetsData.filter((t: TargetData) => (t.achievementPercentage || 0) >= 100).length,
+          targetsNotAchieved: targetsData.filter((t: TargetData) => (t.achievementPercentage || 0) < 100).length
+        })
+        
+        // Calculate overall achievement percentage if not provided
+        if (result.summary && result.summary.totalTargetAmount > 0 && !result.summary.overallAchievementPercentage) {
+          setSummary({
+            ...result.summary,
+            overallAchievementPercentage: (result.summary.totalAchievement / result.summary.totalTargetAmount) * 100
+          })
+        }
+        
         setCurrentPage(1) // Reset to first page on data change
       } else {
-        setError(result.error || 'Failed to fetch data')
+        const errorMsg = result.error || result.message || 'Failed to fetch data'
+        console.error('❌ API returned error:', errorMsg)
+        setError(errorMsg)
       }
     } catch (err) {
-      setError('Failed to fetch targets')
-      console.error(err)
+      const errorMsg = err instanceof Error ? err.message : 'Failed to fetch targets'
+      console.error('❌ Error fetching targets:', err)
+      setError(errorMsg)
     } finally {
       setLoading(false)
     }
@@ -389,20 +442,26 @@ export function TargetReport() {
               </div>
               <DollarSign className="w-8 h-8 text-emerald-600" />
             </div>
-            <p className="text-3xl font-bold text-gray-900">AED{(summary.totalTargetAmount / 1000000).toFixed(2)}M</p>
-            <p className="text-xs text-gray-500 mt-1">{summary.totalTargets} targets</p>
+            <p className="text-3xl font-bold text-gray-900">
+              AED{summary.totalTargetAmount ? (summary.totalTargetAmount / 1000000).toFixed(2) : '0.00'}M
+            </p>
+            <p className="text-xs text-gray-500 mt-1">{summary.totalTargets || 0} targets</p>
           </div>
 
           <div className="bg-white p-6 rounded-lg border border-gray-200 shadow-sm hover:shadow-md transition-shadow">
             <div className="flex items-center justify-between mb-2">
               <div className="flex items-center gap-2">
                 <p className="text-sm font-medium text-gray-600">Total Achievement</p>
-                <InfoTooltip content="Actual sales amount achieved against the targets from flat_sales_transactions (trx_type=5)" />
+                <InfoTooltip content="Actual sales amount achieved against the targets from transactions" />
               </div>
               <TrendingUp className="w-8 h-8 text-blue-600" />
             </div>
-            <p className="text-3xl font-bold text-blue-900">AED{(summary.totalAchievement / 1000000).toFixed(2)}M</p>
-            <p className="text-xs text-gray-500 mt-1">{summary.overallAchievementPercentage.toFixed(2)}% achieved</p>
+            <p className="text-3xl font-bold text-blue-900">
+              AED{summary.totalAchievement ? (summary.totalAchievement / 1000000).toFixed(2) : '0.00'}M
+            </p>
+            <p className="text-xs text-gray-500 mt-1">
+              {summary.overallAchievementPercentage ? summary.overallAchievementPercentage.toFixed(2) : '0.00'}% achieved
+            </p>
           </div>
 
           <div className="bg-white p-6 rounded-lg border border-gray-200 shadow-sm hover:shadow-md transition-shadow">
@@ -413,9 +472,11 @@ export function TargetReport() {
               </div>
               <TrendingUp className="w-8 h-8 text-blue-600" />
             </div>
-            <p className="text-3xl font-bold text-blue-600">{summary.overallAchievementPercentage.toFixed(2)}%</p>
+            <p className="text-3xl font-bold text-blue-600">
+              {summary.overallAchievementPercentage ? summary.overallAchievementPercentage.toFixed(2) : '0.00'}%
+            </p>
             <p className="text-xs text-gray-500 mt-1">
-              {summary.targetsAchieved} targets ≥100% • {summary.totalTargets - summary.targetsAchieved} targets &lt;100%
+              {summary.targetsAchieved || 0} targets ≥100% • {(summary.totalTargets || 0) - (summary.targetsAchieved || 0)} targets &lt;100%
             </p>
           </div>
 
@@ -427,7 +488,11 @@ export function TargetReport() {
               </div>
               <TrendingDown className="w-8 h-8 text-orange-600" />
             </div>
-            <p className="text-3xl font-bold text-orange-600">AED{((summary.totalTargetAmount - summary.totalAchievement) / 1000000).toFixed(2)}M</p>
+            <p className="text-3xl font-bold text-orange-600">
+              AED{summary.totalTargetAmount && summary.totalAchievement 
+                ? ((summary.totalTargetAmount - summary.totalAchievement) / 1000000).toFixed(2) 
+                : '0.00'}M
+            </p>
             <p className="text-xs text-gray-500 mt-1">Shortfall to reach target</p>
           </div>
         </div>
@@ -469,10 +534,13 @@ export function TargetReport() {
           <p className="font-semibold">Error</p>
           <p>{error}</p>
         </div>
-      ) : targets.length === 0 ? (
+      ) : targets.length === 0 && !error ? (
         <div className="bg-white rounded-lg shadow p-8 text-center">
           <Target className="mx-auto text-gray-400" size={48} />
           <p className="mt-4 text-gray-600">No targets found for the selected period</p>
+          <p className="mt-2 text-sm text-gray-500">
+            Try adjusting your filters or selecting a different year/month
+          </p>
         </div>
       ) : viewMode === 'summary' ? (
         /* SUMMARY VIEW - Charts and Analytics */

@@ -1,8 +1,109 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { query, db } from '@/lib/database'
+import { resolveTransactionsTable, getTransactionColumnExpressions } from '@/services/dailySalesService'
+import { unstable_cache } from 'next/cache'
+import { FILTERS_CACHE_DURATION, shouldCacheFilters, generateFilterCacheKey, getCacheControlHeader } from '@/lib/cache-utils'
 
 // Force dynamic rendering for routes that use searchParams
 export const dynamic = 'force-dynamic'
+
+// Internal function to fetch filters (will be cached)
+async function fetchCustomersFiltersV2Internal(
+  range: string,
+  startStr: string,
+  endStr: string,
+  transactionsTable: string,
+  col: any,
+  routeCodeExpr: string
+) {
+  const { query } = await import('@/lib/database')
+  
+  const whereClause = `
+    WHERE ${col.trxDateOnly} >= '${startStr}'
+    AND ${col.trxDateOnly} <= '${endStr}'
+  `
+
+  const regionsQuery = `
+    SELECT
+      COALESCE(c.state, ${col.storeRegion}, 'Unknown') as value,
+      COALESCE(c.state, ${col.storeRegion}, 'Unknown') || ' - ' || COALESCE(c.state, 'Unknown') as label,
+      COUNT(DISTINCT ${col.storeCode}) as count
+    FROM ${transactionsTable} t
+    LEFT JOIN flat_customers_master c ON ${col.storeCode} = c.customer_code
+    ${whereClause}
+    AND (c.state IS NOT NULL OR ${col.storeRegion} IS NOT NULL)
+    GROUP BY COALESCE(c.state, ${col.storeRegion}, 'Unknown')
+    ORDER BY value
+  `
+
+  const citiesQuery = `
+    SELECT
+      COALESCE(c.city, ${col.storeCity}, 'Unknown') as value,
+      COALESCE(c.city, ${col.storeCity}, 'Unknown') || ' - ' || COALESCE(c.city, 'Unknown City') as label,
+      COUNT(DISTINCT ${col.storeCode}) as count
+    FROM ${transactionsTable} t
+    LEFT JOIN flat_customers_master c ON ${col.storeCode} = c.customer_code
+    ${whereClause}
+    AND (c.city IS NOT NULL OR ${col.storeCity} IS NOT NULL)
+    GROUP BY COALESCE(c.city, ${col.storeCity}, 'Unknown')
+    ORDER BY value
+  `
+
+  const chainsQuery = `
+    SELECT
+      COALESCE(c.customer_type, 'Unknown') as value,
+      COALESCE(c.customer_type, 'Unknown Chain') as label,
+      COUNT(DISTINCT ${col.storeCode}) as count
+    FROM ${transactionsTable} t
+    LEFT JOIN flat_customers_master c ON ${col.storeCode} = c.customer_code
+    ${whereClause}
+    AND c.customer_type IS NOT NULL
+    GROUP BY c.customer_type
+    ORDER BY c.customer_type
+  `
+
+  const salesmenQuery = `
+    SELECT
+      ${col.fieldUserCode} as value,
+      ${col.fieldUserCode} || ' - ' || COALESCE(${col.fieldUserName}, 'Unknown User') as label,
+      COUNT(DISTINCT ${col.storeCode}) as count
+    FROM ${transactionsTable} t
+    ${whereClause}
+    AND ${col.fieldUserCode} IS NOT NULL
+    GROUP BY ${col.fieldUserCode}, ${col.fieldUserName}
+    ORDER BY ${col.fieldUserCode}
+  `
+
+  const routesQuery = routeCodeExpr === 'NULL'
+    ? `SELECT 'N/A' as value, 'No Route Column' as label, 0 as count WHERE false`
+    : `
+      SELECT
+        ${routeCodeExpr} as value,
+        ${routeCodeExpr} as label,
+        COUNT(DISTINCT ${col.storeCode}) as count
+      FROM ${transactionsTable} t
+      ${whereClause}
+      AND ${routeCodeExpr} IS NOT NULL
+      GROUP BY ${routeCodeExpr}
+      ORDER BY ${routeCodeExpr}
+    `
+
+  const [regionsResult, citiesResult, chainsResult, salesmenResult, routesResult] = await Promise.all([
+    query(regionsQuery, []),
+    query(citiesQuery, []),
+    query(chainsQuery, []),
+    query(salesmenQuery, []),
+    query(routesQuery, [])
+  ])
+
+  return {
+    regions: regionsResult.rows || [],
+    cities: citiesResult.rows || [],
+    chains: chainsResult.rows || [],
+    salesmen: salesmenResult.rows || [],
+    routes: routesResult.rows || []
+  }
+}
 
 export async function GET(request: NextRequest) {
   try {
@@ -43,124 +144,62 @@ export async function GET(request: NextRequest) {
     const endStr = endDate.toISOString().split('T')[0]
     
     await db.initialize()
+    
+    // Get table info and column expressions
+    const tableInfo = await resolveTransactionsTable()
+    const transactionsTable = tableInfo.name
+    const col = getTransactionColumnExpressions(tableInfo.columns)
+    
+    // Check if route_code column exists
+    const hasRouteCode = tableInfo.columns.has('route_code') || tableInfo.columns.has('user_route_code')
+    const routeCodeExpr = hasRouteCode 
+      ? (tableInfo.columns.has('route_code') ? 't.route_code' : 't.user_route_code')
+      : 'NULL'
 
-    const whereClause = `
-      WHERE trx_type = 5 
-      AND trx_date_only >= '${startStr}'
-      AND trx_date_only <= '${endStr}'
-    `
-
-    // Get total records count for debugging
-    const totalCountQuery = `
-      SELECT COUNT(*) as total
-      FROM flat_sales_transactions
-      ${whereClause}
-    `
-
-    // Get distinct regions
-    const regionsQuery = `
-      SELECT
-        region_code as value,
-        region_code || ' - ' || COALESCE(region_name, 'Unknown') as label,
-        COUNT(DISTINCT store_code) as count
-      FROM flat_sales_transactions
-      ${whereClause}
-      AND region_code IS NOT NULL
-      GROUP BY region_code, region_name
-      ORDER BY region_code
-    `
-
-    // Get distinct cities
-    const citiesQuery = `
-      SELECT
-        city_code as value,
-        city_code || ' - ' || COALESCE(city_name, 'Unknown City') as label,
-        COUNT(DISTINCT store_code) as count
-      FROM flat_sales_transactions
-      ${whereClause}
-      AND city_code IS NOT NULL
-      GROUP BY city_code, city_name
-      ORDER BY city_code
-    `
-
-    // Get distinct chains
-    const chainsQuery = `
-      SELECT
-        chain_code as value,
-        COALESCE(chain_name, 'Unknown Chain') as label,
-        COUNT(DISTINCT store_code) as count
-      FROM flat_sales_transactions
-      ${whereClause}
-      AND chain_code IS NOT NULL
-      GROUP BY chain_code, chain_name
-      ORDER BY chain_name
-    `
-
-    // Get distinct salesmen
-    const salesmenQuery = `
-      SELECT
-        field_user_code as value,
-        field_user_code || ' - ' || COALESCE(field_user_name, 'Unknown User') as label,
-        COUNT(DISTINCT store_code) as count
-      FROM flat_sales_transactions
-      ${whereClause}
-      AND field_user_code IS NOT NULL
-      GROUP BY field_user_code, field_user_name
-      ORDER BY field_user_code
-    `
-
-    // Get distinct routes
-    const routesQuery = `
-      SELECT
-        user_route_code as value,
-        user_route_code as label,
-        COUNT(DISTINCT store_code) as count
-      FROM flat_sales_transactions
-      ${whereClause}
-      AND user_route_code IS NOT NULL
-      GROUP BY user_route_code
-      ORDER BY user_route_code
-    `
-
-    // Execute all queries
-    const [totalCountResult, regionsResult, citiesResult, chainsResult, salesmenResult, routesResult] = await Promise.all([
-      query(totalCountQuery, []),
-      query(regionsQuery, []),
-      query(citiesQuery, []),
-      query(chainsQuery, []),
-      query(salesmenQuery, []),
-      query(routesQuery, [])
-    ])
-
-    // Log results for debugging
-    console.log('Customer Filters V2 - Date Range:', { startStr, endStr, range })
-    console.log('Customer Filters V2 - Total Records:', totalCountResult.rows?.[0]?.total || 0)
-    console.log('Customer Filters V2 - Results Count:', {
-      regions: regionsResult.rows?.length || 0,
-      cities: citiesResult.rows?.length || 0,
-      chains: chainsResult.rows?.length || 0,
-      salesmen: salesmenResult.rows?.length || 0,
-      routes: routesResult.rows?.length || 0
+    // Check if we should cache (exclude "today" range)
+    const shouldCache = shouldCacheFilters(range, null, null)
+    
+    const cacheKey = generateFilterCacheKey('customers-v2', {
+      range,
+      startStr,
+      endStr,
+      table: transactionsTable
     })
-    console.log('Customer Filters V2 - Sample Region:', regionsResult.rows?.[0])
-    console.log('Customer Filters V2 - Sample City:', citiesResult.rows?.[0])
-    console.log('Customer Filters V2 - Sample Chain:', chainsResult.rows?.[0])
+
+    let filterData
+    if (shouldCache) {
+      // Fetch with caching
+      const cachedFetchFilters = unstable_cache(
+        async () => fetchCustomersFiltersV2Internal(range, startStr, endStr, transactionsTable, col, routeCodeExpr),
+        [cacheKey],
+        {
+          revalidate: FILTERS_CACHE_DURATION,
+          tags: ['customers-filters-v2', `customers-filters-${transactionsTable}`]
+        }
+      )
+      filterData = await cachedFetchFilters()
+    } else {
+      // No caching - execute directly
+      filterData = await fetchCustomersFiltersV2Internal(range, startStr, endStr, transactionsTable, col, routeCodeExpr)
+    }
 
     return NextResponse.json({
       success: true,
-      filters: {
-        regions: regionsResult.rows || [],
-        cities: citiesResult.rows || [],
-        chains: chainsResult.rows || [],
-        salesmen: salesmenResult.rows || [],
-        routes: routesResult.rows || []
-      },
+      filters: filterData,
       dateRange: {
         start: startStr,
         end: endStr,
         label: range
       },
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
+      cached: shouldCache,
+      cacheInfo: shouldCache ? { duration: FILTERS_CACHE_DURATION } : { duration: 0, reason: 'today' }
+    }, {
+      headers: {
+        'Cache-Control': shouldCache 
+          ? getCacheControlHeader(FILTERS_CACHE_DURATION)
+          : 'no-cache, no-store, must-revalidate'
+      }
     })
 
   } catch (error) {

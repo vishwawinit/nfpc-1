@@ -1,6 +1,5 @@
 /**
- * MSSQL access has been disabled for the local build. All hierarchy helpers now
- * return permissive defaults so the application runs without authentication.
+ * Authentication removed - all hierarchy helpers return permissive defaults
  */
 
 export async function getMSSQLConnection() {
@@ -11,10 +10,12 @@ export async function closeMSSQLConnection() {
   // no-op
 }
 
+// Authentication removed - return empty array (no user restrictions)
 export async function getChildUsers(_userCode: string): Promise<string[]> {
-      return []
-    }
+  return []
+}
 
+// Authentication removed - everyone is admin
 export function isAdmin(_userCode: string): boolean {
   return true
 }

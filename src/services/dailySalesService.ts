@@ -84,11 +84,13 @@ export function getTransactionColumnExpressions(columns: Set<string>) {
         ? 'COALESCE(t.net_amount, 0)'
         : '0',
     discountValue: has('total_discount_amount') ? 'COALESCE(t.total_discount_amount, 0)' : '0',
-    netAmountValue: has('net_amount')
-      ? 'COALESCE(t.net_amount, t.line_amount, 0)'
-      : has('line_amount')
-        ? 'COALESCE(t.line_amount, 0)'
-        : '0',
+    netAmountValue: has('order_total')
+      ? 'COALESCE(t.order_total, 0)'
+      : has('net_amount')
+        ? 'COALESCE(t.net_amount, t.line_amount, 0)'
+        : has('line_amount')
+          ? 'COALESCE(t.line_amount, 0)'
+          : '0',
     productGroup1: has('product_group_level1') ? 't.product_group_level1' : 'NULL',
     productGroup2: has('product_group_level2') ? 't.product_group_level2' : 'NULL',
     productGroup3: has('product_group_level3') ? 't.product_group_level3' : 'NULL',
@@ -299,6 +301,102 @@ export const getDailySalesSummary = async (filters: any = {}) => {
 
   console.log('Daily Sales Summary: Fetching data for date range:', { startDateStr, endDateStr, filters })
 
+  // Check if this is default filters (only date range, no other filters)
+  const isDefaultFilters = !filters.regionCode && !filters.cityCode && !filters.teamLeaderCode && 
+                           !filters.fieldUserRole && !filters.userCode && !filters.chainName && 
+                           !filters.storeCode && !filters.productCode && !filters.productCategory
+
+  // Optimize: Only join when filters require it
+  const needsJoin = !isDefaultFilters && (filters.regionCode || filters.cityCode || filters.teamLeaderCode || filters.chainName)
+
+  const params: any[] = [startDateStr, endDateStr]
+  let paramCount = 3
+  const whereConditions: string[] = []
+
+  // Optimized WHERE clause - date filter first for index usage
+  whereConditions.push(`${col.trxDateOnly} >= $1`)
+  whereConditions.push(`${col.trxDateOnly} <= $2`)
+  whereConditions.push(`t.order_total IS NOT NULL`)
+
+  // Apply filters with proper column references
+  if (filters.regionCode) {
+    if (col.storeRegion === 'NULL') {
+      whereConditions.push(`c.state = $${paramCount}`)
+    } else {
+      whereConditions.push(`COALESCE(t.${col.storeRegion}, c.state) = $${paramCount}`)
+    }
+    params.push(filters.regionCode)
+    paramCount++
+  }
+
+  if (filters.cityCode) {
+    if (col.storeCity === 'NULL') {
+      whereConditions.push(`c.city = $${paramCount}`)
+    } else {
+      whereConditions.push(`COALESCE(t.${col.storeCity}, c.city) = $${paramCount}`)
+    }
+    params.push(filters.cityCode)
+    paramCount++
+  }
+
+  if (filters.teamLeaderCode) {
+    if (col.tlCode === 'NULL') {
+      whereConditions.push(`c.sales_person_code = $${paramCount}`)
+    } else {
+      whereConditions.push(`COALESCE(t.${col.tlCode}, c.sales_person_code) = $${paramCount}`)
+    }
+    params.push(filters.teamLeaderCode)
+    paramCount++
+  }
+
+  if (filters.fieldUserRole) {
+    if (col.fieldUserType !== 'NULL') {
+      whereConditions.push(`COALESCE(t.${col.fieldUserType}, 'Field User') = $${paramCount}`)
+    params.push(filters.fieldUserRole)
+    paramCount++
+    }
+  }
+
+  if (filters.userCode) {
+    whereConditions.push(`t.${col.fieldUserCode} = $${paramCount}`)
+    params.push(filters.userCode)
+    paramCount++
+  }
+
+  if (filters.chainName) {
+    if (col.storeClass === 'NULL') {
+      whereConditions.push(`COALESCE(c.customer_type, 'Unknown') = $${paramCount}`)
+    } else {
+      whereConditions.push(`COALESCE(c.customer_type, t.${col.storeClass}, 'Unknown') = $${paramCount}`)
+    }
+    params.push(filters.chainName)
+    paramCount++
+  }
+
+  if (filters.storeCode) {
+    whereConditions.push(`t.${col.storeCode} = $${paramCount}`)
+    params.push(filters.storeCode)
+    paramCount++
+  }
+
+  if (filters.productCode) {
+    whereConditions.push(`t.product_code = $${paramCount}`)
+    params.push(filters.productCode)
+    paramCount++
+  }
+
+  if (filters.productCategory) {
+    if (col.productGroup1 !== 'NULL') {
+      whereConditions.push(`t.${col.productGroup1} = $${paramCount}`)
+    params.push(filters.productCategory)
+    paramCount++
+  }
+  }
+
+  const whereClause = `WHERE ${whereConditions.join(' AND ')}`
+  const joinClause = needsJoin ? `LEFT JOIN flat_customers_master c ON t.${col.storeCode} = c.customer_code` : ''
+
+  // Optimized query for default filters - no unnecessary JOIN
   let sql = `
     SELECT
       COUNT(DISTINCT ${col.trxCode}) as total_orders,
@@ -306,75 +404,15 @@ export const getDailySalesSummary = async (filters: any = {}) => {
       COUNT(DISTINCT t.product_code) as total_products,
       COUNT(DISTINCT ${col.fieldUserCode}) as total_users,
       COALESCE(SUM(ABS(${col.quantityValue})), 0) as total_quantity,
-      COALESCE(SUM(CASE WHEN (${col.netAmountValue}) >= 0 THEN (${col.netAmountValue}) ELSE 0 END), 0) as gross_sales,
+      COALESCE(SUM(CASE WHEN (${col.netAmountValue}) > 0 THEN (${col.netAmountValue}) ELSE 0 END), 0) as gross_sales,
       COALESCE(SUM(CASE WHEN (${col.netAmountValue}) < 0 THEN ABS(${col.netAmountValue}) ELSE 0 END), 0) as return_sales,
       COALESCE(SUM(ABS(${col.discountValue})), 0) as total_discount,
       COALESCE(SUM(${col.netAmountValue}), 0) as total_net_sales,
       COALESCE(MAX(t.currency_code), 'AED') as currency_code
     FROM ${transactionsTable} t
-    LEFT JOIN flat_customers_master c ON ${col.storeCode} = c.customer_code
-    WHERE ${col.trxDateOnly} >= $1 AND ${col.trxDateOnly} <= $2
+    ${joinClause}
+    ${whereClause}
   `
-
-  const params: any[] = [startDateStr, endDateStr]
-  let paramCount = 3
-
-  // Apply filters with proper column references
-  if (filters.regionCode) {
-    sql += ` AND COALESCE(${col.storeRegion}, c.state) = $${paramCount}`
-    params.push(filters.regionCode)
-    paramCount++
-  }
-
-  if (filters.cityCode) {
-    sql += ` AND COALESCE(${col.storeCity}, c.city) = $${paramCount}`
-    params.push(filters.cityCode)
-    paramCount++
-  }
-
-  if (filters.teamLeaderCode) {
-    sql += ` AND COALESCE(${col.tlCode}, c.sales_person_code) = $${paramCount}`
-    params.push(filters.teamLeaderCode)
-    paramCount++
-  }
-
-  if (filters.fieldUserRole) {
-    sql += ` AND COALESCE(${col.fieldUserType}, 'Field User') = $${paramCount}`
-    params.push(filters.fieldUserRole)
-    paramCount++
-  }
-
-  if (filters.userCode) {
-    sql += ` AND ${col.fieldUserCode} = $${paramCount}`
-    params.push(filters.userCode)
-    paramCount++
-  }
-
-  if (filters.chainName) {
-    sql += ` AND COALESCE(c.customer_type, ${col.storeClass}, 'Unknown') = $${paramCount}`
-    params.push(filters.chainName)
-    paramCount++
-  }
-
-  if (filters.storeCode) {
-    sql += ` AND ${col.storeCode} = $${paramCount}`
-    params.push(filters.storeCode)
-    paramCount++
-  }
-
-  if (filters.productCode) {
-    sql += ` AND t.product_code = $${paramCount}`
-    params.push(filters.productCode)
-    paramCount++
-  }
-
-  if (filters.productCategory) {
-    if (col.productGroup1 !== 'NULL') {
-      sql += ` AND ${col.productGroup1} = $${paramCount}`
-    params.push(filters.productCategory)
-    paramCount++
-  }
-  }
 
   console.log('Daily Sales Summary: Executing query with params:', params)
   const result = await query(sql, params)
@@ -438,9 +476,116 @@ export const getDailyTrend = async (filters: any = {}) => {
 
   console.log('Daily Trend: Fetching data for date range:', { startDateStr, endDateStr, filters })
 
-  let sql = `
+  // Check if this is default filters (only date range, no other filters) - optimize for speed
+  const isDefaultFilters = !filters.regionCode && !filters.cityCode && !filters.teamLeaderCode && 
+                           !filters.fieldUserRole && !filters.userCode && !filters.chainName && 
+                           !filters.storeCode && !filters.productCode && !filters.productCategory
+
+  // Only join when filters require it - skip JOIN for default filters for maximum speed
+  const needsAnyJoin = !isDefaultFilters && !!(filters.regionCode || filters.cityCode || filters.teamLeaderCode || filters.chainName)
+
+  const params: any[] = [startDateStr, endDateStr]
+  let paramCount = 3
+  const whereConditions: string[] = []
+  
+  // Optimized WHERE conditions - date filter first for index usage
+  whereConditions.push(`${col.trxDateOnly} >= $1`)
+  whereConditions.push(`${col.trxDateOnly} <= $2`)
+  whereConditions.push(`t.order_total IS NOT NULL`)
+
+  // Apply filters with proper column references
+  // For flat_transactions, region and city come from flat_customers_master
+  if (filters.regionCode) {
+    if (col.storeRegion === 'NULL') {
+      whereConditions.push(`c.state = $${paramCount}`)
+    } else {
+      whereConditions.push(`COALESCE(t.${col.storeRegion}, c.state) = $${paramCount}`)
+    }
+    params.push(filters.regionCode)
+    paramCount++
+  }
+
+  if (filters.cityCode) {
+    if (col.storeCity === 'NULL') {
+      whereConditions.push(`c.city = $${paramCount}`)
+    } else {
+      whereConditions.push(`COALESCE(t.${col.storeCity}, c.city) = $${paramCount}`)
+    }
+    params.push(filters.cityCode)
+    paramCount++
+  }
+
+  if (filters.teamLeaderCode) {
+    if (col.tlCode === 'NULL') {
+      whereConditions.push(`c.sales_person_code = $${paramCount}`)
+    } else {
+      whereConditions.push(`COALESCE(t.${col.tlCode}, c.sales_person_code) = $${paramCount}`)
+    }
+    params.push(filters.teamLeaderCode)
+    paramCount++
+  }
+
+  if (filters.fieldUserRole) {
+    if (col.fieldUserType === 'NULL') {
+      // Skip this filter if fieldUserType is not available
+    } else {
+      whereConditions.push(`COALESCE(t.${col.fieldUserType}, 'Field User') = $${paramCount}`)
+    params.push(filters.fieldUserRole)
+    paramCount++
+    }
+  }
+
+  if (filters.userCode) {
+    whereConditions.push(`t.${col.fieldUserCode} = $${paramCount}`)
+    params.push(filters.userCode)
+    paramCount++
+  }
+
+  if (filters.chainName) {
+    if (col.storeClass === 'NULL') {
+      whereConditions.push(`COALESCE(c.customer_type, 'Unknown') = $${paramCount}`)
+    } else {
+      whereConditions.push(`COALESCE(c.customer_type, t.${col.storeClass}, 'Unknown') = $${paramCount}`)
+    }
+    params.push(filters.chainName)
+    paramCount++
+  }
+
+  if (filters.storeCode) {
+    whereConditions.push(`t.${col.storeCode} = $${paramCount}`)
+    params.push(filters.storeCode)
+    paramCount++
+  }
+
+  if (filters.productCode) {
+    whereConditions.push(`t.product_code = $${paramCount}`)
+    params.push(filters.productCode)
+    paramCount++
+  }
+
+  if (filters.productCategory) {
+    if (col.productGroup1 === 'NULL') {
+      // Join with product master to get category
+      whereConditions.push(`t.product_code IN (SELECT product_code FROM flat_products_master WHERE product_category = $${paramCount})`)
+      params.push(filters.productCategory)
+      paramCount++
+    } else {
+      whereConditions.push(`t.${col.productGroup1} = $${paramCount}`)
+    params.push(filters.productCategory)
+    paramCount++
+  }
+  }
+  
+  // Build final SQL with proper JOIN
+  const whereClause = `WHERE ${whereConditions.join(' AND ')}`
+  const joinClause = needsAnyJoin ? `LEFT JOIN flat_customers_master c ON t.${col.storeCode} = c.customer_code` : ''
+  
+  // Optimized query - use date expression variable for consistency
+  const dateExpr = col.trxDateOnly.startsWith('DATE(') ? col.trxDateOnly : `t.${col.trxDateOnly}`
+  
+  const sql = `
     SELECT
-      ${col.trxDateOnly} as date,
+      ${dateExpr}::date as date,
       COUNT(DISTINCT ${col.trxCode}) as orders,
       COALESCE(SUM(ABS(${col.quantityValue})), 0) as quantity,
       COALESCE(SUM(${col.netAmountValue}), 0) as sales,
@@ -448,69 +593,11 @@ export const getDailyTrend = async (filters: any = {}) => {
       COUNT(DISTINCT ${col.storeCode}) as customers,
       COUNT(DISTINCT t.product_code) as products
     FROM ${transactionsTable} t
-    LEFT JOIN flat_customers_master c ON ${col.storeCode} = c.customer_code
-    WHERE ${col.trxDateOnly} >= $1 AND ${col.trxDateOnly} <= $2
+    ${joinClause}
+    ${whereClause}
+    GROUP BY ${dateExpr}::date
+    ORDER BY ${dateExpr}::date ASC
   `
-
-  const params: any[] = [startDateStr, endDateStr]
-  let paramCount = 3
-
-  // Apply filters with proper column references
-  if (filters.regionCode) {
-    sql += ` AND COALESCE(${col.storeRegion}, c.state) = $${paramCount}`
-    params.push(filters.regionCode)
-    paramCount++
-  }
-
-  if (filters.cityCode) {
-    sql += ` AND COALESCE(${col.storeCity}, c.city) = $${paramCount}`
-    params.push(filters.cityCode)
-    paramCount++
-  }
-
-  if (filters.teamLeaderCode) {
-    sql += ` AND COALESCE(${col.tlCode}, c.sales_person_code) = $${paramCount}`
-    params.push(filters.teamLeaderCode)
-    paramCount++
-  }
-
-  if (filters.fieldUserRole) {
-    sql += ` AND COALESCE(${col.fieldUserType}, 'Field User') = $${paramCount}`
-    params.push(filters.fieldUserRole)
-    paramCount++
-  }
-
-  if (filters.userCode) {
-    sql += ` AND ${col.fieldUserCode} = $${paramCount}`
-    params.push(filters.userCode)
-    paramCount++
-  }
-
-  if (filters.chainName) {
-    sql += ` AND COALESCE(c.customer_type, ${col.storeClass}, 'Unknown') = $${paramCount}`
-    params.push(filters.chainName)
-    paramCount++
-  }
-
-  if (filters.storeCode) {
-    sql += ` AND ${col.storeCode} = $${paramCount}`
-    params.push(filters.storeCode)
-    paramCount++
-  }
-
-  if (filters.productCode) {
-    sql += ` AND t.product_code = $${paramCount}`
-    params.push(filters.productCode)
-    paramCount++
-  }
-
-  if (filters.productCategory && col.productGroup1 !== 'NULL') {
-    sql += ` AND ${col.productGroup1} = $${paramCount}`
-    params.push(filters.productCategory)
-    paramCount++
-  }
-  
-  sql += ` GROUP BY ${col.trxDateOnly} ORDER BY ${col.trxDateOnly}`
 
   console.log('Daily Trend: Executing query with params:', params)
   const result = await query(sql, params)
@@ -550,7 +637,41 @@ export const getProductPerformance = async (filters: any = {}) => {
   const { name: transactionsTable, columns } = await resolveTransactionsTable()
   const col = getTransactionColumnExpressions(columns)
 
-  let sql = `
+  // Optimize: Check if default filters
+  const isDefaultFilters = !filters.userCode && !filters.storeCode && !filters.productCategory
+
+  const params: any[] = [startDateStr, endDateStr]
+  let paramCount = 3
+  const whereConditions: string[] = []
+
+  // Optimized WHERE - date filter first for index usage
+  whereConditions.push(`${col.trxDateOnly} >= $1`)
+  whereConditions.push(`${col.trxDateOnly} <= $2`)
+  whereConditions.push(`t.product_code IS NOT NULL`)
+  whereConditions.push(`t.order_total IS NOT NULL`)
+
+  if (filters.userCode) {
+    whereConditions.push(`t.${col.fieldUserCode} = $${paramCount}`)
+    params.push(filters.userCode)
+    paramCount++
+  }
+
+  if (filters.storeCode) {
+    whereConditions.push(`t.${col.storeCode} = $${paramCount}`)
+    params.push(filters.storeCode)
+    paramCount++
+  }
+  
+  if (filters.productCategory && col.productGroup1 !== 'NULL') {
+    whereConditions.push(`t.${col.productGroup1} = $${paramCount}`)
+    params.push(filters.productCategory)
+    paramCount++
+  }
+
+  const whereClause = `WHERE ${whereConditions.join(' AND ')}`
+
+  // Optimized query - no unnecessary columns for default filters
+  const sql = `
     SELECT
       t.product_code as "productCode",
       COALESCE(MAX(t.product_name), t.product_code) as "productName",
@@ -566,32 +687,7 @@ export const getProductPerformance = async (filters: any = {}) => {
       COALESCE(SUM(ABS(${col.netAmountValue})), 0) as net_sales,
       COALESCE(AVG(NULLIF(ABS(${col.lineAmountValue}), 0)), 0) as avg_price
     FROM ${transactionsTable} t
-    WHERE ${col.trxDateOnly} >= $1 AND ${col.trxDateOnly} <= $2
-      AND t.product_code IS NOT NULL
-  `
-
-  const params: any[] = [startDateStr, endDateStr]
-  let paramCount = 3
-
-  if (filters.userCode) {
-    sql += ` AND ${col.fieldUserCode} = $${paramCount}`
-    params.push(filters.userCode)
-    paramCount++
-  }
-
-  if (filters.storeCode) {
-    sql += ` AND ${col.storeCode} = $${paramCount}`
-    params.push(filters.storeCode)
-    paramCount++
-  }
-  
-  if (filters.productCategory && col.productGroup1 !== 'NULL') {
-    sql += ` AND ${col.productGroup1} = $${paramCount}`
-    params.push(filters.productCategory)
-    paramCount++
-  }
-
-  sql += `
+    ${whereClause}
     GROUP BY t.product_code
     ORDER BY net_sales DESC
     LIMIT 100
@@ -632,13 +728,59 @@ export const getStorePerformance = async (filters: any = {}) => {
   const { name: transactionsTable, columns } = await resolveTransactionsTable()
   const col = getTransactionColumnExpressions(columns)
 
-  let sql = `
+  // Optimize: Check if default filters
+  const isDefaultFilters = !filters.regionCode && !filters.userCode && !filters.productCode && !filters.productCategory
+  const needsJoin = !isDefaultFilters && filters.regionCode
+
+  const params: any[] = [startDateStr, endDateStr]
+  let paramCount = 3
+  const whereConditions: string[] = []
+
+  // Optimized WHERE - date filter first for index usage
+  whereConditions.push(`${col.trxDateOnly} >= $1`)
+  whereConditions.push(`${col.trxDateOnly} <= $2`)
+  whereConditions.push(`t.order_total IS NOT NULL`)
+  whereConditions.push(`t.${col.storeCode} IS NOT NULL`)
+
+  if (filters.regionCode) {
+    if (col.storeRegion === 'NULL') {
+      whereConditions.push(`c.state = $${paramCount}`)
+    } else {
+      whereConditions.push(`COALESCE(t.${col.storeRegion}, c.state) = $${paramCount}`)
+    }
+    params.push(filters.regionCode)
+    paramCount++
+  }
+
+  if (filters.userCode) {
+    whereConditions.push(`t.${col.fieldUserCode} = $${paramCount}`)
+    params.push(filters.userCode)
+    paramCount++
+  }
+
+  if (filters.productCode) {
+    whereConditions.push(`t.product_code = $${paramCount}`)
+    params.push(filters.productCode)
+    paramCount++
+  }
+  
+  if (filters.productCategory && col.productGroup1 !== 'NULL') {
+    whereConditions.push(`t.${col.productGroup1} = $${paramCount}`)
+    params.push(filters.productCategory)
+    paramCount++
+  }
+
+  const whereClause = `WHERE ${whereConditions.join(' AND ')}`
+  const joinClause = needsJoin ? `LEFT JOIN flat_customers_master c ON t.${col.storeCode} = c.customer_code` : ''
+
+  // Optimized query - conditional JOIN only when needed
+  const sql = `
     SELECT
-      ${col.storeCode} as "storeCode",
-      COALESCE(MAX(${col.storeName}), MAX(c.customer_name), 'Unknown Store') as "storeName",
-      COALESCE(MAX(c.customer_type), MAX(${col.storeClass}), 'Unknown') as "storeClass",
-      COALESCE(MAX(${col.storeCity}), MAX(c.city), 'Unknown') as "cityCode",
-      COALESCE(MAX(${col.storeRegion}), MAX(c.state), 'Unknown') as "regionCode",
+      t.${col.storeCode} as "storeCode",
+      ${needsJoin ? `COALESCE(MAX(${col.storeName === 'NULL' ? 'NULL' : `t.${col.storeName}`}), MAX(c.customer_name), 'Unknown Store')` : `COALESCE(MAX(${col.storeName === 'NULL' ? 'NULL' : `t.${col.storeName}`}), 'Unknown Store')`} as "storeName",
+      ${needsJoin ? `COALESCE(MAX(c.customer_type), MAX(${col.storeClass === 'NULL' ? 'NULL' : `t.${col.storeClass}`}), 'Unknown')` : `COALESCE(MAX(${col.storeClass === 'NULL' ? 'NULL' : `t.${col.storeClass}`}), 'Unknown')`} as "storeClass",
+      ${needsJoin ? `COALESCE(MAX(${col.storeCity === 'NULL' ? 'NULL' : `t.${col.storeCity}`}), MAX(c.city), 'Unknown')` : `COALESCE(MAX(${col.storeCity === 'NULL' ? 'NULL' : `t.${col.storeCity}`}), 'Unknown')`} as "cityCode",
+      ${needsJoin ? `COALESCE(MAX(${col.storeRegion === 'NULL' ? 'NULL' : `t.${col.storeRegion}`}), MAX(c.state), 'Unknown')` : `COALESCE(MAX(${col.storeRegion === 'NULL' ? 'NULL' : `t.${col.storeRegion}`}), 'Unknown')`} as "regionCode",
       'Unknown' as "countryCode",
       COUNT(DISTINCT ${col.trxCode}) as orders,
       COUNT(DISTINCT t.product_code) as products,
@@ -649,39 +791,9 @@ export const getStorePerformance = async (filters: any = {}) => {
       COALESCE(SUM(ABS(${col.netAmountValue})), 0) as net_sales,
       COALESCE(AVG(NULLIF(ABS(${col.netAmountValue}), 0)), 0) as avg_order_value
     FROM ${transactionsTable} t
-    LEFT JOIN flat_customers_master c ON ${col.storeCode} = c.customer_code
-    WHERE ${col.trxDateOnly} >= $1 AND ${col.trxDateOnly} <= $2
-  `
-
-  const params: any[] = [startDateStr, endDateStr]
-  let paramCount = 3
-
-  if (filters.regionCode) {
-    sql += ` AND COALESCE(${col.storeRegion}, c.state) = $${paramCount}`
-    params.push(filters.regionCode)
-    paramCount++
-  }
-
-  if (filters.userCode) {
-    sql += ` AND ${col.fieldUserCode} = $${paramCount}`
-    params.push(filters.userCode)
-    paramCount++
-  }
-
-  if (filters.productCode) {
-    sql += ` AND t.product_code = $${paramCount}`
-    params.push(filters.productCode)
-    paramCount++
-  }
-  
-  if (filters.productCategory && col.productGroup1 !== 'NULL') {
-    sql += ` AND ${col.productGroup1} = $${paramCount}`
-    params.push(filters.productCategory)
-    paramCount++
-  }
-
-  sql += `
-    GROUP BY ${col.storeCode}
+    ${joinClause}
+    ${whereClause}
+    GROUP BY t.${col.storeCode}
     ORDER BY net_sales DESC
     LIMIT 100
   `
@@ -722,7 +834,41 @@ export const getUserPerformance = async (filters: any = {}) => {
   const { name: transactionsTable, columns } = await resolveTransactionsTable()
   const col = getTransactionColumnExpressions(columns)
 
-  let sql = `
+  // Optimize: Check if default filters
+  const isDefaultFilters = !filters.storeCode && !filters.productCode && !filters.productCategory
+
+  const params: any[] = [startDateStr, endDateStr]
+  let paramCount = 3
+  const whereConditions: string[] = []
+
+  // Optimized WHERE - date filter first for index usage
+  whereConditions.push(`${col.trxDateOnly} >= $1`)
+  whereConditions.push(`${col.trxDateOnly} <= $2`)
+  whereConditions.push(`t.${col.fieldUserCode} IS NOT NULL`)
+  whereConditions.push(`t.order_total IS NOT NULL`)
+
+  if (filters.storeCode) {
+    whereConditions.push(`t.${col.storeCode} = $${paramCount}`)
+    params.push(filters.storeCode)
+    paramCount++
+  }
+
+  if (filters.productCode) {
+    whereConditions.push(`t.product_code = $${paramCount}`)
+    params.push(filters.productCode)
+    paramCount++
+  }
+  
+  if (filters.productCategory && col.productGroup1 !== 'NULL') {
+    whereConditions.push(`t.${col.productGroup1} = $${paramCount}`)
+    params.push(filters.productCategory)
+    paramCount++
+  }
+
+  const whereClause = `WHERE ${whereConditions.join(' AND ')}`
+
+  // Optimized query - no unnecessary operations
+  const sql = `
     SELECT
       ${col.fieldUserCode} as "userCode",
       COALESCE(${col.fieldUserName}, ${col.fieldUserCode}) as "userName",
@@ -736,32 +882,7 @@ export const getUserPerformance = async (filters: any = {}) => {
       COALESCE(SUM(ABS(${col.netAmountValue})), 0) as net_sales,
       COALESCE(AVG(NULLIF(ABS(${col.netAmountValue}), 0)), 0) as avg_order_value
     FROM ${transactionsTable} t
-    WHERE ${col.trxDateOnly} >= $1 AND ${col.trxDateOnly} <= $2
-      AND ${col.fieldUserCode} IS NOT NULL
-  `
-
-  const params: any[] = [startDateStr, endDateStr]
-  let paramCount = 3
-
-  if (filters.storeCode) {
-    sql += ` AND ${col.storeCode} = $${paramCount}`
-    params.push(filters.storeCode)
-    paramCount++
-  }
-
-  if (filters.productCode) {
-    sql += ` AND t.product_code = $${paramCount}`
-    params.push(filters.productCode)
-    paramCount++
-  }
-  
-  if (filters.productCategory && col.productGroup1 !== 'NULL') {
-    sql += ` AND ${col.productGroup1} = $${paramCount}`
-    params.push(filters.productCategory)
-    paramCount++
-  }
-
-  sql += `
+    ${whereClause}
     GROUP BY ${col.fieldUserCode}, COALESCE(${col.fieldUserName}, ${col.fieldUserCode}), COALESCE(${col.fieldUserType}, 'Field User')
     ORDER BY net_sales DESC
     LIMIT 100
@@ -785,7 +906,7 @@ export const getUserPerformance = async (filters: any = {}) => {
 }
 
 /**
- * Get transaction details
+ * Get transaction details with pagination support
  */
 export const getTransactionDetails = async (filters: any = {}) => {
   const { startDate, endDate } = filters.startDate && filters.endDate
@@ -797,10 +918,120 @@ export const getTransactionDetails = async (filters: any = {}) => {
   const startDateStr = startDate.toISOString().split('T')[0]
   const endDateStr = endDate.toISOString().split('T')[0]
 
+  // Pagination parameters - default to reasonable page size
+  const page = parseInt(filters.page) || 1
+  const limit = Math.min(parseInt(filters.limit) || 50, 100) // Max 100 per page
+  const offset = (page - 1) * limit
+
   const { name: transactionsTable, columns } = await resolveTransactionsTable()
   const col = getTransactionColumnExpressions(columns)
 
-  let sql = `
+  // Optimize: Check if default filters
+  const isDefaultFilters = !filters.regionCode && !filters.cityCode && !filters.teamLeaderCode && 
+                           !filters.fieldUserRole && !filters.userCode && !filters.chainName && 
+                           !filters.storeCode && !filters.productCode && !filters.productCategory
+
+  // Only join when filters require it
+  const needsJoin = !isDefaultFilters && (filters.regionCode || filters.cityCode || filters.teamLeaderCode || filters.chainName)
+
+  // Build WHERE conditions - optimized order for index usage
+  const conditions: string[] = []
+  const params: any[] = [startDateStr, endDateStr]
+  let paramCount = 3
+
+  // Date filter first for index usage
+  conditions.push(`${col.trxDateOnly} >= $1`)
+  conditions.push(`${col.trxDateOnly} <= $2`)
+  conditions.push(`t.net_amount IS NOT NULL`)
+
+  // Apply all filters
+  if (filters.regionCode) {
+    if (col.storeRegion === 'NULL') {
+      conditions.push(`c.state = $${paramCount}`)
+    } else {
+      conditions.push(`COALESCE(t.${col.storeRegion}, c.state) = $${paramCount}`)
+    }
+    params.push(filters.regionCode)
+    paramCount++
+  }
+
+  if (filters.cityCode) {
+    if (col.storeCity === 'NULL') {
+      conditions.push(`c.city = $${paramCount}`)
+    } else {
+      conditions.push(`COALESCE(t.${col.storeCity}, c.city) = $${paramCount}`)
+    }
+    params.push(filters.cityCode)
+    paramCount++
+  }
+
+  if (filters.teamLeaderCode) {
+    if (col.tlCode === 'NULL') {
+      conditions.push(`c.sales_person_code = $${paramCount}`)
+    } else {
+      conditions.push(`COALESCE(t.${col.tlCode}, c.sales_person_code) = $${paramCount}`)
+    }
+    params.push(filters.teamLeaderCode)
+    paramCount++
+  }
+
+  if (filters.fieldUserRole) {
+    if (col.fieldUserType !== 'NULL') {
+      conditions.push(`COALESCE(t.${col.fieldUserType}, 'Field User') = $${paramCount}`)
+      params.push(filters.fieldUserRole)
+      paramCount++
+    }
+  }
+
+  if (filters.userCode) {
+    conditions.push(`t.${col.fieldUserCode} = $${paramCount}`)
+    params.push(filters.userCode)
+    paramCount++
+  }
+
+  if (filters.chainName) {
+    if (col.storeClass === 'NULL') {
+      conditions.push(`COALESCE(c.customer_type, 'Unknown') = $${paramCount}`)
+    } else {
+      conditions.push(`COALESCE(c.customer_type, t.${col.storeClass}, 'Unknown') = $${paramCount}`)
+    }
+    params.push(filters.chainName)
+    paramCount++
+  }
+
+  if (filters.storeCode) {
+    conditions.push(`t.${col.storeCode} = $${paramCount}`)
+    params.push(filters.storeCode)
+    paramCount++
+  }
+
+  if (filters.productCode) {
+    conditions.push(`t.product_code = $${paramCount}`)
+    params.push(filters.productCode)
+    paramCount++
+  }
+  
+  if (filters.productCategory && col.productGroup1 !== 'NULL') {
+    conditions.push(`t.${col.productGroup1} = $${paramCount}`)
+    params.push(filters.productCategory)
+    paramCount++
+  }
+  
+  const whereClause = `WHERE ${conditions.join(' AND ')}`
+  const joinClause = needsJoin ? `LEFT JOIN flat_customers_master c ON t.${col.storeCode} = c.customer_code` : ''
+
+  // Get total count first (for pagination) - use separate params array without limit/offset
+  const countParams = [...params]
+  const countSql = `
+    SELECT COUNT(*) as total
+    FROM ${transactionsTable} t
+    ${joinClause}
+    ${whereClause}
+  `
+
+  // Main query with pagination - optimized with conditional JOIN
+  params.push(limit, offset)
+  const dataSql = `
     SELECT
       ${col.trxCode} as "trxCode",
       ${col.trxDate} as "trxDate",
@@ -810,10 +1041,10 @@ export const getTransactionDetails = async (filters: any = {}) => {
       COALESCE(${col.fieldUserType}, 'Field User') as "fieldUserRole",
       COALESCE(${col.tlCode}, 'Unknown') as "tlCode",
       COALESCE(${col.tlName}, 'Unknown') as "tlName",
-      COALESCE(${col.storeRegion}, c.state, 'Unknown') as "regionCode",
-      COALESCE(${col.storeCity}, c.city, 'Unknown') as "cityCode",
+      ${needsJoin ? `COALESCE(${col.storeRegion === 'NULL' ? 'NULL' : `t.${col.storeRegion}`}, c.state, 'Unknown')` : `COALESCE(${col.storeRegion === 'NULL' ? 'NULL' : `t.${col.storeRegion}`}, 'Unknown')`} as "regionCode",
+      ${needsJoin ? `COALESCE(${col.storeCity === 'NULL' ? 'NULL' : `t.${col.storeCity}`}, c.city, 'Unknown')` : `COALESCE(${col.storeCity === 'NULL' ? 'NULL' : `t.${col.storeCity}`}, 'Unknown')`} as "cityCode",
       ${col.storeCode} as "storeCode",
-      COALESCE(${col.storeName}, c.customer_name, 'Unknown Store') as "storeName",
+      ${needsJoin ? `COALESCE(${col.storeName === 'NULL' ? 'NULL' : `t.${col.storeName}`}, c.customer_name, 'Unknown Store')` : `COALESCE(${col.storeName === 'NULL' ? 'NULL' : `t.${col.storeName}`}, 'Unknown Store')`} as "storeName",
       t.product_code as "productCode",
       t.product_name as "productName",
       COALESCE(${col.productGroup1}, 'Unknown') as "productCategory",
@@ -821,44 +1052,25 @@ export const getTransactionDetails = async (filters: any = {}) => {
       ${col.unitPriceValue} as "unitPrice",
       ${col.lineAmountValue} as "lineAmount",
       COALESCE(t.currency_code, 'AED') as "currencyCode",
-      COALESCE(c.customer_type, ${col.storeClass}, 'Unknown') as "storeClass"
+      ${needsJoin ? `COALESCE(c.customer_type, ${col.storeClass === 'NULL' ? 'NULL' : `t.${col.storeClass}`}, 'Unknown')` : `COALESCE(${col.storeClass === 'NULL' ? 'NULL' : `t.${col.storeClass}`}, 'Unknown')`} as "storeClass"
     FROM ${transactionsTable} t
-    LEFT JOIN flat_customers_master c ON ${col.storeCode} = c.customer_code
-    WHERE ${col.trxDateOnly} >= $1 AND ${col.trxDateOnly} <= $2
+    ${joinClause}
+    ${whereClause}
+    ORDER BY ${col.trxDate} DESC, ${col.trxCode}
+    LIMIT $${paramCount} OFFSET $${paramCount + 1}
   `
 
-  const params: any[] = [startDateStr, endDateStr]
-  let paramCount = 3
+  // Execute queries in parallel
+  const [countResult, dataResult] = await Promise.all([
+    query(countSql, countParams), // Count query uses params without limit/offset
+    query(dataSql, params) // Data query uses params with limit/offset
+  ])
 
-  if (filters.userCode) {
-    sql += ` AND ${col.fieldUserCode} = $${paramCount}`
-    params.push(filters.userCode)
-    paramCount++
-  }
+  const total = parseInt(countResult.rows[0]?.total || '0')
+  const totalPages = Math.ceil(total / limit)
 
-  if (filters.storeCode) {
-    sql += ` AND ${col.storeCode} = $${paramCount}`
-    params.push(filters.storeCode)
-    paramCount++
-  }
-
-  if (filters.productCode) {
-    sql += ` AND t.product_code = $${paramCount}`
-    params.push(filters.productCode)
-    paramCount++
-  }
-  
-  if (filters.productCategory && col.productGroup1 !== 'NULL') {
-    sql += ` AND ${col.productGroup1} = $${paramCount}`
-    params.push(filters.productCategory)
-    paramCount++
-  }
-
-  sql += ` ORDER BY ${col.trxDate} DESC, ${col.trxCode}`
-
-  const result = await query(sql, params)
-
-  return result.rows.map((row: any) => ({
+  return {
+    transactions: dataResult.rows.map((row: any) => ({
     trxCode: row.trxCode,
     trxDate: row.trxDate,
     trxDateOnly: row.trxDateOnly,
@@ -877,9 +1089,18 @@ export const getTransactionDetails = async (filters: any = {}) => {
     quantity: parseFloat(row.quantity),
     unitPrice: parseFloat(row.unitPrice),
     lineAmount: parseFloat(row.lineAmount),
-    paymentType: 'Cash',
-    trxStatus: 'Completed'
-  }))
+      paymentType: 'Cash',
+      trxStatus: 'Completed'
+    })),
+    pagination: {
+      page,
+      limit,
+      total,
+      totalPages,
+      hasNextPage: page < totalPages,
+      hasPrevPage: page > 1
+    }
+  }
 }
 
 export const dailySalesService = {

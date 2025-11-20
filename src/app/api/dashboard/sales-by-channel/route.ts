@@ -39,12 +39,12 @@ export async function GET(request: NextRequest) {
     const params: any[] = []
     let paramIndex = 1
 
-    // Date filters - cast transaction_date to date for comparison
+    // Date filters - optimized for index usage (no DATE() function)
     if (startDate && endDate) {
-      conditions.push(`t.transaction_date::date >= $${paramIndex}`)
+      conditions.push(`t.transaction_date >= $${paramIndex}::date`)
       params.push(startDate)
       paramIndex++
-      conditions.push(`t.transaction_date::date <= $${paramIndex}`)
+      conditions.push(`t.transaction_date < ($${paramIndex}::date + INTERVAL '1 day')`)
       params.push(endDate)
       paramIndex++
     }
@@ -101,20 +101,23 @@ export async function GET(request: NextRequest) {
       paramIndex++
     }
 
+    // Add order_total filter
+    conditions.push(`t.order_total IS NOT NULL`)
+    
     const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : ''
 
     // Log for debugging
     console.log('Sales by customer type query params:', { startDate, endDate, conditions: conditions.length, whereClause, params })
 
-    // Fetch sales by customer type using master table
+    // Fetch sales by customer type using master table - using order_total for transaction amounts
     const result = await query(`
       SELECT
         COALESCE(c.customer_type, 'Direct') as channel,
-        COALESCE(SUM(CASE WHEN t.net_amount >= 0 THEN t.net_amount ELSE 0 END), 0) as sales,
+        COALESCE(SUM(CASE WHEN t.order_total >= 0 THEN t.order_total ELSE 0 END), 0) as sales,
         COUNT(DISTINCT t.transaction_code) as orders,
         COUNT(DISTINCT t.customer_code) as customers,
-        AVG(t.net_amount) as avg_order_value,
-        SUM(t.quantity_bu) as total_quantity
+        AVG(t.order_total) as avg_order_value,
+        SUM(COALESCE(t.quantity_bu, 0)) as total_quantity
       FROM flat_transactions t
       LEFT JOIN flat_customers_master c ON t.customer_code = c.customer_code
       ${whereClause}

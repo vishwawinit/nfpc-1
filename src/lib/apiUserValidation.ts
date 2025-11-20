@@ -1,7 +1,6 @@
 /**
  * API User Validation Helper
- * For the local build we allow every user so that dashboards can run without
- * connecting to MSSQL or enforcing hierarchy checks.
+ * Authentication removed - all users are allowed
  */
 
 import { NextResponse } from 'next/server'
@@ -14,14 +13,16 @@ interface UserValidationResult {
   response?: NextResponse
 }
 
+// Authentication removed - always return valid
 export async function validateApiUser(loginUserCode: string | null): Promise<UserValidationResult> {
-    return {
-      isValid: true,
-      userCode: loginUserCode || 'admin',
-      childUsers: []
-    }
+  return {
+    isValid: true,
+    userCode: loginUserCode || 'admin',
+    childUsers: []
   }
-  
+}
+
+// Authentication removed - return empty array (no restrictions)
 export async function getAllowedUserCodes(_loginUserCode: string | null): Promise<string[]> {
-    return []
+  return []
 }

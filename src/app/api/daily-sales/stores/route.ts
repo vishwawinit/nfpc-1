@@ -1,6 +1,9 @@
 import { NextResponse } from 'next/server'
 import { getStorePerformance } from '@/services/dailySalesService'
-import { getCacheDuration, getCacheControlHeader } from '@/lib/cache-utils'
+import { unstable_cache } from 'next/cache'
+import { shouldCacheFilters, generateFilterCacheKey, getCacheControlHeader, getCacheDuration } from '@/lib/cache-utils'
+
+export const dynamic = 'force-dynamic'
 
 export async function GET(request: Request) {
   try {
@@ -16,7 +19,6 @@ export async function GET(request: Request) {
     const storeCode = searchParams.get('storeCode')
     const productCode = searchParams.get('productCode')
     const productCategory = searchParams.get('productCategory')
-    // loginUserCode is accepted but no auth/hierarchy filtering is applied in local mode
 
     const filters: any = {}
     if (dateRange) filters.dateRange = dateRange
@@ -31,10 +33,40 @@ export async function GET(request: Request) {
     if (productCode) filters.productCode = productCode
     if (productCategory) filters.productCategory = productCategory
 
-    const data = await getStorePerformance(filters)
+    const shouldCache = shouldCacheFilters(dateRange || null, startDate, endDate)
     const hasCustomDates = !!(startDate && endDate)
     const cacheDuration = getCacheDuration(dateRange || 'thisMonth', hasCustomDates)
-    return NextResponse.json({ stores: data, cached: true, cacheInfo: { duration: cacheDuration } }, { headers: { 'Cache-Control': getCacheControlHeader(cacheDuration) } })
+
+    let data
+    if (shouldCache) {
+      const cacheKey = generateFilterCacheKey('daily-sales-stores', filters)
+      const cachedFetchStores = unstable_cache(
+        async () => getStorePerformance(filters),
+        [cacheKey],
+        {
+          revalidate: cacheDuration,
+          tags: ['daily-sales-stores']
+        }
+      )
+      data = await cachedFetchStores()
+    } else {
+      data = await getStorePerformance(filters)
+    }
+
+    return NextResponse.json({ 
+      stores: data, 
+      cached: shouldCache, 
+      cacheInfo: { 
+        duration: shouldCache ? cacheDuration : 0,
+        reason: shouldCache ? undefined : (dateRange === 'today' ? 'today' : 'custom-range')
+      } 
+    }, { 
+      headers: { 
+        'Cache-Control': shouldCache 
+          ? getCacheControlHeader(cacheDuration)
+          : 'no-cache, no-store, must-revalidate'
+      } 
+    })
   } catch (error) {
     console.error('Error in store performance API:', error)
     return NextResponse.json(

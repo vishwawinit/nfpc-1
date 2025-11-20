@@ -1,68 +1,23 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { query } from '@/lib/database'
+import { unstable_cache } from 'next/cache'
+import { shouldCacheFilters, generateFilterCacheKey, getCacheControlHeader, getCacheDuration } from '@/lib/cache-utils'
 
-// In-memory cache for sales trend data
-const trendCache = new Map<string, { data: any, timestamp: number, ttl: number }>()
-
-function getCacheKey(params: URLSearchParams): string {
-  const sortedParams = Array.from(params.entries()).sort()
-  return `trend_${sortedParams.map(([key, value]) => `${key}=${value}`).join('&')}`
-}
-
-function getCachedTrendData(cacheKey: string): any | null {
-  const cached = trendCache.get(cacheKey)
-  if (cached && Date.now() - cached.timestamp < cached.ttl) {
-    console.log('🚀 Sales Trend Cache HIT for key:', cacheKey)
-    return cached.data
-  }
-  if (cached) {
-    trendCache.delete(cacheKey)
-    console.log('⏰ Sales Trend Cache EXPIRED for key:', cacheKey)
-  }
-  return null
-}
-
-function setCachedTrendData(cacheKey: string, data: any, dateRange: string): void {
-  const cacheDuration = getCacheDuration(dateRange, false) * 1000 // Convert to milliseconds
-  trendCache.set(cacheKey, {
-    data,
-    timestamp: Date.now(),
-    ttl: cacheDuration
-  })
-  console.log(`💾 Sales Trend Cache SET for key: ${cacheKey}, TTL: ${cacheDuration/1000/60}min`)
-}
-
-// Optimized caching aligned with other services
-function getCacheDuration(dateRange: string, hasCustomDates: boolean): number {
-  if (hasCustomDates) return 900 // 15 minutes for custom dates
-  
-  switch(dateRange) {
-    case 'today':
-      return 300 // 5 minutes for today
-    case 'yesterday':
-      return 3600 // 1 hour for yesterday
-    case 'thisWeek':
-    case 'lastWeek':
-    case 'last7Days':
-      return 1800 // 30 minutes for this week
-    case 'thisMonth':
-    case 'last30Days':
-      return 3600 // 1 hour for this month
-    case 'lastMonth':
-      return 21600 // 6 hours for last month (stable data)
-    case 'thisQuarter':
-      return 7200 // 2 hours for this quarter
-    case 'lastQuarter':
-      return 43200 // 12 hours for last quarter (stable data)
-    case 'thisYear':
-      return 10800 // 3 hours for this year
-    default:
-      return 900 // 15 minutes default
-  }
-}
+export const dynamic = 'force-dynamic'
 
 // Helper function to parse date range string
 const getDateRangeFromString = (dateRange: string) => {
+  // If empty string or invalid, default to last 30 days
+  if (!dateRange || dateRange.trim() === '') {
+    const current = new Date()
+    const startDate = new Date(current)
+    startDate.setDate(startDate.getDate() - 29)
+    return {
+      startDate: startDate.toISOString().split('T')[0],
+      endDate: current.toISOString().split('T')[0]
+    }
+  }
+
   const current = new Date()
   let startDate: Date
   let endDate: Date = new Date(current)
@@ -101,6 +56,10 @@ const getDateRangeFromString = (dateRange: string) => {
     case 'thisYear':
       startDate = new Date(current.getFullYear(), 0, 1)
       break
+    case 'custom':
+      // For custom, return current month as default (will be overridden by custom dates)
+      startDate = new Date(current.getFullYear(), current.getMonth(), 1)
+      break
     default:
       startDate = new Date(current)
       startDate.setDate(startDate.getDate() - 29)
@@ -112,116 +71,125 @@ const getDateRangeFromString = (dateRange: string) => {
   }
 }
 
-export async function GET(request: NextRequest) {
-  try {
-    const { searchParams } = new URL(request.url)
-    
-    // Cache temporarily disabled for debugging
-    // const cacheKey = getCacheKey(searchParams)
-    // const cachedData = getCachedTrendData(cacheKey)
-    // if (cachedData) {
-    //   return NextResponse.json({
-    //     success: true,
-    //     data: cachedData.data,
-    //     cached: true,
-    //     cacheHit: true,
-    //     source: 'in-memory-cache'
-    //   })
-    // }
+// Internal function to fetch sales trend data (will be cached)
+async function fetchSalesTrendInternal(params: {
+  days: number
+  dateRange: string
+  regionCode: string | null
+  cityCode: string | null
+  teamLeaderCode: string | null
+  fieldUserRole: string | null
+  userCode: string | null
+  chainName: string | null
+  storeCode: string | null
+  customStartDate: string | null
+  customEndDate: string | null
+}) {
+  const { query } = await import('@/lib/database')
+  const {
+    days,
+    dateRange,
+    regionCode,
+    cityCode,
+    teamLeaderCode,
+    fieldUserRole,
+    userCode,
+    chainName,
+    storeCode,
+    customStartDate,
+    customEndDate
+  } = params
 
-    const days = parseInt(searchParams.get('days') || '30')
-    const dateRange = searchParams.get('range') || ''
-
-    // Get filter parameters
-    const regionCode = searchParams.get('regionCode')
-    const cityCode = searchParams.get('city') || searchParams.get('cityCode')
-    const teamLeaderCode = searchParams.get('teamLeaderCode')
-    const fieldUserRole = searchParams.get('fieldUserRole')
-    const userCode = searchParams.get('userCode')
-    const customStartDate = searchParams.get('startDate')
-    const customEndDate = searchParams.get('endDate')
-
-    // If a specific date range is provided, use it; otherwise use days parameter
-    const rangeToUse = dateRange || 'last30Days'
-
-    // Get date range - prioritize custom dates
+    // ALWAYS prioritize custom dates if provided - they override any preset range
     let startDate: string, endDate: string
     if (customStartDate && customEndDate) {
+      // Use custom dates if provided (from query params startDate/endDate)
+      // These come from the dashboard filters and should always be used
       startDate = customStartDate
       endDate = customEndDate
+      console.log('Sales Trend: Using custom date range from filters:', { startDate, endDate, dateRange })
     } else {
+      // Fall back to preset range only if no custom dates provided
+      const rangeToUse = dateRange || 'last30Days'
       const dateRangeResult = getDateRangeFromString(rangeToUse)
       startDate = dateRangeResult.startDate
       endDate = dateRangeResult.endDate
+      console.log('Sales Trend: Using preset range (no custom dates):', { rangeToUse, startDate, endDate })
     }
 
-    // Build WHERE conditions
+    // Build WHERE conditions - optimized for index usage
     const conditions: string[] = []
-    const params: any[] = []
+  const queryParams: any[] = []
     let paramIndex = 1
 
-    // Optimized date filtering using indexed date field
-    conditions.push(`DATE(t.transaction_date) >= $${paramIndex}`)
-    params.push(startDate)
+    // Optimized date filtering - use date range directly on indexed column (no DATE() function)
+    // This allows PostgreSQL to use indexes on transaction_date
+    conditions.push(`t.transaction_date >= $${paramIndex}::date`)
+  queryParams.push(startDate)
     paramIndex++
-    conditions.push(`DATE(t.transaction_date) <= $${paramIndex}`)
-    params.push(endDate)
+    conditions.push(`t.transaction_date < ($${paramIndex}::date + INTERVAL '1 day')`)
+  queryParams.push(endDate)
     paramIndex++
+    
+    // Filter out NULL order_total but include both positive and negative for proper aggregation
+    conditions.push(`t.order_total IS NOT NULL`)
 
     // Region filter - use state from customers master
     if (regionCode) {
       conditions.push(`c.state = $${paramIndex}`)
-      params.push(regionCode)
+    queryParams.push(regionCode)
       paramIndex++
     }
 
     // City filter
     if (cityCode) {
       conditions.push(`c.city = $${paramIndex}`)
-      params.push(cityCode)
+    queryParams.push(cityCode)
       paramIndex++
     }
 
     // Team Leader filter - using sales_person_code
     if (teamLeaderCode) {
       conditions.push(`c.sales_person_code = $${paramIndex}`)
-      params.push(teamLeaderCode)
+    queryParams.push(teamLeaderCode)
       paramIndex++
     }
 
     // Field User Role filter - using sales_person_code
     if (fieldUserRole) {
       conditions.push(`c.sales_person_code = $${paramIndex}`)
-      params.push(fieldUserRole)
+    queryParams.push(fieldUserRole)
       paramIndex++
     }
 
     // User filter
     if (userCode) {
       conditions.push(`t.user_code = $${paramIndex}`)
-      params.push(userCode)
+    queryParams.push(userCode)
       paramIndex++
     }
 
     // Chain filter
-    const chainName = searchParams.get('chainName')
     if (chainName) {
       conditions.push(`c.customer_type = $${paramIndex}`)
-      params.push(chainName)
+    queryParams.push(chainName)
       paramIndex++
     }
 
     // Store filter
-    const storeCode = searchParams.get('storeCode')
     if (storeCode) {
       conditions.push(`t.customer_code = $${paramIndex}`)
-      params.push(storeCode)
+    queryParams.push(storeCode)
       paramIndex++
     }
+
+    // Check if we need customer master join (only if filters require it)
+    const needsCustomerJoin = !!(regionCode || cityCode || teamLeaderCode || fieldUserRole || chainName)
 
     const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : ''
 
     // Determine grouping and aggregation based on actual day span
+    // This ensures correct aggregation regardless of whether custom dates or preset range is used
     let dateGrouping = ''
     let orderBy = ''
 
@@ -229,6 +197,13 @@ export async function GET(request: NextRequest) {
     const end = new Date(endDate)
     const msInDay = 24 * 60 * 60 * 1000
     const daySpan = Math.max(1, Math.ceil((end.getTime() - start.getTime()) / msInDay) + 1)
+    
+    console.log('Sales Trend - Date span calculation:', {
+      startDate,
+      endDate,
+      daySpan,
+      willUseCustomDates: !!(customStartDate && customEndDate)
+    })
 
     if (daySpan <= 14) {
       // Daily aggregation for up to ~2 weeks
@@ -244,24 +219,36 @@ export async function GET(request: NextRequest) {
       orderBy = `DATE_TRUNC('month', t.transaction_date)`
     }
 
-    // Log the query for debugging
-    console.log('Sales trend query params:', { startDate, endDate, daySpan, dateGrouping, conditions: conditions.length })
-    
-    // Optimized sales trend query with better performance
+    // Optimized sales trend query - simplified aggregations for better performance
+    // Single query with conditional JOIN - much faster than separate CTEs
+    // Note: Using order_total for transaction amounts, include all transactions and aggregate separately
     const result = await query(`
       SELECT
         ${dateGrouping}::date as date,
-        ROUND(COALESCE(SUM(CASE WHEN t.net_amount >= 0 THEN t.net_amount ELSE 0 END), 0), 2) as sales,
-        COUNT(DISTINCT CASE WHEN t.net_amount >= 0 THEN t.transaction_code END) as orders,
-        COUNT(DISTINCT CASE WHEN t.net_amount >= 0 THEN t.customer_code END) as customers,
-        ROUND(COALESCE(ABS(SUM(CASE WHEN t.net_amount < 0 THEN t.net_amount ELSE 0 END)), 0), 2) as returns,
-        ROUND(COALESCE(SUM(CASE WHEN t.net_amount >= 0 THEN t.quantity_bu ELSE 0 END), 0), 0) as quantity
+        ROUND(COALESCE(SUM(CASE WHEN t.order_total > 0 THEN t.order_total ELSE 0 END), 0), 2) as sales,
+        COUNT(DISTINCT CASE WHEN t.order_total > 0 THEN t.transaction_code END) as orders,
+        COUNT(DISTINCT CASE WHEN t.order_total > 0 THEN t.customer_code END) as customers,
+        ROUND(COALESCE(ABS(SUM(CASE WHEN t.order_total < 0 THEN t.order_total ELSE 0 END)), 0), 2) as returns,
+        ROUND(COALESCE(SUM(CASE WHEN t.order_total > 0 THEN COALESCE(t.quantity_bu, 0) ELSE 0 END), 0), 0) as quantity
       FROM flat_transactions t
-      LEFT JOIN flat_customers_master c ON t.customer_code = c.customer_code
+      ${needsCustomerJoin ? `LEFT JOIN flat_customers_master c ON t.customer_code = c.customer_code` : ''}
       ${whereClause}
       GROUP BY ${dateGrouping}
       ORDER BY ${orderBy} ASC
-    `, params)
+  `, queryParams)
+    
+    // Log query details for debugging
+    console.log('Sales Trend Query:', {
+      dateRange: customStartDate && customEndDate ? 'custom' : (dateRange || 'last30Days'),
+      startDate,
+      endDate,
+      daySpan,
+      dateGrouping,
+      needsCustomerJoin,
+      rowCount: result.rows.length,
+      sampleRow: result.rows[0],
+      usingCustomDates: !!(customStartDate && customEndDate)
+    })
 
     const trendData = result.rows.map(row => ({
       date: row.date,
@@ -272,47 +259,142 @@ export async function GET(request: NextRequest) {
       quantity: parseInt(row.quantity || '0')
     }))
 
-    // Determine aggregation type for frontend
+    // Determine aggregation type for frontend based on actual date span
+    // Use daySpan to determine aggregation, not just the range parameter
     let aggregation = 'daily'
-    if (rangeToUse === 'thisYear') {
+    if (daySpan > 365) {
       aggregation = 'monthly'
-    } else if (rangeToUse === 'thisQuarter' || rangeToUse === 'lastQuarter') {
+    } else if (daySpan > 92) {
       aggregation = 'weekly'
+    } else {
+      aggregation = 'daily'
     }
 
-    // Calculate cache duration and cache the result
+  return {
+    data: trendData,
+    dateRange: customStartDate && customEndDate ? 'custom' : (dateRange || 'last30Days'),
+    aggregation,
+    days,
+    startDate,
+    endDate
+  }
+}
+
+export async function GET(request: NextRequest) {
+  try {
+    const { searchParams } = new URL(request.url)
+    
+    const days = parseInt(searchParams.get('days') || '30')
+    const dateRange = searchParams.get('range') || ''
+
+    // Get filter parameters
+    const regionCode = searchParams.get('regionCode')
+    const cityCode = searchParams.get('city') || searchParams.get('cityCode')
+    const teamLeaderCode = searchParams.get('teamLeaderCode')
+    const fieldUserRole = searchParams.get('fieldUserRole')
+    const userCode = searchParams.get('userCode')
+    const chainName = searchParams.get('chainName')
+    const storeCode = searchParams.get('storeCode')
+    // Get custom dates from query params - these take priority over preset ranges
+    const customStartDate = searchParams.get('startDate')
+    const customEndDate = searchParams.get('endDate')
+
+    // Always prioritize custom dates if provided, regardless of range parameter
+    // If custom dates are provided, they will be used in fetchSalesTrendInternal
+    const rangeToUse = dateRange || 'last30Days'
+    
+    console.log('Sales Trend API - Date parameters:', {
+      dateRange,
+      customStartDate,
+      customEndDate,
+      rangeToUse,
+      willUseCustomDates: !!(customStartDate && customEndDate),
+      note: customStartDate && customEndDate ? 'Custom dates will override range' : 'Using preset range'
+    })
+    
+    // Check if we should cache (excludes "today" and custom date ranges)
+    const shouldCache = shouldCacheFilters(rangeToUse, customStartDate, customEndDate)
     const hasCustomDates = !!(customStartDate && customEndDate)
     const cacheDuration = getCacheDuration(rangeToUse, hasCustomDates)
-    const staleWhileRevalidate = cacheDuration * 2
 
-    const responseData = {
-      data: trendData,
+    // Build filter parameters for cache key generation
+    // Include all filter parameters to ensure unique cache entries per filter combination
+    const filterParams = {
+      days: days.toString(),
       dateRange: rangeToUse,
-      aggregation,
-      days,
-      startDate,
-      endDate,
-      currentDate: new Date().toISOString().split('T')[0],
-      timestamp: new Date().toISOString(),
-      cacheInfo: {
-        duration: cacheDuration,
-        dateRange: rangeToUse,
-        hasCustomDates
-      },
-      source: 'postgresql-flat-table'
+      regionCode: regionCode || '',
+      cityCode: cityCode || '',
+      teamLeaderCode: teamLeaderCode || '',
+      fieldUserRole: fieldUserRole || '',
+      userCode: userCode || '',
+      chainName: chainName || '',
+      storeCode: storeCode || '',
+      customStartDate: customStartDate || '',
+      customEndDate: customEndDate || ''
     }
 
-    // Cache temporarily disabled for debugging
-    // setCachedTrendData(cacheKey, responseData, rangeToUse)
+    let trendData
+    if (shouldCache) {
+      // Generate unique cache key based on all filter parameters
+      const cacheKey = generateFilterCacheKey('dashboard-sales-trend', filterParams)
+      
+      // Use unstable_cache to cache the query results
+      const cachedFetchTrend = unstable_cache(
+        async () => fetchSalesTrendInternal({
+          days,
+          dateRange: rangeToUse,
+          regionCode,
+          cityCode,
+          teamLeaderCode,
+          fieldUserRole,
+          userCode,
+          chainName,
+          storeCode,
+          customStartDate,
+          customEndDate
+        }),
+        [cacheKey],
+        {
+          revalidate: cacheDuration,
+          tags: ['dashboard-sales-trend', `dashboard-sales-trend-${rangeToUse}`]
+        }
+      )
+      trendData = await cachedFetchTrend()
+    } else {
+      // No caching for "today" or custom date ranges - fetch fresh data
+      trendData = await fetchSalesTrendInternal({
+      days,
+        dateRange: rangeToUse,
+        regionCode,
+        cityCode,
+        teamLeaderCode,
+        fieldUserRole,
+        userCode,
+        chainName,
+        storeCode,
+        customStartDate,
+        customEndDate
+      })
+    }
 
     return NextResponse.json({
       success: true,
-      ...responseData,
-      cached: false,
-      cacheHit: false
+      ...trendData,
+      currentDate: new Date().toISOString().split('T')[0],
+      timestamp: new Date().toISOString(),
+      cached: shouldCache,
+      cacheInfo: {
+        duration: shouldCache ? cacheDuration : 0,
+        dateRange: rangeToUse,
+        hasCustomDates,
+        reason: shouldCache ? undefined : (rangeToUse === 'today' ? 'today' : 'custom-range')
+      },
+      source: 'postgresql-flat-table'
     }, {
       headers: {
-        'Cache-Control': `public, s-maxage=${cacheDuration}, stale-while-revalidate=${staleWhileRevalidate}`
+        'Cache-Control': shouldCache
+          ? getCacheControlHeader(cacheDuration)
+          : 'no-cache, no-store, must-revalidate'
       }
     })
 

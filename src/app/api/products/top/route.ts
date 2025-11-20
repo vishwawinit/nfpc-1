@@ -127,10 +127,11 @@ export async function GET(request: NextRequest) {
     let paramIndex = 1
 
     // Optimized date range filter for better performance
-    conditions.push(`DATE(t.transaction_date) >= $${paramIndex}`)
+    // Optimized date range filter - use direct date comparison for index usage
+    conditions.push(`t.transaction_date >= $${paramIndex}::date`)
     params.push(startDate)
     paramIndex++
-    conditions.push(`DATE(t.transaction_date) <= $${paramIndex}`)
+    conditions.push(`t.transaction_date < ($${paramIndex}::date + INTERVAL '1 day')`)
     params.push(endDate)
     paramIndex++
 
@@ -259,6 +260,7 @@ export async function GET(request: NextRequest) {
     
     // Always include these base conditions
     finalConditions.push('t.product_code IS NOT NULL')
+    finalConditions.push('t.order_total IS NOT NULL')
     finalConditions.push('COALESCE(t.quantity_bu, 0) != 0')
     
     const finalWhere = finalConditions.length > 0 ? `WHERE ${finalConditions.join(' AND ')}` : ''
@@ -282,15 +284,15 @@ export async function GET(request: NextRequest) {
         COALESCE(MAX(t.currency_code), 'AED') as "currency",
         'Unknown' as "categoryName",
         'PCS' as "baseUom",
-        COALESCE(SUM(ABS(COALESCE(t.net_amount, 0))), 0) as "salesAmount",
+        COALESCE(SUM(CASE WHEN t.order_total > 0 THEN t.order_total ELSE 0 END), 0) as "salesAmount",
         CASE WHEN SUM(ABS(COALESCE(t.quantity_bu, 0))) > 0 
-             THEN COALESCE(SUM(ABS(COALESCE(t.net_amount, 0))), 0) / SUM(ABS(COALESCE(t.quantity_bu, 0)))
+             THEN COALESCE(SUM(CASE WHEN t.order_total > 0 THEN t.order_total ELSE 0 END), 0) / SUM(ABS(COALESCE(t.quantity_bu, 0)))
              ELSE 0 END as "averagePrice"
       FROM flat_transactions t
       LEFT JOIN flat_customers_master c ON t.customer_code = c.customer_code
       ${finalWhere}
       GROUP BY t.product_code
-      ORDER BY SUM(ABS(COALESCE(t.quantity_bu, 0))) DESC 
+      ORDER BY SUM(CASE WHEN t.order_total > 0 THEN t.order_total ELSE 0 END) DESC 
       LIMIT $${currentParamIndex}
     `, queryParams)
 

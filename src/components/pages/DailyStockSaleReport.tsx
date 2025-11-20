@@ -193,24 +193,59 @@ export const DailyStockSaleReport: React.FC = () => {
   }, [queryParams, filters.startDate, filters.endDate])
 
   const loadData = async () => {
+    // Ensure we're in the browser and have valid query params
+    if (typeof window === 'undefined') return
+    if (!queryParams || queryParams.trim() === '') {
+      console.warn('DailyStockSaleReport: Skipping loadData - queryParams is empty')
+      return
+    }
+
     setLoading(true)
     try {
+      // Helper for safe fetch - no timeout to allow slow database queries to complete
+      const safeFetch = async (url: string): Promise<Response> => {
+        const response = await fetch(url, {
+          method: 'GET',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          cache: 'no-store' as RequestCache
+        })
+        return response
+      }
+
       const [summaryRes, trendRes, productsRes, storesRes, usersRes, transactionsRes] = await Promise.all([
-        fetch(`/api/daily-sales/summary?${queryParams}`),
-        fetch(`/api/daily-sales/trend?${queryParams}`),
-        fetch(`/api/daily-sales/products?${queryParams}`),
-        fetch(`/api/daily-sales/stores?${queryParams}`),
-        fetch(`/api/daily-sales/users?${queryParams}`),
-        fetch(`/api/daily-sales/transactions?${queryParams}`)
+        safeFetch(`/api/daily-sales/summary?${queryParams}`),
+        safeFetch(`/api/daily-sales/trend?${queryParams}`),
+        safeFetch(`/api/daily-sales/products?${queryParams}`),
+        safeFetch(`/api/daily-sales/stores?${queryParams}`),
+        safeFetch(`/api/daily-sales/users?${queryParams}`),
+        safeFetch(`/api/daily-sales/transactions?${queryParams}`)
       ])
 
+      // Helper function to parse response with error handling
+      const parseResponse = async (res: Response, name: string) => {
+        if (!res.ok) {
+          const errorText = await res.text()
+          let errorMessage = `HTTP ${res.status}: ${res.statusText}`
+          try {
+            const errorJson = JSON.parse(errorText)
+            errorMessage = errorJson.error || errorJson.message || errorMessage
+          } catch {
+            errorMessage = errorText || errorMessage
+          }
+          throw new Error(`Failed to fetch ${name}: ${errorMessage}`)
+        }
+        return res.json()
+      }
+
       const [summaryData, trendResult, productsResult, storesResult, usersResult, transactionsResult] = await Promise.all([
-        summaryRes.json(),
-        trendRes.json(),
-        productsRes.json(),
-        storesRes.json(),
-        usersRes.json(),
-        transactionsRes.json()
+        parseResponse(summaryRes, 'summary'),
+        parseResponse(trendRes, 'trend'),
+        parseResponse(productsRes, 'products'),
+        parseResponse(storesRes, 'stores'),
+        parseResponse(usersRes, 'users'),
+        parseResponse(transactionsRes, 'transactions')
       ])
 
       setSummary(summaryData)
@@ -221,6 +256,20 @@ export const DailyStockSaleReport: React.FC = () => {
       setTransactionsData(transactionsResult?.transactions || [])
     } catch (error) {
       console.error('Error loading sales data:', error)
+      // Check if it's a network error
+      if (error instanceof TypeError && error.message === 'Failed to fetch') {
+        const networkError = 'Network error: Unable to connect to the server. Please check if the server is running and try again.'
+        console.error('Network error details:', {
+          error,
+          queryParams,
+          url: window.location.href
+        })
+        // Optionally show user-friendly error message
+        alert(networkError)
+      } else {
+        const errorMessage = error instanceof Error ? error.message : 'Failed to fetch sales data'
+        console.error('Detailed error:', errorMessage)
+      }
     } finally {
       setLoading(false)
     }

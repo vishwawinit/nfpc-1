@@ -1,15 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { query } from '@/lib/database'
 import { resolveTransactionsTable } from '@/services/dailySalesService'
+import { unstable_cache } from 'next/cache'
+import { FILTERS_CACHE_DURATION, generateFilterCacheKey, getCacheControlHeader } from '@/lib/cache-utils'
 
 // Force dynamic rendering for routes that use searchParams
 export const dynamic = 'force-dynamic'
 
-// Enhanced dashboard filters API that fetches comprehensive filter options
-export async function GET(request: NextRequest) {
-  try {
-    console.log('Dashboard filters API called - fetching comprehensive filter data')
-    const { name: transactionsTable, columns } = await resolveTransactionsTable()
+// Internal function to fetch dashboard filters (will be cached)
+async function fetchDashboardFiltersInternal(transactionsTable: string, columns: Set<string>) {
+  const { query } = await import('@/lib/database')
     
     // Initialize arrays for filter options
     let regions: any[] = []
@@ -19,9 +19,10 @@ export async function GET(request: NextRequest) {
     let productCategories: any[] = []
     let stores: any[] = []
 
+  // Fetch all filters in parallel
+  await Promise.all([
     // Fetch regions (states) from customers master
-    try {
-      const regionsQuery = `
+    query(`
         SELECT DISTINCT 
           state as value, 
           state as label,
@@ -30,17 +31,10 @@ export async function GET(request: NextRequest) {
         WHERE state IS NOT NULL AND state != ''
         GROUP BY state
         ORDER BY state
-      `
-      const regionsResult = await query(regionsQuery)
-      regions = regionsResult.rows || []
-      console.log(`Fetched ${regions.length} regions`)
-    } catch (err) {
-      console.error('Error fetching regions:', err)
-    }
+    `).then(result => { regions = result.rows || [] }).catch(err => console.error('Error fetching regions:', err)),
 
     // Fetch cities from customers master
-    try {
-      const citiesQuery = `
+    query(`
         SELECT DISTINCT 
           city as value, 
           city as label,
@@ -49,17 +43,10 @@ export async function GET(request: NextRequest) {
         WHERE city IS NOT NULL AND city != ''
         GROUP BY city
         ORDER BY city
-      `
-      const citiesResult = await query(citiesQuery)
-      cities = citiesResult.rows || []
-      console.log(`Fetched ${cities.length} cities`)
-    } catch (err) {
-      console.error('Error fetching cities:', err)
-    }
+    `).then(result => { cities = result.rows || [] }).catch(err => console.error('Error fetching cities:', err)),
 
     // Fetch sales persons from customers master
-    try {
-      const salesPersonsQuery = `
+    query(`
         SELECT DISTINCT 
           sales_person_code as value,
           sales_person_name as label,
@@ -70,17 +57,10 @@ export async function GET(request: NextRequest) {
           AND sales_person_name IS NOT NULL
         GROUP BY sales_person_code, sales_person_name
         ORDER BY sales_person_name
-      `
-      const salesPersonsResult = await query(salesPersonsQuery)
-      salesPersons = salesPersonsResult.rows || []
-      console.log(`Fetched ${salesPersons.length} sales persons`)
-    } catch (err) {
-      console.error('Error fetching sales persons:', err)
-    }
+    `).then(result => { salesPersons = result.rows || [] }).catch(err => console.error('Error fetching sales persons:', err)),
 
     // Fetch customer types
-    try {
-      const customerTypesQuery = `
+    query(`
         SELECT DISTINCT 
           customer_type as value,
           customer_type as label,
@@ -89,40 +69,24 @@ export async function GET(request: NextRequest) {
         WHERE customer_type IS NOT NULL AND customer_type != ''
         GROUP BY customer_type
         ORDER BY customer_type
-      `
-      const customerTypesResult = await query(customerTypesQuery)
-      customerTypes = customerTypesResult.rows || []
-      console.log(`Fetched ${customerTypes.length} customer types`)
-    } catch (err) {
-      console.error('Error fetching customer types:', err)
-    }
+    `).then(result => { customerTypes = result.rows || [] }).catch(err => console.error('Error fetching customer types:', err)),
 
     // Fetch product categories from sales transactions
-    try {
-      if (!columns.has('product_group_level1')) {
-        console.warn(`[dashboard/filters] ${transactionsTable} has no product_group_level1 column; skipping category list`)
-      } else {
-        const categoriesQuery = `
-          SELECT DISTINCT 
+    columns.has('product_group_level1') 
+      ? query(`
+        SELECT DISTINCT 
             COALESCE(product_group_level1, 'Unknown') as value,
             COALESCE(product_group_level1, 'Unknown') as label,
-            COUNT(DISTINCT product_code) as available
+          COUNT(DISTINCT product_code) as available
           FROM ${transactionsTable}
-          WHERE product_group_level1 IS NOT NULL AND product_group_level1 != ''
-          GROUP BY product_group_level1
-          ORDER BY product_group_level1
-        `
-        const categoriesResult = await query(categoriesQuery)
-        productCategories = categoriesResult.rows || []
-        console.log(`Fetched ${productCategories.length} product categories from ${transactionsTable}`)
-      }
-    } catch (err) {
-      console.error('Error fetching product categories:', err)
-    }
+        WHERE product_group_level1 IS NOT NULL AND product_group_level1 != ''
+        GROUP BY product_group_level1
+        ORDER BY product_group_level1
+        `).then(result => { productCategories = result.rows || [] }).catch(err => console.error('Error fetching product categories:', err))
+      : Promise.resolve(),
 
     // Fetch top stores/customers
-    try {
-      const storesQuery = `
+    query(`
         SELECT DISTINCT 
           customer_code as value,
           customer_name as label,
@@ -133,24 +97,16 @@ export async function GET(request: NextRequest) {
           AND customer_name IS NOT NULL
         ORDER BY customer_name
         LIMIT 100
-      `
-      const storesResult = await query(storesQuery)
-      stores = storesResult.rows || []
-      console.log(`Fetched ${stores.length} stores`)
-    } catch (err) {
-      console.error('Error fetching stores:', err)
-    }
+    `).then(result => { stores = result.rows || [] }).catch(err => console.error('Error fetching stores:', err))
+  ])
 
-    // Return comprehensive filter options
-    return NextResponse.json({
-      success: true,
-      data: {
+  return {
         regions,
         cities,
-        fieldUserRoles: salesPersons, // Using sales persons as field user roles
-        teamLeaders: salesPersons, // Sales persons can act as team leaders
-        fieldUsers: salesPersons, // Sales persons as field users
-        chains: customerTypes, // Customer types as chains
+    fieldUserRoles: salesPersons,
+    teamLeaders: salesPersons,
+    fieldUsers: salesPersons,
+    chains: customerTypes,
         stores,
         summary: {
           totalRegions: regions.length,
@@ -165,7 +121,34 @@ export async function GET(request: NextRequest) {
             daysWithData: 0
           }
         }
-      },
+  }
+}
+
+// Enhanced dashboard filters API that fetches comprehensive filter options
+export async function GET(request: NextRequest) {
+  try {
+    console.log('Dashboard filters API called - fetching comprehensive filter data')
+    const { name: transactionsTable, columns } = await resolveTransactionsTable()
+    
+    // Create cache key
+    const cacheKey = generateFilterCacheKey('dashboard', { table: transactionsTable })
+    
+    // Fetch filters with caching
+    const cachedFetchFilters = unstable_cache(
+      async () => fetchDashboardFiltersInternal(transactionsTable, columns),
+      [cacheKey],
+      {
+        revalidate: FILTERS_CACHE_DURATION,
+        tags: ['dashboard-filters', `dashboard-filters-${transactionsTable}`]
+      }
+    )
+
+    const filterData = await cachedFetchFilters()
+    
+    // Return comprehensive filter options
+    return NextResponse.json({
+      success: true,
+      data: filterData,
       hierarchy: {
         loginUserCode: null,
         isTeamLeader: false,
@@ -174,7 +157,14 @@ export async function GET(request: NextRequest) {
         allowedFieldUserCount: 0
       },
       timestamp: new Date().toISOString(),
-      cached: false
+      cached: true,
+      cacheInfo: {
+        duration: FILTERS_CACHE_DURATION
+      }
+    }, {
+      headers: {
+        'Cache-Control': getCacheControlHeader(FILTERS_CACHE_DURATION)
+      }
     })
   } catch (error) {
     console.error('Dashboard Filters API error:', error)

@@ -79,6 +79,9 @@ const getCachedCustomerAnalytics = unstable_cache(
 
     // Always filter by transaction type (invoices only)
     conditions.push(`trx_type = 1`)
+    
+    // Filter out NULL order_total values
+    conditions.push(`order_total IS NOT NULL`)
 
     // Date conditions
     conditions.push(`trx_date_only >= $${paramIndex}`)
@@ -137,16 +140,16 @@ const getCachedCustomerAnalytics = unstable_cache(
         MAX(chain_code) as channel_code,
         MAX(chain_name) as chain_name,
         'Active' as status,
-        SUM(net_amount) as total_sales,
+        SUM(order_total) as total_sales,
         COUNT(DISTINCT trx_code) as total_orders,
         CASE 
           WHEN COUNT(DISTINCT trx_code) > 0 
-          THEN SUM(net_amount) / COUNT(DISTINCT trx_code)
+          THEN SUM(order_total) / COUNT(DISTINCT trx_code)
           ELSE 0 
         END as avg_order_value,
         'AED' as currency_code,
         MAX(trx_date_only) as last_order_date
-      FROM flat_sales_transactions
+      FROM flat_transactions
       ${whereClause}
       GROUP BY store_code
       ORDER BY total_sales DESC

@@ -231,7 +231,7 @@ export async function GET(request: NextRequest) {
       count: visitData.length,
       timestamp: new Date().toISOString(),
       source: 'postgresql-flat-table (flat_store_visits)',
-      reportName: 'OGP Report - Outlet Growth Plan (Store User Visit with Distance)',
+      reportName: 'Endorsement Report-Store User Visit with Distance',
       cached: true,
       cacheInfo: {
         duration: cacheDuration,

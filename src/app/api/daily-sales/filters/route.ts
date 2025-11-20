@@ -1,28 +1,40 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { query } from '@/lib/database'
-import { FILTERS_CACHE_DURATION, getCacheControlHeader } from '@/lib/cache-utils'
+import { unstable_cache } from 'next/cache'
+import { FILTERS_CACHE_DURATION, shouldCacheFilters, generateFilterCacheKey, getCacheControlHeader } from '@/lib/cache-utils'
 import { getChildUsers, isAdmin } from '@/lib/mssql'
 
 // Force dynamic rendering for routes that use searchParams
 export const dynamic = 'force-dynamic'
 
-export async function GET(request: NextRequest) {
-  try {
-    const searchParams = request.nextUrl.searchParams
-
-    // Get selected filter values
-    const selectedRegion = searchParams.get('regionCode')
-    const selectedCity = searchParams.get('cityCode')
-    const selectedFieldUserRole = searchParams.get('fieldUserRole')
-    const selectedTeamLeader = searchParams.get('teamLeaderCode')
-    const selectedUser = searchParams.get('userCode')
-    const selectedChain = searchParams.get('chainName')
-    const selectedStore = searchParams.get('storeCode')
-    const startDate = searchParams.get('startDate')
-    const endDate = searchParams.get('endDate')
-    
-    // Get loginUserCode for hierarchy-based filtering
-    const loginUserCode = searchParams.get('loginUserCode')
+// Internal function to fetch daily sales filters (will be cached)
+async function fetchDailySalesFiltersInternal(params: {
+  startDate: string | null
+  endDate: string | null
+  loginUserCode: string | null
+  selectedRegion: string | null
+  selectedCity: string | null
+  selectedFieldUserRole: string | null
+  selectedTeamLeader: string | null
+  selectedUser: string | null
+  selectedChain: string | null
+  selectedStore: string | null
+}) {
+  const { query } = await import('@/lib/database')
+  const { getChildUsers, isAdmin } = await import('@/lib/mssql')
+  
+  const {
+    startDate,
+    endDate,
+    loginUserCode,
+    selectedRegion,
+    selectedCity,
+    selectedFieldUserRole,
+    selectedTeamLeader,
+    selectedUser,
+    selectedChain,
+    selectedStore
+  } = params
     
     // Fetch child users if loginUserCode is provided
     let allowedUserCodes: string[] = []
@@ -33,11 +45,9 @@ export async function GET(request: NextRequest) {
     if (loginUserCode && !isAdmin(loginUserCode)) {
       allowedUserCodes = await getChildUsers(loginUserCode)
       
-      // Query to determine which of the allowed users are Team Leaders vs Field Users
       if (allowedUserCodes.length > 0) {
         const userCodesStr = allowedUserCodes.map(code => `'${code}'`).join(', ')
         
-        // Get team leaders from the allowed codes
         const tlResult = await query(`
           SELECT DISTINCT tl_code
           FROM flat_sales_transactions
@@ -45,16 +55,11 @@ export async function GET(request: NextRequest) {
           ${startDate && endDate ? `AND trx_date_only >= '${startDate}'::date AND trx_date_only <= '${endDate}'::date` : ''}
         `)
         allowedTeamLeaders = tlResult.rows.map(r => r.tl_code).filter(Boolean)
-        
-        // Check if the logged-in user is a team leader
         userIsTeamLeader = allowedTeamLeaders.includes(loginUserCode)
         
-        // If user is a TL, only they should appear in TL filter
         if (userIsTeamLeader) {
           allowedTeamLeaders = [loginUserCode]
         }
-        
-        // Field users are all allowed codes
         allowedFieldUsers = allowedUserCodes
       }
     }
@@ -62,24 +67,19 @@ export async function GET(request: NextRequest) {
     // Build dynamic where clause for availability counts
     const buildAvailabilityWhere = (excludeField?: string) => {
       const conditions = []
-
-      // Exclude DEMO data
       conditions.push(`UPPER(COALESCE(field_user_code, '')) NOT LIKE '%DEMO%'`)
       conditions.push(`UPPER(COALESCE(region_code, '')) NOT LIKE '%DEMO%'`)
 
-      // Add date range if provided
       if (startDate && endDate) {
         conditions.push(`trx_date_only >= '${startDate}'::date`)
         conditions.push(`trx_date_only <= '${endDate}'::date`)
       }
       
-      // Add user hierarchy filter (if not admin)
       if (allowedUserCodes.length > 0) {
         const userCodesStr = allowedUserCodes.map(code => `'${code}'`).join(', ')
         conditions.push(`field_user_code IN (${userCodesStr})`)
       }
 
-      // Add other filters (excluding the field being fetched)
       if (selectedRegion && excludeField !== 'region') {
         conditions.push(`region_code = '${selectedRegion}'`)
       }
@@ -433,7 +433,7 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    return NextResponse.json({
+    return {
       regions,
       cities,
       fieldUserRoles,
@@ -441,12 +441,71 @@ export async function GET(request: NextRequest) {
       fieldUsers,
       chains,
       stores,
-      summary,
-      cached: true,
-      cacheInfo: { duration: FILTERS_CACHE_DURATION }
+      summary
+    }
+}
+
+export async function GET(request: NextRequest) {
+  try {
+    const searchParams = request.nextUrl.searchParams
+
+    // Get selected filter values
+    const selectedRegion = searchParams.get('regionCode')
+    const selectedCity = searchParams.get('cityCode')
+    const selectedFieldUserRole = searchParams.get('fieldUserRole')
+    const selectedTeamLeader = searchParams.get('teamLeaderCode')
+    const selectedUser = searchParams.get('userCode')
+    const selectedChain = searchParams.get('chainName')
+    const selectedStore = searchParams.get('storeCode')
+    const startDate = searchParams.get('startDate')
+    const endDate = searchParams.get('endDate')
+    const loginUserCode = searchParams.get('loginUserCode')
+
+    // Check if we should cache (exclude custom date ranges)
+    const shouldCache = shouldCacheFilters(null, startDate, endDate)
+    
+    const filterParams = {
+      startDate,
+      endDate,
+      loginUserCode,
+      selectedRegion,
+      selectedCity,
+      selectedFieldUserRole,
+      selectedTeamLeader,
+      selectedUser,
+      selectedChain,
+      selectedStore
+    }
+
+    let filterData
+    if (shouldCache) {
+      // Create cache key
+      const cacheKey = generateFilterCacheKey('daily-sales', filterParams)
+      
+      // Fetch with caching
+      const cachedFetchFilters = unstable_cache(
+        async () => fetchDailySalesFiltersInternal(filterParams),
+        [cacheKey],
+        {
+          revalidate: FILTERS_CACHE_DURATION,
+          tags: ['daily-sales-filters']
+        }
+      )
+      filterData = await cachedFetchFilters()
+    } else {
+      // No caching - execute directly
+      filterData = await fetchDailySalesFiltersInternal(filterParams)
+    }
+
+    return NextResponse.json({
+      ...filterData,
+      cached: shouldCache,
+      cacheInfo: shouldCache ? { duration: FILTERS_CACHE_DURATION } : { duration: 0, reason: 'custom-range' }
     }, {
       headers: {
-        'Cache-Control': getCacheControlHeader(FILTERS_CACHE_DURATION)
+        'Cache-Control': shouldCache 
+          ? getCacheControlHeader(FILTERS_CACHE_DURATION)
+          : 'no-cache, no-store, must-revalidate'
       }
     })
 

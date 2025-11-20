@@ -145,10 +145,25 @@ export function CustomersReportUpdated() {
       const response = await fetch(`/api/customers/analytics-v3?${params.toString()}`)
       const result = await response.json()
       
+      console.log('📊 Customer Analytics API Response:', {
+        success: result.success,
+        hasData: !!result.data,
+        metrics: result.data?.metrics,
+        topCustomersCount: result.data?.topCustomers?.length || 0,
+        dateRange: result.dateRange,
+        error: result.error
+      })
+      
       if (result.success) {
-        setData(result.data)
+        if (result.data && (result.data.metrics || result.data.topCustomers?.length > 0)) {
+          setData(result.data)
+        } else {
+          console.warn('⚠️ API returned success but no data. Check date range:', result.dateRange)
+          setData(null)
+        }
       } else {
-        console.error('Error loading data:', result.error)
+        console.error('❌ Error loading data:', result.error)
+        setData(null)
       }
     } catch (error) {
       console.error('Error fetching customer data:', error)
@@ -513,6 +528,16 @@ export function CustomersReportUpdated() {
       </div>
       
       {loading && <LoadingBar />}
+      
+      {/* Error or No Data Message */}
+      {!loading && !data && (
+        <Card className="mb-6">
+          <CardContent className="py-8 text-center">
+            <p className="text-gray-500">No data available. Please check your date range and filters.</p>
+            <p className="text-sm text-gray-400 mt-2">Check the browser console for details.</p>
+          </CardContent>
+        </Card>
+      )}
       
       {/* KPI Cards */}
       {data && (

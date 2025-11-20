@@ -1,6 +1,9 @@
 import { NextResponse } from 'next/server'
 import { getDailySalesSummary } from '@/services/dailySalesService'
-import { getCacheDuration, getCacheControlHeader } from '@/lib/cache-utils'
+import { unstable_cache } from 'next/cache'
+import { shouldCacheFilters, generateFilterCacheKey, getCacheControlHeader, getCacheDuration } from '@/lib/cache-utils'
+
+export const dynamic = 'force-dynamic'
 
 export async function GET(request: Request) {
   try {
@@ -17,7 +20,6 @@ export async function GET(request: Request) {
     const storeCode = searchParams.get('storeCode')
     const productCode = searchParams.get('productCode')
     const productCategory = searchParams.get('productCategory')
-    // loginUserCode is accepted but no auth/hierarchy filtering is applied in local mode
 
     const filters: any = {}
     if (dateRange) filters.dateRange = dateRange
@@ -33,23 +35,40 @@ export async function GET(request: Request) {
     if (productCode) filters.productCode = productCode
     if (productCategory) filters.productCategory = productCategory
 
-    const data = await getDailySalesSummary(filters)
-    
-    // Calculate cache duration based on date range
+    const shouldCache = shouldCacheFilters(dateRange || null, startDate, endDate)
     const hasCustomDates = !!(startDate && endDate)
     const cacheDuration = getCacheDuration(dateRange || 'thisMonth', hasCustomDates)
+
+    let data
+    if (shouldCache) {
+      const cacheKey = generateFilterCacheKey('daily-sales-summary', filters)
+      const cachedFetchSummary = unstable_cache(
+        async () => getDailySalesSummary(filters),
+        [cacheKey],
+        {
+          revalidate: cacheDuration,
+          tags: ['daily-sales-summary']
+        }
+      )
+      data = await cachedFetchSummary()
+    } else {
+      data = await getDailySalesSummary(filters)
+    }
     
     return NextResponse.json({
       ...data,
-      cached: true,
+      cached: shouldCache,
       cacheInfo: {
-        duration: cacheDuration,
+        duration: shouldCache ? cacheDuration : 0,
         dateRange: dateRange || 'thisMonth',
-        hasCustomDates
+        hasCustomDates,
+        reason: shouldCache ? undefined : (dateRange === 'today' ? 'today' : 'custom-range')
       }
     }, {
       headers: {
-        'Cache-Control': getCacheControlHeader(cacheDuration)
+        'Cache-Control': shouldCache
+          ? getCacheControlHeader(cacheDuration)
+          : 'no-cache, no-store, must-revalidate'
       }
     })
   } catch (error) {

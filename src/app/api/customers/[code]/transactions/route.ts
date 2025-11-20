@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { query, db } from '@/lib/database'
+import { resolveTransactionsTable, getTransactionColumnExpressions } from '@/services/dailySalesService'
 
 // Force dynamic rendering for routes that use searchParams
 export const dynamic = 'force-dynamic'
@@ -82,25 +83,40 @@ export async function GET(
       endDate = dateResult.endStr
     }
     
-    // Get transactions for the customer
+    // Get table info and column expressions
+    const tableInfo = await resolveTransactionsTable()
+    const transactionsTable = tableInfo.name
+    const col = getTransactionColumnExpressions(tableInfo.columns)
+    
+    // Get transactions for the customer with proper joins to get names
     const transactionsQuery = `
       SELECT 
-        trx_code as "transactionId",
-        trx_date_only as "transactionDate",
-        product_code as "productCode",
-        product_name as "productName",
-        quantity,
-        unit_price as "unitPrice",
-        (quantity * unit_price) as "totalAmount",
-        COALESCE(discount_amount, 0) as "discount",
-        net_amount as "netAmount",
-        trx_type_name as "orderType"
-      FROM flat_sales_transactions
-      WHERE store_code = $1
-        AND trx_type = 5
-        AND trx_date_only >= $2
-        AND trx_date_only <= $3
-      ORDER BY trx_date_only DESC, trx_created_on DESC
+        ${col.trxCode} as "transactionId",
+        ${col.trxDateOnly} as "transactionDate",
+        t.product_code as "productCode",
+        COALESCE(p.product_name, t.product_name, t.product_code) as "productName",
+        ${col.quantityValue} as "quantity",
+        ${col.unitPriceValue} as "unitPrice",
+        (${col.quantityValue} * ${col.unitPriceValue}) as "totalAmount",
+        ${col.discountValue} as "discount",
+        ${col.netAmountValue} as "netAmount",
+        COALESCE(t.transaction_type_name, 'Sales Order') as "orderType",
+        COALESCE(c.customer_name, 'Unknown') as "customerName",
+        COALESCE(c.state, 'Unknown') as "region",
+        COALESCE(c.city, 'Unknown') as "city",
+        COALESCE(c.customer_type, 'Unknown') as "chain",
+        COALESCE(c.sales_person_code, 'Unknown') as "tlCode",
+        COALESCE(c.sales_person_code, 'Unknown') as "tlName",
+        ${col.fieldUserCode === 'NULL' ? 'NULL' : `COALESCE(t.${col.fieldUserCode}, 'Unknown')`} as "fieldUserCode",
+        ${col.fieldUserName === 'NULL' ? 'NULL' : `COALESCE(t.${col.fieldUserName}, 'Unknown')`} as "fieldUserName"
+      FROM ${transactionsTable} t
+      LEFT JOIN flat_customers_master c ON t.${col.storeCode} = c.customer_code
+      LEFT JOIN flat_products_master p ON t.product_code = p.product_code
+      WHERE t.${col.storeCode} = $1
+        AND ${col.trxDateOnly} >= $2
+        AND ${col.trxDateOnly} <= $3
+      ORDER BY ${col.trxDateOnly} DESC
+      LIMIT 1000
     `
     
     const transactionsResult = await query(transactionsQuery, [customerCode, startDate, endDate])
@@ -108,17 +124,16 @@ export async function GET(
     // Get summary statistics
     const summaryQuery = `
       SELECT 
-        SUM(net_amount) as "totalSales",
-        COUNT(DISTINCT trx_code) as "totalOrders",
-        AVG(net_amount) as "avgOrderValue",
-        COUNT(DISTINCT product_code) as "uniqueProducts",
-        MAX(trx_date_only) as "lastOrderDate",
-        MIN(trx_date_only) as "firstOrderDate"
-      FROM flat_sales_transactions
-      WHERE store_code = $1
-        AND trx_type = 5
-        AND trx_date_only >= $2
-        AND trx_date_only <= $3
+        SUM(${col.netAmountValue}) as "totalSales",
+        COUNT(DISTINCT ${col.trxCode}) as "totalOrders",
+        AVG(${col.netAmountValue}) as "avgOrderValue",
+        COUNT(DISTINCT t.product_code) as "uniqueProducts",
+        MAX(${col.trxDateOnly}) as "lastOrderDate",
+        MIN(${col.trxDateOnly}) as "firstOrderDate"
+      FROM ${transactionsTable} t
+      WHERE ${col.storeCode} = $1
+        AND ${col.trxDateOnly} >= $2
+        AND ${col.trxDateOnly} <= $3
     `
     
     const summaryResult = await query(summaryQuery, [customerCode, startDate, endDate])
