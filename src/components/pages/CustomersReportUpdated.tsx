@@ -11,9 +11,9 @@ import { LoadingBar } from '@/components/ui/LoadingBar'
 import { InfoTooltip } from '@/components/ui/InfoTooltip'
 import { SearchableSelect } from '@/components/ui/SearchableSelect'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog'
-import { 
-  TrendingUp, TrendingDown, Users, Package, ShoppingCart, DollarSign, 
-  Download, RefreshCw, Maximize, Minimize, ChevronLeft, ChevronRight, 
+import {
+  TrendingUp, TrendingDown, Users, Package, ShoppingCart, DollarSign,
+  Download, RefreshCw, Maximize, Minimize, ChevronLeft, ChevronRight,
   Eye, Filter, MapPin, Store, Calendar, X, Phone, Mail
 } from 'lucide-react'
 import * as ExcelJS from 'exceljs'
@@ -64,7 +64,7 @@ export function CustomersReportUpdated() {
   const [data, setData] = useState<any>(null)
   const [filterOptions, setFilterOptions] = useState<any>(null)
   const [showFilters, setShowFilters] = useState(true)
-  
+
   // Date range states
   const [dateRangeType, setDateRangeType] = useState('preset') //  // Date range states - Default to current month (1st to today)
   const [customStartDate, setCustomStartDate] = useState(() => {
@@ -72,14 +72,14 @@ export function CustomersReportUpdated() {
     return new Date(date.getFullYear(), date.getMonth(), 1).toISOString().split('T')[0]
   })
   const [customEndDate, setCustomEndDate] = useState(() => new Date().toISOString().split('T')[0])
-  
+
   // Dialog states
   const [showOrdersDialog, setShowOrdersDialog] = useState(false)
   const [selectedCustomer, setSelectedCustomer] = useState<any>(null)
   const [customerDetail, setCustomerDetail] = useState<any>(null)
   const [transactions, setTransactions] = useState<any[]>([])
   const [transactionsLoading, setTransactionsLoading] = useState(false)
-  
+
   // Filters
   const [customerFilter, setCustomerFilter] = useState('')
   const [regionFilter, setRegionFilter] = useState('')
@@ -88,19 +88,19 @@ export function CustomersReportUpdated() {
   const [salesmanFilter, setSalesmanFilter] = useState('')
   const [teamLeaderFilter, setTeamLeaderFilter] = useState('')
   const [productCategoryFilter, setProductCategoryFilter] = useState('')
-  
+
   // Pagination
   const [currentPage, setCurrentPage] = useState(1)
   const [itemsPerPage] = useState(50)
-  
+
   // Fullscreen state
   const [isFullscreen, setIsFullscreen] = useState(false)
-  
+
   // Fetch filter options
   const fetchFilterOptions = useCallback(async () => {
     try {
       const params = new URLSearchParams()
-      
+
       // Add date range
       if (dateRangeType === 'custom') {
         params.append('startDate', customStartDate)
@@ -108,10 +108,10 @@ export function CustomersReportUpdated() {
       } else {
         params.append('range', selectedPeriod)
       }
-      
+
       const response = await fetch(`/api/customers/filters-v3?${params.toString()}`)
       const result = await response.json()
-      
+
       if (result.success) {
         setFilterOptions(result.filters)
       }
@@ -119,13 +119,13 @@ export function CustomersReportUpdated() {
       console.error('Error fetching filter options:', error)
     }
   }, [selectedPeriod, dateRangeType, customStartDate, customEndDate])
-  
+
   // Fetch customer data
   const fetchCustomerData = useCallback(async () => {
     setLoading(true)
     try {
       const params = new URLSearchParams()
-      
+
       // Add date range
       if (dateRangeType === 'preset') {
         params.append('range', selectedPeriod)
@@ -133,7 +133,7 @@ export function CustomersReportUpdated() {
         params.append('startDate', customStartDate)
         params.append('endDate', customEndDate)
       }
-      
+
       if (customerFilter) params.append('customer', customerFilter)
       if (regionFilter) params.append('region', regionFilter)
       if (cityFilter) params.append('city', cityFilter)
@@ -141,10 +141,14 @@ export function CustomersReportUpdated() {
       if (salesmanFilter) params.append('salesman', salesmanFilter)
       if (teamLeaderFilter) params.append('teamLeader', teamLeaderFilter)
       if (productCategoryFilter) params.append('category', productCategoryFilter)
-      
+
+      // Add pagination parameters
+      params.append('page', currentPage.toString())
+      params.append('limit', itemsPerPage.toString())
+
       const response = await fetch(`/api/customers/analytics-v3?${params.toString()}`)
       const result = await response.json()
-      
+
       console.log('📊 Customer Analytics API Response:', {
         success: result.success,
         hasData: !!result.data,
@@ -153,7 +157,7 @@ export function CustomersReportUpdated() {
         dateRange: result.dateRange,
         error: result.error
       })
-      
+
       if (result.success) {
         if (result.data && (result.data.metrics || result.data.topCustomers?.length > 0)) {
           setData(result.data)
@@ -171,15 +175,21 @@ export function CustomersReportUpdated() {
       setLoading(false)
     }
   }, [selectedPeriod, dateRangeType, customStartDate, customEndDate, customerFilter, regionFilter, cityFilter, chainFilter, salesmanFilter, teamLeaderFilter, productCategoryFilter])
-  
+
+  // Reset to page 1 when filters change (not when pagination changes)
+  useEffect(() => {
+    setCurrentPage(1)
+  }, [selectedPeriod, dateRangeType, customStartDate, customEndDate, customerFilter, regionFilter, cityFilter, chainFilter, salesmanFilter, teamLeaderFilter, productCategoryFilter])
+
   useEffect(() => {
     fetchFilterOptions()
   }, [fetchFilterOptions])
-  
+
+  // Fetch data when filters OR pagination change
   useEffect(() => {
     fetchCustomerData()
-  }, [fetchCustomerData])
-  
+  }, [fetchCustomerData, currentPage, itemsPerPage])
+
   // Reset filters
   const resetFilters = () => {
     setCustomerFilter('')
@@ -197,26 +207,26 @@ export function CustomersReportUpdated() {
     setCustomEndDate(new Date().toISOString().split('T')[0])
     setCurrentPage(1)
   }
-  
+
   // Check if any filters are active
-  const hasActiveFilters = customerFilter || regionFilter || cityFilter || chainFilter || 
-                          salesmanFilter || teamLeaderFilter || productCategoryFilter
-  
+  const hasActiveFilters = customerFilter || regionFilter || cityFilter || chainFilter ||
+    salesmanFilter || teamLeaderFilter || productCategoryFilter
+
   // View customer orders in dialog
   const viewCustomerOrders = async (customer: any) => {
     setSelectedCustomer(customer)
     setShowOrdersDialog(true)
     setTransactionsLoading(true)
-    
+
     try {
       // Fetch customer details
       const detailResponse = await fetch(`/api/customers/${customer.customerCode}/details`)
       const detailResult = await detailResponse.json()
-      
+
       if (detailResult.success) {
         setCustomerDetail(detailResult.data)
       }
-      
+
       // Fetch customer transactions
       let transUrl = `/api/customers/${customer.customerCode}/transactions`
       if (dateRangeType === 'custom') {
@@ -226,7 +236,7 @@ export function CustomersReportUpdated() {
       }
       const transResponse = await fetch(transUrl)
       const transResult = await transResponse.json()
-      
+
       if (transResult.success) {
         setTransactions(transResult.data.transactions || [])
       }
@@ -236,7 +246,7 @@ export function CustomersReportUpdated() {
       setTransactionsLoading(false)
     }
   }
-  
+
   // Export to Excel
   const exportToExcel = async () => {
     try {
@@ -244,7 +254,7 @@ export function CustomersReportUpdated() {
         page: '1',
         limit: '10000'
       })
-      
+
       // Handle date range
       if (dateRangeType === 'custom') {
         params.append('startDate', customStartDate)
@@ -252,7 +262,7 @@ export function CustomersReportUpdated() {
       } else {
         params.append('range', selectedPeriod)
       }
-      
+
       if (customerFilter) params.append('customer', customerFilter)
       if (regionFilter) params.append('region', regionFilter)
       if (cityFilter) params.append('city', cityFilter)
@@ -260,18 +270,18 @@ export function CustomersReportUpdated() {
       if (salesmanFilter) params.append('salesman', salesmanFilter)
       if (teamLeaderFilter) params.append('teamLeader', teamLeaderFilter)
       if (productCategoryFilter) params.append('category', productCategoryFilter)
-      
+
       const response = await fetch(`/api/customers/analytics-v3?${params.toString()}`)
       const result = await response.json()
-      
+
       if (!result.success || !result.data?.topCustomers) {
         alert('No data to export')
         return
       }
-      
+
       const workbook = new ExcelJS.Workbook()
       const worksheet = workbook.addWorksheet('Customer Analysis')
-      
+
       worksheet.columns = [
         { header: 'Customer Code', key: 'customerCode', width: 15 },
         { header: 'Customer Name', key: 'customerName', width: 30 },
@@ -288,7 +298,7 @@ export function CustomersReportUpdated() {
         { header: 'Avg Order Value', key: 'avgOrderValue', width: 18 },
         { header: 'Last Order Date', key: 'lastOrderDate', width: 15 }
       ]
-      
+
       // Format data for Excel
       const formattedData = result.data.topCustomers.map((customer: any) => ({
         customerCode: customer.customerCode || '',
@@ -304,17 +314,17 @@ export function CustomersReportUpdated() {
         orderCount: customer.orderCount || 0,
         totalQuantity: customer.totalQuantity || 0,
         avgOrderValue: customer.avgOrderValue || 0,
-        lastOrderDate: customer.lastOrderDate 
+        lastOrderDate: customer.lastOrderDate
           ? new Date(customer.lastOrderDate).toLocaleDateString('en-GB', {
-              day: '2-digit',
-              month: '2-digit',
-              year: 'numeric'
-            })
+            day: '2-digit',
+            month: '2-digit',
+            year: 'numeric'
+          })
           : ''
       }))
-      
+
       worksheet.addRows(formattedData)
-      
+
       // Style the header row
       worksheet.getRow(1).font = { bold: true, color: { argb: 'FFFFFFFF' } }
       worksheet.getRow(1).fill = {
@@ -323,13 +333,13 @@ export function CustomersReportUpdated() {
         fgColor: { argb: 'FF4472C4' }
       }
       worksheet.getRow(1).alignment = { vertical: 'middle', horizontal: 'center' }
-      
+
       // Format number columns
       worksheet.getColumn('totalSales').numFmt = '#,##0.00'
       worksheet.getColumn('avgOrderValue').numFmt = '#,##0.00'
       worksheet.getColumn('orderCount').numFmt = '#,##0'
       worksheet.getColumn('totalQuantity').numFmt = '#,##0'
-      
+
       const buffer = await workbook.xlsx.writeBuffer()
       const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' })
       const url = URL.createObjectURL(blob)
@@ -342,7 +352,7 @@ export function CustomersReportUpdated() {
       alert('Failed to export data')
     }
   }
-  
+
   return (
     <div className={`p-6 ${isFullscreen ? 'fixed inset-0 z-50 bg-white overflow-auto' : ''}`}>
       {/* Header */}
@@ -372,7 +382,7 @@ export function CustomersReportUpdated() {
             </Button>
           </div>
         </div>
-        
+
         {/* Filters Section */}
         <Card>
           <CardHeader className="pb-3">
@@ -424,7 +434,7 @@ export function CustomersReportUpdated() {
                       </SelectContent>
                     </Select>
                   </div>
-                  
+
                   {/* Preset Date Range or Custom Date Inputs */}
                   {dateRangeType === 'custom' ? (
                     <>
@@ -464,7 +474,7 @@ export function CustomersReportUpdated() {
                     </div>
                   )}
                 </div>
-                
+
                 {/* Filter Section - Proper Grid */}
                 <SearchableSelect
                   value={customerFilter}
@@ -473,7 +483,7 @@ export function CustomersReportUpdated() {
                   placeholder={`All Customers (Available: ${filterOptions?.customers?.length || 0})`}
                   label="Customer"
                 />
-                
+
                 <SearchableSelect
                   value={regionFilter}
                   onChange={(value) => setRegionFilter(value || '')}
@@ -481,7 +491,7 @@ export function CustomersReportUpdated() {
                   placeholder={`All Regions (Available: ${filterOptions?.regions?.length || 0})`}
                   label="Region"
                 />
-                
+
                 <SearchableSelect
                   value={cityFilter}
                   onChange={(value) => setCityFilter(value || '')}
@@ -489,7 +499,7 @@ export function CustomersReportUpdated() {
                   placeholder={`All Cities (Available: ${filterOptions?.cities?.length || 0})`}
                   label="City"
                 />
-                
+
                 <SearchableSelect
                   value={chainFilter}
                   onChange={(value) => setChainFilter(value || '')}
@@ -497,7 +507,7 @@ export function CustomersReportUpdated() {
                   placeholder={`All Chains (Available: ${filterOptions?.chains?.length || 0})`}
                   label="Chain"
                 />
-                
+
                 <SearchableSelect
                   value={salesmanFilter}
                   onChange={(value) => setSalesmanFilter(value || '')}
@@ -505,7 +515,7 @@ export function CustomersReportUpdated() {
                   placeholder={`All Salesmen (Available: ${filterOptions?.salesmen?.length || 0})`}
                   label="Salesman"
                 />
-                
+
                 <SearchableSelect
                   value={teamLeaderFilter}
                   onChange={(value) => setTeamLeaderFilter(value || '')}
@@ -513,7 +523,7 @@ export function CustomersReportUpdated() {
                   placeholder={`All Team Leaders (Available: ${filterOptions?.teamLeaders?.length || 0})`}
                   label="Team Leader"
                 />
-                
+
                 <SearchableSelect
                   value={productCategoryFilter}
                   onChange={(value) => setProductCategoryFilter(value || '')}
@@ -526,9 +536,9 @@ export function CustomersReportUpdated() {
           )}
         </Card>
       </div>
-      
+
       {loading && <LoadingBar />}
-      
+
       {/* Error or No Data Message */}
       {!loading && !data && (
         <Card className="mb-6">
@@ -538,7 +548,7 @@ export function CustomersReportUpdated() {
           </CardContent>
         </Card>
       )}
-      
+
       {/* KPI Cards */}
       {data && (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4 mb-6">
@@ -570,7 +580,7 @@ export function CustomersReportUpdated() {
               {formatNumber(data.metrics?.totalCustomers || 0)}
             </div>
           </div>
-          
+
           <div style={{
             backgroundColor: 'rgb(255, 255, 255)',
             borderRadius: '12px',
@@ -599,7 +609,7 @@ export function CustomersReportUpdated() {
               {formatCurrency(data.metrics?.totalSales || 0)}
             </div>
           </div>
-          
+
           <div style={{
             backgroundColor: 'rgb(255, 255, 255)',
             borderRadius: '12px',
@@ -628,7 +638,7 @@ export function CustomersReportUpdated() {
               {formatNumber(data.metrics?.totalOrders || 0)}
             </div>
           </div>
-          
+
           <div style={{
             backgroundColor: 'rgb(255, 255, 255)',
             borderRadius: '12px',
@@ -657,7 +667,7 @@ export function CustomersReportUpdated() {
               {formatCurrency(data.metrics?.avgOrderValue || 0)}
             </div>
           </div>
-          
+
           <div style={{
             backgroundColor: 'rgb(255, 255, 255)',
             borderRadius: '12px',
@@ -688,35 +698,33 @@ export function CustomersReportUpdated() {
           </div>
         </div>
       )}
-      
+
       {/* View Mode Toggle */}
       {data && !loading && (
         <div className="flex justify-center mb-6">
           <div className="inline-flex rounded-lg border border-gray-300 bg-white p-1">
             <button
               onClick={() => setActiveView('summary')}
-              className={`px-6 py-2 rounded-md text-sm font-medium transition-colors ${
-                activeView === 'summary'
-                  ? 'bg-blue-600 text-white'
-                  : 'text-gray-700 hover:text-gray-900'
-              }`}
+              className={`px-6 py-2 rounded-md text-sm font-medium transition-colors ${activeView === 'summary'
+                ? 'bg-blue-600 text-white'
+                : 'text-gray-700 hover:text-gray-900'
+                }`}
             >
               Summary View
             </button>
             <button
               onClick={() => setActiveView('detailed')}
-              className={`px-6 py-2 rounded-md text-sm font-medium transition-colors ${
-                activeView === 'detailed'
-                  ? 'bg-blue-600 text-white'
-                  : 'text-gray-700 hover:text-gray-900'
-              }`}
+              className={`px-6 py-2 rounded-md text-sm font-medium transition-colors ${activeView === 'detailed'
+                ? 'bg-blue-600 text-white'
+                : 'text-gray-700 hover:text-gray-900'
+                }`}
             >
               Detailed View
             </button>
           </div>
         </div>
       )}
-      
+
       {/* Content based on view mode */}
       {activeView === 'summary' ? (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -742,7 +750,7 @@ export function CustomersReportUpdated() {
               </CardContent>
             </Card>
           )}
-          
+
           {/* Sales by City */}
           {data?.salesByCity && (
             <Card>
@@ -765,7 +773,7 @@ export function CustomersReportUpdated() {
               </CardContent>
             </Card>
           )}
-          
+
           {/* Sales by Product Category */}
           {data?.salesByCategory && (
             <Card>
@@ -798,7 +806,7 @@ export function CustomersReportUpdated() {
               </CardContent>
             </Card>
           )}
-          
+
           {/* Top 10 Customers */}
           {data?.topCustomers && (
             <Card>
@@ -812,15 +820,15 @@ export function CustomersReportUpdated() {
                 <ResponsiveContainer width="100%" height={300}>
                   <BarChart data={data.topCustomers.slice(0, 10)}>
                     <CartesianGrid strokeDasharray="3 3" />
-                    <XAxis 
-                      dataKey="customerName" 
-                      angle={-45} 
-                      textAnchor="end" 
+                    <XAxis
+                      dataKey="customerName"
+                      angle={-45}
+                      textAnchor="end"
                       height={100}
                       tickFormatter={(value) => truncateName(value, 15)}
                     />
                     <YAxis tickFormatter={(value) => `${(value / 1000).toFixed(0)}K`} />
-                    <Tooltip 
+                    <Tooltip
                       formatter={(value: any) => [`Sales: ${formatCurrency(value)}`, 'Amount']}
                       labelFormatter={(label) => {
                         const customer = data.topCustomers.find((c: any) => c.customerName === label)
@@ -913,12 +921,12 @@ export function CustomersReportUpdated() {
                         <td className="px-4 py-3 text-sm text-right font-semibold text-blue-600">{formatNumber(customer.totalQuantity || 0)}</td>
                         <td className="px-4 py-3 text-sm text-right text-gray-900">{formatCurrency(customer.avgOrderValue)}</td>
                         <td className="px-4 py-3 text-sm text-gray-700">
-                          {customer.lastOrderDate 
+                          {customer.lastOrderDate
                             ? new Date(customer.lastOrderDate).toLocaleDateString('en-GB', {
-                                day: '2-digit',
-                                month: '2-digit',
-                                year: 'numeric'
-                              })
+                              day: '2-digit',
+                              month: '2-digit',
+                              year: 'numeric'
+                            })
                             : '-'}
                         </td>
                         <td className="px-4 py-3 text-sm">
@@ -944,7 +952,7 @@ export function CustomersReportUpdated() {
                 </tbody>
               </table>
             </div>
-            
+
             {/* Pagination */}
             {data?.pagination && (
               <div className="flex justify-center items-center mt-4">
@@ -973,7 +981,7 @@ export function CustomersReportUpdated() {
           </CardContent>
         </Card>
       )}
-      
+
       {/* Customer Orders Dialog */}
       <Dialog open={showOrdersDialog} onOpenChange={setShowOrdersDialog}>
         <DialogContent className="max-w-[90vw] max-h-[90vh] overflow-y-auto">
@@ -982,12 +990,12 @@ export function CustomersReportUpdated() {
               Customer Orders - {selectedCustomer?.customerName}
             </DialogTitle>
             <DialogDescription>
-              Order details for {dateRangeType === 'custom' 
+              Order details for {dateRangeType === 'custom'
                 ? `${new Date(customStartDate).toLocaleDateString()} - ${new Date(customEndDate).toLocaleDateString()}`
                 : getDateRangeLabel(selectedPeriod)}
             </DialogDescription>
           </DialogHeader>
-          
+
           {transactionsLoading ? (
             <div className="flex justify-center py-8">
               <LoadingBar />
@@ -1062,7 +1070,7 @@ export function CustomersReportUpdated() {
                   )}
                 </CardContent>
               </Card>
-              
+
               {/* Transactions Table */}
               <Card>
                 <CardHeader>
@@ -1160,11 +1168,11 @@ async function exportCustomerTransactions(customer: any, customerDetail: any, tr
     if (value >= 1000) return `AED${(value / 1000).toFixed(0)}K`
     return `AED${value.toFixed(0)}`
   }
-  
+
   try {
     const workbook = new ExcelJS.Workbook()
     const worksheet = workbook.addWorksheet('Customer Transactions')
-    
+
     // Add customer info header section
     worksheet.addRow(['CUSTOMER INFORMATION'])
     worksheet.addRow([])
@@ -1185,7 +1193,7 @@ async function exportCustomerTransactions(customer: any, customerDetail: any, tr
     worksheet.addRow(['Total Sales:', formatCurrency(customer.totalSales || 0)])
     worksheet.addRow([])
     worksheet.addRow([])
-    
+
     // Style customer info section
     worksheet.getRow(1).font = { bold: true, size: 14 }
     worksheet.getRow(1).fill = {
@@ -1194,15 +1202,15 @@ async function exportCustomerTransactions(customer: any, customerDetail: any, tr
       fgColor: { argb: 'FF4472C4' }
     }
     worksheet.getRow(1).font = { bold: true, color: { argb: 'FFFFFFFF' }, size: 14 }
-    
+
     // Add transaction headers
     const headerRowIndex = worksheet.lastRow.number + 1
     const headers = [
-      'Transaction ID', 'Date', 'Product Code', 'Product Name', 
+      'Transaction ID', 'Date', 'Product Code', 'Product Name',
       'Quantity', 'Unit Price', 'Total Amount', 'Net Amount'
     ]
     worksheet.addRow(headers)
-    
+
     // Style transaction headers
     worksheet.getRow(headerRowIndex).font = { bold: true, color: { argb: 'FFFFFFFF' } }
     worksheet.getRow(headerRowIndex).fill = {
@@ -1211,7 +1219,7 @@ async function exportCustomerTransactions(customer: any, customerDetail: any, tr
       fgColor: { argb: 'FF4472C4' }
     }
     worksheet.getRow(headerRowIndex).alignment = { vertical: 'middle', horizontal: 'center' }
-    
+
     // Add transaction data
     transactions.forEach(trans => {
       worksheet.addRow([
@@ -1229,7 +1237,7 @@ async function exportCustomerTransactions(customer: any, customerDetail: any, tr
         trans.netAmount
       ])
     })
-    
+
     // Set column widths
     worksheet.columns = [
       { width: 20 },
@@ -1241,15 +1249,15 @@ async function exportCustomerTransactions(customer: any, customerDetail: any, tr
       { width: 15 },
       { width: 15 }
     ]
-    
+
     // Style the worksheet
     worksheet.eachRow((row, rowNumber) => {
       row.alignment = { vertical: 'middle', horizontal: 'left' }
     })
-    
+
     const buffer = await workbook.xlsx.writeBuffer()
-    const blob = new Blob([buffer], { 
-      type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' 
+    const blob = new Blob([buffer], {
+      type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
     })
     const url = URL.createObjectURL(blob)
     const link = document.createElement('a')

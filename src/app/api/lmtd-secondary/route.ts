@@ -1,7 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { query } from '@/lib/database'
-import { getChildUsers, isAdmin } from '@/lib/mssql'
-import { validateApiUser } from '@/lib/apiUserValidation'
 import { unstable_cache } from 'next/cache'
 import { generateFilterCacheKey, getCacheControlHeader, getCacheDuration } from '@/lib/cache-utils'
 
@@ -323,24 +321,7 @@ export async function GET(request: NextRequest) {
     const limit = Math.min(parseInt(searchParams.get('limit') || '100'), 200) // Max 200 per page
     const offset = (page - 1) * limit
     
-    // Get loginUserCode for hierarchy-based filtering
-    const loginUserCode = searchParams.get('loginUserCode')
-    
-    // Validate user access
-    const validation = await validateApiUser(loginUserCode)
-    if (!validation.isValid) {
-      return validation.response!
-    }
-    
-    // Fetch child users if loginUserCode is provided and not admin
-    let allowedUserCodes: string[] = []
-    if (loginUserCode && !isAdmin(loginUserCode)) {
-      allowedUserCodes = await getChildUsers(loginUserCode)
-      console.log('LMTD Secondary Sales API - Hierarchy filtering:', {
-        loginUserCode,
-        allowedUserCount: allowedUserCodes.length
-      })
-    }
+    // Authentication removed - no user validation needed for localhost
 
     // Calculate date ranges
     // Use endDate if provided, otherwise use current date
@@ -372,13 +353,7 @@ export async function GET(request: NextRequest) {
     let params = []
     let paramIndex = 5 // Starting after the 4 date parameters
 
-    // User hierarchy filter (if not admin)
-    if (allowedUserCodes.length > 0) {
-      const placeholders = allowedUserCodes.map((_, index) => `$${paramIndex + index}`).join(', ')
-      filterConditions.push(`t.user_code IN (${placeholders})`)
-      params.push(...allowedUserCodes)
-      paramIndex += allowedUserCodes.length
-    }
+    // Authentication removed - no hierarchy filtering
 
     if (teamLeaderCode) {
       filterConditions.push(`c.sales_person_code = $${paramIndex}`)
@@ -438,7 +413,6 @@ export async function GET(request: NextRequest) {
       chainName: chainName || '',
       productCategory: productCategory || '',
       productCode: productCode || '',
-      loginUserCode: loginUserCode || '',
       page: page.toString(),
       limit: limit.toString()
     }

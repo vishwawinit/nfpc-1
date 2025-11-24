@@ -143,9 +143,11 @@ export function CustomersReport() {
   // Detailed view state
   const [detailedCustomers, setDetailedCustomers] = useState<Customer[]>([])
   const [currentPage, setCurrentPage] = useState(1)
+  const [itemsPerPage, setItemsPerPage] = useState(25)
   const [totalCustomers, setTotalCustomers] = useState(0)
   const [sortBy, setSortBy] = useState('total_sales')
   const [sortOrder, setSortOrder] = useState<'ASC' | 'DESC'>('DESC')
+  const [detailedLoading, setDetailedLoading] = useState(false)
 
   // Fetch analytics data
   const fetchAnalytics = async () => {
@@ -190,33 +192,108 @@ export function CustomersReport() {
     }
   }
 
-  // Fetch detailed customers
-  const fetchDetailedCustomers = async () => {
+  // Fetch detailed customers - wrapped in useCallback to prevent infinite loops
+  const fetchDetailedCustomers = useCallback(async () => {
+    // Don't fetch if we're not in detailed tab
+    if (activeTab !== 'detailed') {
+      return
+    }
+
+    // Don't fetch if no date range
+    if (!appliedFilters.dateRange) {
+      console.warn('Cannot fetch detailed customers: no date range specified')
+      return
+    }
+
+    setDetailedLoading(true)
     try {
       const params = new URLSearchParams({
         range: appliedFilters.dateRange,
         page: currentPage.toString(),
-        limit: '25',
+        limit: itemsPerPage.toString(),
         sortBy,
         sortOrder,
-        ...(appliedFilters.regionCode !== 'all' && { regionCode: appliedFilters.regionCode }),
-        ...(appliedFilters.salesmanCode !== 'all' && { salesmanCode: appliedFilters.salesmanCode }),
-        ...(appliedFilters.routeCode !== 'all' && { routeCode: appliedFilters.routeCode }),
-        ...(appliedFilters.channelCode !== 'all' && { channelCode: appliedFilters.channelCode }),
-        ...(appliedFilters.searchTerm && { search: appliedFilters.searchTerm }),
       })
 
-      const response = await fetch(`/api/customers/details?${params}`)
+      // Add filters only if they're not 'all'
+      if (appliedFilters.regionCode && appliedFilters.regionCode !== 'all') {
+        params.append('regionCode', appliedFilters.regionCode)
+      }
+      if (appliedFilters.salesmanCode && appliedFilters.salesmanCode !== 'all') {
+        params.append('salesmanCode', appliedFilters.salesmanCode)
+      }
+      if (appliedFilters.routeCode && appliedFilters.routeCode !== 'all') {
+        params.append('routeCode', appliedFilters.routeCode)
+      }
+      if (appliedFilters.channelCode && appliedFilters.channelCode !== 'all') {
+        params.append('channelCode', appliedFilters.channelCode)
+      }
+      if (appliedFilters.searchTerm && appliedFilters.searchTerm.trim()) {
+        params.append('search', appliedFilters.searchTerm.trim())
+      }
+
+      const url = `/api/customers/details?${params.toString()}`
+      console.log('Fetching detailed customers from:', url)
+
+      const response = await fetch(url, {
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        cache: 'no-store' as RequestCache
+      })
+
+      if (!response.ok) {
+        const errorText = await response.text()
+        let errorMessage = `HTTP ${response.status}: ${response.statusText}`
+        try {
+          const errorJson = JSON.parse(errorText)
+          errorMessage = errorJson.message || errorJson.error || errorMessage
+        } catch {
+          errorMessage = errorText || errorMessage
+        }
+        console.error('API Error Response:', errorMessage)
+        throw new Error(errorMessage)
+      }
+
       const result = await response.json()
+      console.log('API Response success:', result.success, 'Customers count:', result.data?.customers?.length || 0)
 
       if (result.success) {
-        setDetailedCustomers(result.data.customers)
-        setTotalCustomers(result.data.pagination.totalCount)
+        // Handle both response formats
+        const customers = result.data?.customers || result.data || []
+        const pagination = result.data?.pagination || result.pagination || {}
+        
+        // Ensure customers is an array
+        const customersArray = Array.isArray(customers) ? customers : []
+        
+        const totalCount = pagination.totalCount || 
+          pagination.total || 
+          result.data?.totalCount || 
+          customersArray.length || 
+          0
+        
+        console.log('Setting customers:', customersArray.length, 'Total count:', totalCount)
+        
+        setDetailedCustomers(customersArray)
+        setTotalCustomers(totalCount)
+      } else {
+        // Even if success is false, try to extract any data that might be there
+        const customers = result.data?.customers || result.data || []
+        const customersArray = Array.isArray(customers) ? customers : []
+        
+        console.error('API returned success:false. Error:', result.error || result.message, 'Data:', customersArray.length)
+        setDetailedCustomers(customersArray)
+        setTotalCustomers(result.data?.pagination?.totalCount || result.data?.pagination?.total || customersArray.length || 0)
       }
     } catch (err) {
       console.error('Error fetching detailed customers:', err)
+      setDetailedCustomers([])
+      setTotalCustomers(0)
+    } finally {
+      setDetailedLoading(false)
     }
-  }
+  }, [activeTab, currentPage, itemsPerPage, sortBy, sortOrder, appliedFilters])
 
   const applyFilters = () => {
     setAppliedFilters(filters)
@@ -245,11 +322,38 @@ export function CustomersReport() {
     fetchFilterOptions()
   }, [appliedFilters])
 
+  // Reset to page 1 when filters or items per page change
   useEffect(() => {
-    if (activeTab === 'detailed') {
+    setCurrentPage(1)
+  }, [appliedFilters, itemsPerPage])
+
+  // Fetch detailed customers when tab is active or dependencies change
+  useEffect(() => {
+    if (activeTab === 'detailed' && appliedFilters.dateRange) {
+      console.log('Fetching detailed customers with filters:', appliedFilters)
       fetchDetailedCustomers()
+    } else if (activeTab !== 'detailed') {
+      // Clear data when switching away from detailed view
+      setDetailedCustomers([])
+      setTotalCustomers(0)
     }
-  }, [activeTab, currentPage, sortBy, sortOrder, appliedFilters])
+  }, [activeTab, currentPage, itemsPerPage, sortBy, sortOrder, appliedFilters, fetchDetailedCustomers])
+
+  const handlePageChange = (page: number) => {
+    setCurrentPage(page)
+    // Scroll to top of table
+    document.querySelector('.scrollable-table-container')?.scrollTo({ top: 0, behavior: 'smooth' })
+  }
+
+  const handleItemsPerPageChange = (newItemsPerPage: number) => {
+    setItemsPerPage(newItemsPerPage)
+    setCurrentPage(1)
+  }
+
+  // Calculate pagination values
+  const totalPages = Math.ceil(totalCustomers / itemsPerPage)
+  const startIndex = (currentPage - 1) * itemsPerPage
+  const endIndex = Math.min(startIndex + itemsPerPage, totalCustomers)
 
   const formatCurrency = (amount: number, currency: string = 'AED') => {
     return new Intl.NumberFormat('en-AE', {
@@ -698,18 +802,18 @@ export function CustomersReport() {
         <TabsContent value="detailed" className="space-y-6">
           <Card>
             <CardHeader>
-              <div className="flex items-center justify-between">
+              <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
                 <div>
                   <CardTitle>Customer Details Table</CardTitle>
                   <p className="text-sm text-gray-600 mt-1">
                     {totalCustomers > 0
-                      ? `Showing ${((currentPage - 1) * 25) + 1}-${Math.min(currentPage * 25, totalCustomers)} of ${formatNumber(totalCustomers)} customers`
+                      ? `Showing ${startIndex + 1}-${endIndex} of ${formatNumber(totalCustomers)} customers`
                       : 'No customers found'}
                   </p>
                 </div>
+                <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3">
                 <div className="flex items-center gap-2">
-                  <div className="flex items-center gap-2">
-                    <label className="text-sm text-gray-600">Sort By:</label>
+                    <label className="text-sm text-gray-600 whitespace-nowrap">Sort By:</label>
                     <Select value={sortBy} onValueChange={setSortBy}>
                       <SelectTrigger className="w-40">
                         <SelectValue />
@@ -731,6 +835,20 @@ export function CustomersReport() {
                       <SelectItem value="ASC">Lowest First</SelectItem>
                     </SelectContent>
                   </Select>
+                  <div className="flex items-center gap-2">
+                    <label className="text-sm text-gray-600 whitespace-nowrap">Per page:</label>
+                    <Select value={itemsPerPage.toString()} onValueChange={(value) => handleItemsPerPageChange(Number(value))}>
+                      <SelectTrigger className="w-20">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="25">25</SelectItem>
+                        <SelectItem value="50">50</SelectItem>
+                        <SelectItem value="100">100</SelectItem>
+                        <SelectItem value="200">200</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
                   <Button variant="outline" size="sm">
                     <Download className="h-4 w-4 mr-2" />
                     Export
@@ -739,13 +857,19 @@ export function CustomersReport() {
               </div>
             </CardHeader>
             <CardContent>
-              {detailedCustomers.length === 0 ? (
+              {detailedLoading ? (
+                <div className="text-center py-12">
+                  <RefreshCw className="h-8 w-8 text-gray-400 mx-auto mb-4 animate-spin" />
+                  <p className="text-gray-600">Loading customer data...</p>
+                </div>
+              ) : detailedCustomers.length === 0 ? (
                 <div className="text-center py-12">
                   <Users className="h-12 w-12 text-gray-400 mx-auto mb-4" />
                   <h3 className="text-lg font-medium text-gray-900 mb-2">No customers found</h3>
                   <p className="text-gray-600">Try adjusting your filters or search criteria</p>
                 </div>
               ) : (
+                <div className="overflow-x-auto">
                 <Table>
                   <TableHeader>
                     <TableRow>
@@ -763,12 +887,12 @@ export function CustomersReport() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {detailedCustomers.map((customer) => (
-                      <TableRow key={customer.customerCode}>
+                    {detailedCustomers.map((customer, index) => (
+                      <TableRow key={customer.customerCode || `customer-${index}`}>
                         <TableCell className="font-medium text-blue-600 underline cursor-pointer">
-                          {customer.customerCode}
+                          {customer.customerCode || '-'}
                         </TableCell>
-                        <TableCell>{customer.customerName}</TableCell>
+                        <TableCell>{customer.customerName || '-'}</TableCell>
                         <TableCell>{customer.city || 'N/A'}</TableCell>
                         <TableCell>{customer.regionName || customer.region || 'N/A'}</TableCell>
                         <TableCell>
@@ -778,18 +902,18 @@ export function CustomersReport() {
                         </TableCell>
                         <TableCell>{customer.chainName || 'N/A'}</TableCell>
                         <TableCell className="text-green-600">
-                          {formatCurrency(customer.totalSales, customer.currencyCode)}
+                          {formatCurrency(customer.totalSales || 0, customer.currencyCode || 'AED')}
                         </TableCell>
-                        <TableCell>{formatNumber(customer.totalOrders)}</TableCell>
+                        <TableCell>{formatNumber(customer.totalOrders || 0)}</TableCell>
                         <TableCell className="text-blue-600">
-                          {formatCurrency(customer.avgOrderValue, customer.currencyCode)}
+                          {formatCurrency(customer.avgOrderValue || 0, customer.currencyCode || 'AED')}
                         </TableCell>
                         <TableCell>
                           <div className="flex items-center gap-2">
-                            <Badge className={getStatusColor(customer.status)}>
-                              {customer.status}
+                            <Badge className={getStatusColor(customer.status || 'Active')}>
+                              {customer.status || 'Active'}
                             </Badge>
-                            {customer.daysSinceLastOrder !== null && (
+                            {customer.daysSinceLastOrder !== null && customer.daysSinceLastOrder !== undefined && (
                               <span className="text-xs text-gray-500">
                                 {customer.daysSinceLastOrder}d ago
                               </span>
@@ -805,48 +929,123 @@ export function CustomersReport() {
                     ))}
                   </TableBody>
                 </Table>
+                </div>
               )}
 
               {/* Pagination Controls */}
-              {detailedCustomers.length > 0 && (
-                <div className="flex items-center justify-between mt-4">
+              {detailedCustomers.length > 0 && totalCustomers > 0 && (
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 px-6 py-4 border-t border-gray-200 bg-gray-50 mt-4">
                   <div className="text-sm text-gray-600">
-                    Page {currentPage} of {Math.ceil(totalCustomers / 25)}
+                    <span className="font-medium">
+                      {totalCustomers === 0 ? 'No customers found' :
+                       `Showing ${startIndex + 1}-${endIndex} of ${formatNumber(totalCustomers)} customers`}
+                    </span>
                   </div>
-                  <div className="flex items-center gap-2">
+                  
+                  {totalPages > 1 && (
+                    <div className="flex items-center gap-1">
                     <Button
+                        onClick={() => handlePageChange(1)}
+                        disabled={currentPage === 1}
                       variant="outline"
                       size="sm"
-                      onClick={() => setCurrentPage(1)}
-                      disabled={currentPage === 1}
+                        className="hidden sm:inline-flex"
                     >
                       First
                     </Button>
                     <Button
+                        onClick={() => handlePageChange(currentPage - 1)}
+                        disabled={currentPage === 1}
                       variant="outline"
                       size="sm"
-                      onClick={() => setCurrentPage(currentPage - 1)}
-                      disabled={currentPage === 1}
                     >
                       Previous
                     </Button>
+                      
+                      {/* Page Numbers */}
+                      <div className="flex items-center gap-1 mx-2">
+                        {totalPages <= 7 ? (
+                          // Show all pages if 7 or fewer
+                          [...Array(totalPages)].map((_, i) => (
                     <Button
+                              key={i + 1}
+                              onClick={() => handlePageChange(i + 1)}
+                              variant={currentPage === i + 1 ? "default" : "outline"}
+                              size="sm"
+                              className="w-8 h-8 p-0"
+                            >
+                              {i + 1}
+                            </Button>
+                          ))
+                        ) : (
+                          // Show abbreviated pagination for many pages
+                          <>
+                            {currentPage > 3 && (
+                              <>
+                                <Button
+                                  onClick={() => handlePageChange(1)}
                       variant="outline"
                       size="sm"
-                      onClick={() => setCurrentPage(currentPage + 1)}
-                      disabled={currentPage >= Math.ceil(totalCustomers / 25)}
+                                  className="w-8 h-8 p-0"
+                                >
+                                  1
+                                </Button>
+                                {currentPage > 4 && <span className="text-gray-400 px-1">...</span>}
+                              </>
+                            )}
+                            
+                            {[...Array(Math.min(5, totalPages))].map((_, i) => {
+                              const page = Math.max(1, Math.min(totalPages - 4, currentPage - 2)) + i
+                              if (page > totalPages) return null
+                              return (
+                                <Button
+                                  key={page}
+                                  onClick={() => handlePageChange(page)}
+                                  variant={currentPage === page ? "default" : "outline"}
+                                  size="sm"
+                                  className="w-8 h-8 p-0"
+                                >
+                                  {page}
+                                </Button>
+                              )
+                            })}
+                            
+                            {currentPage < totalPages - 2 && (
+                              <>
+                                {currentPage < totalPages - 3 && <span className="text-gray-400 px-1">...</span>}
+                                <Button
+                                  onClick={() => handlePageChange(totalPages)}
+                                  variant="outline"
+                                  size="sm"
+                                  className="w-8 h-8 p-0"
+                                >
+                                  {totalPages}
+                                </Button>
+                              </>
+                            )}
+                          </>
+                        )}
+                      </div>
+                      
+                      <Button
+                        onClick={() => handlePageChange(currentPage + 1)}
+                        disabled={currentPage === totalPages}
+                        variant="outline"
+                        size="sm"
                     >
                       Next
                     </Button>
                     <Button
+                        onClick={() => handlePageChange(totalPages)}
+                        disabled={currentPage === totalPages}
                       variant="outline"
                       size="sm"
-                      onClick={() => setCurrentPage(Math.ceil(totalCustomers / 25))}
-                      disabled={currentPage >= Math.ceil(totalCustomers / 25)}
+                        className="hidden sm:inline-flex"
                     >
                       Last
                     </Button>
                   </div>
+                  )}
                 </div>
               )}
             </CardContent>

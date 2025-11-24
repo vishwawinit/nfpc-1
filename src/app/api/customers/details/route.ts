@@ -62,7 +62,16 @@ export async function GET(request: NextRequest) {
     const dateRange = searchParams.get('range') || 'thisMonth'
     const page = parseInt(searchParams.get('page') || '1')
     const limit = parseInt(searchParams.get('limit') || '25')
-    const sortBy = searchParams.get('sortBy') || 'net_sales'
+    const sortByParam = searchParams.get('sortBy') || 'total_sales'
+    // Map frontend sortBy to database column names
+    const sortByMap: Record<string, string> = {
+      'total_sales': 'total_sales',
+      'total_orders': 'total_orders',
+      'avg_order_value': 'avg_order_value',
+      'customer_name': 'customer_name',
+      'net_sales': 'total_sales' // Legacy support
+    }
+    const sortBy = sortByMap[sortByParam] || 'total_sales'
     const sortOrder = searchParams.get('sortOrder') || 'DESC'
     const search = searchParams.get('search') || ''
 
@@ -164,10 +173,25 @@ export async function GET(request: NextRequest) {
       paramIndex++
     }
 
+    // Always have at least date conditions, so whereClause should always exist
     const whereClause = `WHERE ${conditions.join(' AND ')}`
 
     // Calculate offset for pagination
     const offset = (page - 1) * limit
+
+    // Build ORDER BY clause with proper aggregate expressions
+    let orderByClause = ''
+    if (sortBy === 'total_sales') {
+      orderByClause = `SUM(order_total) ${sortOrder}`
+    } else if (sortBy === 'total_orders') {
+      orderByClause = `COUNT(DISTINCT trx_code) ${sortOrder}`
+    } else if (sortBy === 'avg_order_value') {
+      orderByClause = `(CASE WHEN COUNT(DISTINCT trx_code) > 0 THEN SUM(order_total) / COUNT(DISTINCT trx_code) ELSE 0 END) ${sortOrder}`
+    } else if (sortBy === 'customer_name') {
+      orderByClause = `MAX(store_name) ${sortOrder}`
+    } else {
+      orderByClause = `SUM(order_total) ${sortOrder}` // Default to total_sales
+    }
 
     // Get customer details with pagination
     const customerDetailsQuery = `
@@ -194,14 +218,22 @@ export async function GET(request: NextRequest) {
       FROM flat_transactions
       ${whereClause}
       GROUP BY store_code
-      ORDER BY ${sortBy} ${sortOrder}
+      ORDER BY ${orderByClause}
       LIMIT $${paramIndex} OFFSET $${paramIndex + 1}
     `
 
     params.push(limit)
     params.push(offset)
 
-    const customerResult = await query(customerDetailsQuery, params)
+    let customerResult
+    let totalCount = 0
+
+    try {
+      customerResult = await query(customerDetailsQuery, params)
+    } catch (queryError) {
+      console.error('Error executing customer details query:', queryError)
+      throw new Error(`Database query failed: ${queryError instanceof Error ? queryError.message : 'Unknown error'}`)
+    }
 
     // Get total count for pagination
     const countQuery = `
@@ -210,25 +242,34 @@ export async function GET(request: NextRequest) {
       ${whereClause}
     `
 
-    const countResult = await query(countQuery, params.slice(0, -2)) // Remove limit and offset params
-    const totalCount = parseInt(countResult.rows[0].total_count || '0')
+    // Get count params (without limit and offset)
+    const countParams = params.slice(0, -2)
+    
+    try {
+      const countResult = await query(countQuery, countParams)
+      totalCount = parseInt(countResult.rows[0]?.total_count || '0')
+    } catch (countError) {
+      console.error('Error executing count query:', countError)
+      // If count query fails, use the length of results as fallback
+      totalCount = customerResult.rows.length
+    }
 
-    // Format customer data
-    const customers = customerResult.rows.map(customer => ({
-      customerCode: customer.customer_code,
-      customerName: customer.customer_name,
-      territory: customer.territory,
-      region: customer.region,
-      regionName: customer.region_name,
-      city: customer.city,
-      channelCode: customer.channel_code,
-      chainName: customer.chain_name,
-      totalSales: parseFloat(customer.total_sales || '0'),
-      totalOrders: parseInt(customer.total_orders || '0'),
-      avgOrderValue: parseFloat(customer.avg_order_value || '0'),
-      status: customer.status,
-      lastOrderDate: customer.last_order_date,
-      assignedSalesmen: parseInt(customer.assigned_salesmen || '0'),
+    // Format customer data - handle null/undefined values
+    const customers = (customerResult.rows || []).map(customer => ({
+      customerCode: customer.customer_code || '',
+      customerName: customer.customer_name || '',
+      territory: customer.territory || '',
+      region: customer.region || '',
+      regionName: customer.region_name || customer.region || '',
+      city: customer.city || '',
+      channelCode: customer.channel_code || '',
+      chainName: customer.chain_name || '',
+      totalSales: parseFloat(customer.total_sales || '0') || 0,
+      totalOrders: parseInt(customer.total_orders || '0') || 0,
+      avgOrderValue: parseFloat(customer.avg_order_value || '0') || 0,
+      status: customer.status || 'Active',
+      lastOrderDate: customer.last_order_date || null,
+      assignedSalesmen: parseInt(customer.assigned_salesmen || '0') || 0,
       currencyCode: customer.currency_code || 'AED'
     }))
 
@@ -272,10 +313,26 @@ export async function GET(request: NextRequest) {
 
   } catch (error) {
     console.error('Customer details API error:', error)
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error'
+    console.error('Error details:', {
+      message: errorMessage,
+      stack: error instanceof Error ? error.stack : undefined
+    })
     return NextResponse.json({
       success: false,
       error: 'Failed to fetch customer details',
-      message: error instanceof Error ? error.message : 'Unknown error'
+      message: errorMessage,
+      data: {
+        customers: [],
+        pagination: {
+          currentPage: 1,
+          totalPages: 0,
+          totalCount: 0,
+          pageSize: 25,
+          hasNextPage: false,
+          hasPrevPage: false
+        }
+      }
     }, { status: 500 })
   }
 }

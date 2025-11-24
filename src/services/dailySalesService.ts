@@ -323,7 +323,7 @@ export const getDailySalesSummary = async (filters: any = {}) => {
     if (col.storeRegion === 'NULL') {
       whereConditions.push(`c.state = $${paramCount}`)
     } else {
-      whereConditions.push(`COALESCE(t.${col.storeRegion}, c.state) = $${paramCount}`)
+      whereConditions.push(`COALESCE(${col.storeRegion}, c.state) = $${paramCount}`)
     }
     params.push(filters.regionCode)
     paramCount++
@@ -333,7 +333,7 @@ export const getDailySalesSummary = async (filters: any = {}) => {
     if (col.storeCity === 'NULL') {
       whereConditions.push(`c.city = $${paramCount}`)
     } else {
-      whereConditions.push(`COALESCE(t.${col.storeCity}, c.city) = $${paramCount}`)
+      whereConditions.push(`COALESCE(${col.storeCity}, c.city) = $${paramCount}`)
     }
     params.push(filters.cityCode)
     paramCount++
@@ -343,7 +343,7 @@ export const getDailySalesSummary = async (filters: any = {}) => {
     if (col.tlCode === 'NULL') {
       whereConditions.push(`c.sales_person_code = $${paramCount}`)
     } else {
-      whereConditions.push(`COALESCE(t.${col.tlCode}, c.sales_person_code) = $${paramCount}`)
+      whereConditions.push(`COALESCE(${col.tlCode}, c.sales_person_code) = $${paramCount}`)
     }
     params.push(filters.teamLeaderCode)
     paramCount++
@@ -351,14 +351,14 @@ export const getDailySalesSummary = async (filters: any = {}) => {
 
   if (filters.fieldUserRole) {
     if (col.fieldUserType !== 'NULL') {
-      whereConditions.push(`COALESCE(t.${col.fieldUserType}, 'Field User') = $${paramCount}`)
+      whereConditions.push(`COALESCE(${col.fieldUserType}, 'Field User') = $${paramCount}`)
     params.push(filters.fieldUserRole)
     paramCount++
     }
   }
 
   if (filters.userCode) {
-    whereConditions.push(`t.${col.fieldUserCode} = $${paramCount}`)
+    whereConditions.push(`${col.fieldUserCode} = $${paramCount}`)
     params.push(filters.userCode)
     paramCount++
   }
@@ -367,14 +367,14 @@ export const getDailySalesSummary = async (filters: any = {}) => {
     if (col.storeClass === 'NULL') {
       whereConditions.push(`COALESCE(c.customer_type, 'Unknown') = $${paramCount}`)
     } else {
-      whereConditions.push(`COALESCE(c.customer_type, t.${col.storeClass}, 'Unknown') = $${paramCount}`)
+      whereConditions.push(`COALESCE(c.customer_type, ${col.storeClass}, 'Unknown') = $${paramCount}`)
     }
     params.push(filters.chainName)
     paramCount++
   }
 
   if (filters.storeCode) {
-    whereConditions.push(`t.${col.storeCode} = $${paramCount}`)
+    whereConditions.push(`${col.storeCode} = $${paramCount}`)
     params.push(filters.storeCode)
     paramCount++
   }
@@ -387,14 +387,14 @@ export const getDailySalesSummary = async (filters: any = {}) => {
 
   if (filters.productCategory) {
     if (col.productGroup1 !== 'NULL') {
-      whereConditions.push(`t.${col.productGroup1} = $${paramCount}`)
+      whereConditions.push(`${col.productGroup1} = $${paramCount}`)
     params.push(filters.productCategory)
     paramCount++
   }
   }
 
   const whereClause = `WHERE ${whereConditions.join(' AND ')}`
-  const joinClause = needsJoin ? `LEFT JOIN flat_customers_master c ON t.${col.storeCode} = c.customer_code` : ''
+  const joinClause = needsJoin ? `LEFT JOIN flat_customers_master c ON ${col.storeCode} = c.customer_code` : ''
 
   // Optimized query for default filters - no unnecessary JOIN
   let sql = `
@@ -499,7 +499,7 @@ export const getDailyTrend = async (filters: any = {}) => {
     if (col.storeRegion === 'NULL') {
       whereConditions.push(`c.state = $${paramCount}`)
     } else {
-      whereConditions.push(`COALESCE(t.${col.storeRegion}, c.state) = $${paramCount}`)
+      whereConditions.push(`COALESCE(${col.storeRegion}, c.state) = $${paramCount}`)
     }
     params.push(filters.regionCode)
     paramCount++
@@ -509,7 +509,7 @@ export const getDailyTrend = async (filters: any = {}) => {
     if (col.storeCity === 'NULL') {
       whereConditions.push(`c.city = $${paramCount}`)
     } else {
-      whereConditions.push(`COALESCE(t.${col.storeCity}, c.city) = $${paramCount}`)
+      whereConditions.push(`COALESCE(${col.storeCity}, c.city) = $${paramCount}`)
     }
     params.push(filters.cityCode)
     paramCount++
@@ -519,7 +519,7 @@ export const getDailyTrend = async (filters: any = {}) => {
     if (col.tlCode === 'NULL') {
       whereConditions.push(`c.sales_person_code = $${paramCount}`)
     } else {
-      whereConditions.push(`COALESCE(t.${col.tlCode}, c.sales_person_code) = $${paramCount}`)
+      whereConditions.push(`COALESCE(${col.tlCode}, c.sales_person_code) = $${paramCount}`)
     }
     params.push(filters.teamLeaderCode)
     paramCount++
@@ -529,14 +529,14 @@ export const getDailyTrend = async (filters: any = {}) => {
     if (col.fieldUserType === 'NULL') {
       // Skip this filter if fieldUserType is not available
     } else {
-      whereConditions.push(`COALESCE(t.${col.fieldUserType}, 'Field User') = $${paramCount}`)
+      whereConditions.push(`COALESCE(${col.fieldUserType}, 'Field User') = $${paramCount}`)
     params.push(filters.fieldUserRole)
     paramCount++
     }
   }
 
   if (filters.userCode) {
-    whereConditions.push(`t.${col.fieldUserCode} = $${paramCount}`)
+    whereConditions.push(`${col.fieldUserCode} = $${paramCount}`)
     params.push(filters.userCode)
     paramCount++
   }
@@ -545,14 +545,14 @@ export const getDailyTrend = async (filters: any = {}) => {
     if (col.storeClass === 'NULL') {
       whereConditions.push(`COALESCE(c.customer_type, 'Unknown') = $${paramCount}`)
     } else {
-      whereConditions.push(`COALESCE(c.customer_type, t.${col.storeClass}, 'Unknown') = $${paramCount}`)
+      whereConditions.push(`COALESCE(c.customer_type, ${col.storeClass}, 'Unknown') = $${paramCount}`)
     }
     params.push(filters.chainName)
     paramCount++
   }
 
   if (filters.storeCode) {
-    whereConditions.push(`t.${col.storeCode} = $${paramCount}`)
+    whereConditions.push(`${col.storeCode} = $${paramCount}`)
     params.push(filters.storeCode)
     paramCount++
   }
@@ -570,7 +570,7 @@ export const getDailyTrend = async (filters: any = {}) => {
       params.push(filters.productCategory)
       paramCount++
     } else {
-      whereConditions.push(`t.${col.productGroup1} = $${paramCount}`)
+      whereConditions.push(`${col.productGroup1} = $${paramCount}`)
     params.push(filters.productCategory)
     paramCount++
   }
@@ -651,19 +651,19 @@ export const getProductPerformance = async (filters: any = {}) => {
   whereConditions.push(`t.order_total IS NOT NULL`)
 
   if (filters.userCode) {
-    whereConditions.push(`t.${col.fieldUserCode} = $${paramCount}`)
+    whereConditions.push(`${col.fieldUserCode} = $${paramCount}`)
     params.push(filters.userCode)
     paramCount++
   }
 
   if (filters.storeCode) {
-    whereConditions.push(`t.${col.storeCode} = $${paramCount}`)
+    whereConditions.push(`${col.storeCode} = $${paramCount}`)
     params.push(filters.storeCode)
     paramCount++
   }
   
   if (filters.productCategory && col.productGroup1 !== 'NULL') {
-    whereConditions.push(`t.${col.productGroup1} = $${paramCount}`)
+    whereConditions.push(`${col.productGroup1} = $${paramCount}`)
     params.push(filters.productCategory)
     paramCount++
   }
@@ -740,20 +740,20 @@ export const getStorePerformance = async (filters: any = {}) => {
   whereConditions.push(`${col.trxDateOnly} >= $1`)
   whereConditions.push(`${col.trxDateOnly} <= $2`)
   whereConditions.push(`t.order_total IS NOT NULL`)
-  whereConditions.push(`t.${col.storeCode} IS NOT NULL`)
+  whereConditions.push(`${col.storeCode} IS NOT NULL`)
 
   if (filters.regionCode) {
     if (col.storeRegion === 'NULL') {
       whereConditions.push(`c.state = $${paramCount}`)
     } else {
-      whereConditions.push(`COALESCE(t.${col.storeRegion}, c.state) = $${paramCount}`)
+      whereConditions.push(`COALESCE(${col.storeRegion}, c.state) = $${paramCount}`)
     }
     params.push(filters.regionCode)
     paramCount++
   }
 
   if (filters.userCode) {
-    whereConditions.push(`t.${col.fieldUserCode} = $${paramCount}`)
+    whereConditions.push(`${col.fieldUserCode} = $${paramCount}`)
     params.push(filters.userCode)
     paramCount++
   }
@@ -765,18 +765,18 @@ export const getStorePerformance = async (filters: any = {}) => {
   }
   
   if (filters.productCategory && col.productGroup1 !== 'NULL') {
-    whereConditions.push(`t.${col.productGroup1} = $${paramCount}`)
+    whereConditions.push(`${col.productGroup1} = $${paramCount}`)
     params.push(filters.productCategory)
     paramCount++
   }
 
   const whereClause = `WHERE ${whereConditions.join(' AND ')}`
-  const joinClause = needsJoin ? `LEFT JOIN flat_customers_master c ON t.${col.storeCode} = c.customer_code` : ''
+  const joinClause = needsJoin ? `LEFT JOIN flat_customers_master c ON ${col.storeCode} = c.customer_code` : ''
 
   // Optimized query - conditional JOIN only when needed
   const sql = `
     SELECT
-      t.${col.storeCode} as "storeCode",
+      ${col.storeCode} as "storeCode",
       ${needsJoin ? `COALESCE(MAX(${col.storeName === 'NULL' ? 'NULL' : `t.${col.storeName}`}), MAX(c.customer_name), 'Unknown Store')` : `COALESCE(MAX(${col.storeName === 'NULL' ? 'NULL' : `t.${col.storeName}`}), 'Unknown Store')`} as "storeName",
       ${needsJoin ? `COALESCE(MAX(c.customer_type), MAX(${col.storeClass === 'NULL' ? 'NULL' : `t.${col.storeClass}`}), 'Unknown')` : `COALESCE(MAX(${col.storeClass === 'NULL' ? 'NULL' : `t.${col.storeClass}`}), 'Unknown')`} as "storeClass",
       ${needsJoin ? `COALESCE(MAX(${col.storeCity === 'NULL' ? 'NULL' : `t.${col.storeCity}`}), MAX(c.city), 'Unknown')` : `COALESCE(MAX(${col.storeCity === 'NULL' ? 'NULL' : `t.${col.storeCity}`}), 'Unknown')`} as "cityCode",
@@ -793,7 +793,7 @@ export const getStorePerformance = async (filters: any = {}) => {
     FROM ${transactionsTable} t
     ${joinClause}
     ${whereClause}
-    GROUP BY t.${col.storeCode}
+    GROUP BY ${col.storeCode}
     ORDER BY net_sales DESC
     LIMIT 100
   `
@@ -844,11 +844,11 @@ export const getUserPerformance = async (filters: any = {}) => {
   // Optimized WHERE - date filter first for index usage
   whereConditions.push(`${col.trxDateOnly} >= $1`)
   whereConditions.push(`${col.trxDateOnly} <= $2`)
-  whereConditions.push(`t.${col.fieldUserCode} IS NOT NULL`)
+  whereConditions.push(`${col.fieldUserCode} IS NOT NULL`)
   whereConditions.push(`t.order_total IS NOT NULL`)
 
   if (filters.storeCode) {
-    whereConditions.push(`t.${col.storeCode} = $${paramCount}`)
+    whereConditions.push(`${col.storeCode} = $${paramCount}`)
     params.push(filters.storeCode)
     paramCount++
   }
@@ -860,7 +860,7 @@ export const getUserPerformance = async (filters: any = {}) => {
   }
   
   if (filters.productCategory && col.productGroup1 !== 'NULL') {
-    whereConditions.push(`t.${col.productGroup1} = $${paramCount}`)
+    whereConditions.push(`${col.productGroup1} = $${paramCount}`)
     params.push(filters.productCategory)
     paramCount++
   }
@@ -949,7 +949,7 @@ export const getTransactionDetails = async (filters: any = {}) => {
     if (col.storeRegion === 'NULL') {
       conditions.push(`c.state = $${paramCount}`)
     } else {
-      conditions.push(`COALESCE(t.${col.storeRegion}, c.state) = $${paramCount}`)
+      conditions.push(`COALESCE(${col.storeRegion}, c.state) = $${paramCount}`)
     }
     params.push(filters.regionCode)
     paramCount++
@@ -959,7 +959,7 @@ export const getTransactionDetails = async (filters: any = {}) => {
     if (col.storeCity === 'NULL') {
       conditions.push(`c.city = $${paramCount}`)
     } else {
-      conditions.push(`COALESCE(t.${col.storeCity}, c.city) = $${paramCount}`)
+      conditions.push(`COALESCE(${col.storeCity}, c.city) = $${paramCount}`)
     }
     params.push(filters.cityCode)
     paramCount++
@@ -969,7 +969,7 @@ export const getTransactionDetails = async (filters: any = {}) => {
     if (col.tlCode === 'NULL') {
       conditions.push(`c.sales_person_code = $${paramCount}`)
     } else {
-      conditions.push(`COALESCE(t.${col.tlCode}, c.sales_person_code) = $${paramCount}`)
+      conditions.push(`COALESCE(${col.tlCode}, c.sales_person_code) = $${paramCount}`)
     }
     params.push(filters.teamLeaderCode)
     paramCount++
@@ -977,14 +977,14 @@ export const getTransactionDetails = async (filters: any = {}) => {
 
   if (filters.fieldUserRole) {
     if (col.fieldUserType !== 'NULL') {
-      conditions.push(`COALESCE(t.${col.fieldUserType}, 'Field User') = $${paramCount}`)
+      conditions.push(`COALESCE(${col.fieldUserType}, 'Field User') = $${paramCount}`)
       params.push(filters.fieldUserRole)
       paramCount++
     }
   }
 
   if (filters.userCode) {
-    conditions.push(`t.${col.fieldUserCode} = $${paramCount}`)
+    conditions.push(`${col.fieldUserCode} = $${paramCount}`)
     params.push(filters.userCode)
     paramCount++
   }
@@ -993,14 +993,14 @@ export const getTransactionDetails = async (filters: any = {}) => {
     if (col.storeClass === 'NULL') {
       conditions.push(`COALESCE(c.customer_type, 'Unknown') = $${paramCount}`)
     } else {
-      conditions.push(`COALESCE(c.customer_type, t.${col.storeClass}, 'Unknown') = $${paramCount}`)
+      conditions.push(`COALESCE(c.customer_type, ${col.storeClass}, 'Unknown') = $${paramCount}`)
     }
     params.push(filters.chainName)
     paramCount++
   }
 
   if (filters.storeCode) {
-    conditions.push(`t.${col.storeCode} = $${paramCount}`)
+    conditions.push(`${col.storeCode} = $${paramCount}`)
     params.push(filters.storeCode)
     paramCount++
   }
@@ -1012,13 +1012,13 @@ export const getTransactionDetails = async (filters: any = {}) => {
   }
   
   if (filters.productCategory && col.productGroup1 !== 'NULL') {
-    conditions.push(`t.${col.productGroup1} = $${paramCount}`)
+    conditions.push(`${col.productGroup1} = $${paramCount}`)
     params.push(filters.productCategory)
     paramCount++
   }
   
   const whereClause = `WHERE ${conditions.join(' AND ')}`
-  const joinClause = needsJoin ? `LEFT JOIN flat_customers_master c ON t.${col.storeCode} = c.customer_code` : ''
+  const joinClause = needsJoin ? `LEFT JOIN flat_customers_master c ON ${col.storeCode} = c.customer_code` : ''
 
   // Get total count first (for pagination) - use separate params array without limit/offset
   const countParams = [...params]

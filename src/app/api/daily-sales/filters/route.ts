@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from 'next/server'
 import { query } from '@/lib/database'
 import { unstable_cache } from 'next/cache'
 import { FILTERS_CACHE_DURATION, shouldCacheFilters, generateFilterCacheKey, getCacheControlHeader } from '@/lib/cache-utils'
-import { getChildUsers, isAdmin } from '@/lib/mssql'
 
 // Force dynamic rendering for routes that use searchParams
 export const dynamic = 'force-dynamic'
@@ -21,12 +20,10 @@ async function fetchDailySalesFiltersInternal(params: {
   selectedStore: string | null
 }) {
   const { query } = await import('@/lib/database')
-  const { getChildUsers, isAdmin } = await import('@/lib/mssql')
   
   const {
     startDate,
     endDate,
-    loginUserCode,
     selectedRegion,
     selectedCity,
     selectedFieldUserRole,
@@ -36,33 +33,10 @@ async function fetchDailySalesFiltersInternal(params: {
     selectedStore
   } = params
     
-    // Fetch child users if loginUserCode is provided
+    // Authentication removed - no user restrictions
     let allowedUserCodes: string[] = []
-    let userIsTeamLeader = false
     let allowedTeamLeaders: string[] = []
     let allowedFieldUsers: string[] = []
-    
-    if (loginUserCode && !isAdmin(loginUserCode)) {
-      allowedUserCodes = await getChildUsers(loginUserCode)
-      
-      if (allowedUserCodes.length > 0) {
-        const userCodesStr = allowedUserCodes.map(code => `'${code}'`).join(', ')
-        
-        const tlResult = await query(`
-          SELECT DISTINCT tl_code
-          FROM flat_sales_transactions
-          WHERE tl_code IN (${userCodesStr})
-          ${startDate && endDate ? `AND trx_date_only >= '${startDate}'::date AND trx_date_only <= '${endDate}'::date` : ''}
-        `)
-        allowedTeamLeaders = tlResult.rows.map(r => r.tl_code).filter(Boolean)
-        userIsTeamLeader = allowedTeamLeaders.includes(loginUserCode)
-        
-        if (userIsTeamLeader) {
-          allowedTeamLeaders = [loginUserCode]
-        }
-        allowedFieldUsers = allowedUserCodes
-      }
-    }
 
     // Build dynamic where clause for availability counts
     const buildAvailabilityWhere = (excludeField?: string) => {
@@ -75,10 +49,7 @@ async function fetchDailySalesFiltersInternal(params: {
         conditions.push(`trx_date_only <= '${endDate}'::date`)
       }
       
-      if (allowedUserCodes.length > 0) {
-        const userCodesStr = allowedUserCodes.map(code => `'${code}'`).join(', ')
-        conditions.push(`field_user_code IN (${userCodesStr})`)
-      }
+      // Authentication removed - no user code restrictions
 
       if (selectedRegion && excludeField !== 'region') {
         conditions.push(`region_code = '${selectedRegion}'`)
@@ -127,7 +98,6 @@ async function fetchDailySalesFiltersInternal(params: {
           FROM flat_sales_transactions
           WHERE region_code IS NOT NULL
           AND UPPER(region_code) NOT LIKE '%DEMO%'
-          ${allowedUserCodes.length > 0 ? `AND field_user_code IN (${allowedUserCodes.map(c => `'${c}'`).join(', ')})` : ''}
         ) r
         LEFT JOIN (
           SELECT
@@ -166,7 +136,6 @@ async function fetchDailySalesFiltersInternal(params: {
           FROM flat_sales_transactions
           WHERE (city_name IS NOT NULL OR city_code IS NOT NULL)
           AND UPPER(COALESCE(city_name, city_code)) NOT LIKE '%DEMO%'
-          ${allowedUserCodes.length > 0 ? `AND field_user_code IN (${allowedUserCodes.map(c => `'${c}'`).join(', ')})` : ''}
         ) c
         LEFT JOIN (
           SELECT
@@ -232,7 +201,6 @@ async function fetchDailySalesFiltersInternal(params: {
           FROM flat_sales_transactions
           WHERE tl_code IS NOT NULL
           AND UPPER(COALESCE(tl_code, '')) NOT LIKE '%DEMO%'
-          ${allowedTeamLeaders.length > 0 ? `AND tl_code IN (${allowedTeamLeaders.map(c => `'${c}'`).join(', ')})` : ''}
         ),
         filtered_transactions AS (
           SELECT
@@ -268,7 +236,6 @@ async function fetchDailySalesFiltersInternal(params: {
           WHERE field_user_code IS NOT NULL
           AND COALESCE(user_role, 'Field User') != 'Team Leader'
           AND UPPER(field_user_code) NOT LIKE '%DEMO%'
-          ${allowedFieldUsers.length > 0 ? `AND field_user_code IN (${allowedFieldUsers.map(c => `'${c}'`).join(', ')})` : ''}
         ) fu
         LEFT JOIN (
           SELECT
@@ -292,7 +259,6 @@ async function fetchDailySalesFiltersInternal(params: {
           SELECT DISTINCT COALESCE(chain_name, 'Unknown') as chain_name
           FROM flat_sales_transactions
           WHERE chain_name IS NOT NULL
-          ${allowedUserCodes.length > 0 ? `AND field_user_code IN (${allowedUserCodes.map(c => `'${c}'`).join(', ')})` : ''}
         ) c
         LEFT JOIN (
           SELECT
@@ -321,7 +287,6 @@ async function fetchDailySalesFiltersInternal(params: {
           FROM flat_sales_transactions
           WHERE store_code IS NOT NULL
           AND store_name IS NOT NULL
-          ${allowedUserCodes.length > 0 ? `AND field_user_code IN (${allowedUserCodes.map(c => `'${c}'`).join(', ')})` : ''}
         ) s
         LEFT JOIN (
           SELECT
@@ -378,9 +343,7 @@ async function fetchDailySalesFiltersInternal(params: {
         available: parseInt(row.transactionCount) || 0
       }))
       .filter(tl => {
-        // If hierarchy filtering is active, show ALL team leaders in hierarchy
-        if (allowedTeamLeaders.length > 0) return true
-        // Otherwise only show those with transactions
+        // Show all team leaders with transactions
         return tl.available > 0 || tl.value === selectedTeamLeader
       })
 
@@ -392,9 +355,7 @@ async function fetchDailySalesFiltersInternal(params: {
         available: parseInt(row.transactionCount) || 0
       }))
       .filter(u => {
-        // If hierarchy filtering is active, show ALL field users in hierarchy
-        if (allowedFieldUsers.length > 0) return true
-        // Otherwise only show those with transactions
+        // Show all field users with transactions
         return u.available > 0 || u.value === selectedUser
       })
 
@@ -459,7 +420,8 @@ export async function GET(request: NextRequest) {
     const selectedStore = searchParams.get('storeCode')
     const startDate = searchParams.get('startDate')
     const endDate = searchParams.get('endDate')
-    const loginUserCode = searchParams.get('loginUserCode')
+    // Authentication removed - loginUserCode no longer used
+    const loginUserCode = null
 
     // Check if we should cache (exclude custom date ranges)
     const shouldCache = shouldCacheFilters(null, startDate, endDate)

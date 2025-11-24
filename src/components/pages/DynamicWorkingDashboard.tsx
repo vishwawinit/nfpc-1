@@ -10,7 +10,7 @@ import * as ExcelJS from 'exceljs'
 import { DynamicKPICards } from '../dashboard/DynamicKPICards'
 import { DashboardFilters } from '../dashboard/DashboardFilters'
 import { useDashboardFilters } from '@/hooks/useDashboardFilters'
-import { useSalesTrend, useTopCustomers, useTopProducts, useSalesByChannel } from '@/hooks/useDataService'
+import { useTopCustomers, useTopProducts, useSalesByChannel } from '@/hooks/useDataService'
 import { useResponsive } from '@/hooks/useResponsive'
 
 const formatCurrency = (value: number) => {
@@ -207,10 +207,47 @@ export const DynamicWorkingDashboard: React.FC = () => {
   const CHANNEL_COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#14b8a6', '#f97316']
 
   // Fetch data - Limited to Top 20 for dashboard sections - WITH FILTERS APPLIED
-  const { data: salesTrendData, loading: trendLoading } = useSalesTrend(selectedDateRange, { additionalParams: queryParams })
   const { data: topCustomersData, loading: customersLoading } = useTopCustomers(20, selectedDateRange, { additionalParams: queryParams })
   const { data: topProductsData, loading: productsLoading } = useTopProducts(20, selectedDateRange, { additionalParams: queryParams })
   const { data: salesByChannelData, loading: channelLoading } = useSalesByChannel({ additionalParams: queryParams })
+
+  // Daily Sales Trend Data - using the same API as daily sales report
+  const [dailySalesTrendData, setDailySalesTrendData] = useState<any[]>([])
+  const [trendLoading, setTrendLoading] = useState(false)
+
+  // Fetch daily sales trend data
+  useEffect(() => {
+    const fetchDailySalesTrend = async () => {
+      if (typeof window === 'undefined') return
+      if (!filters.startDate || !filters.endDate) return
+
+      setTrendLoading(true)
+      try {
+        const currentQueryParams = getQueryParams().toString()
+        const response = await fetch(`/api/daily-sales/trend?${currentQueryParams}`, {
+          method: 'GET',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          cache: 'no-store' as RequestCache
+        })
+
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}: ${response.statusText}`)
+        }
+
+        const result = await response.json()
+        setDailySalesTrendData(result?.trend || [])
+      } catch (error) {
+        console.error('Error loading daily sales trend:', error)
+        setDailySalesTrendData([])
+      } finally {
+        setTrendLoading(false)
+      }
+    }
+
+    fetchDailySalesTrend()
+  }, [queryParams, filters.startDate, filters.endDate, getQueryParams])
 
   // Transform channel data for pie chart - group < 5% as "Others"
   const pieChartData = useMemo(() => {
@@ -240,74 +277,67 @@ export const DynamicWorkingDashboard: React.FC = () => {
     return chartData
   }, [salesByChannelData])
 
-  // Transform sales trend data for chart with appropriate date formatting
+  // Transform daily sales trend data for chart - same implementation as daily sales report
   const chartData = useMemo(() => {
-    if (!salesTrendData || salesTrendData.length === 0) {
-      return []
-    }
-
-    // Process and sort data by date
-    const processedData = salesTrendData
+    if (!Array.isArray(dailySalesTrendData) || dailySalesTrendData.length === 0) return []
+    
+    // First, filter and sort by date
+    const validData = dailySalesTrendData
+      .filter(item => item && item.date) // Filter out invalid items
       .map(item => {
-        if (!item.date) return null
-
-        let date: Date
         try {
-          // Handle different date formats from API
-          if (typeof item.date === 'string') {
-            date = new Date(item.date)
-          } else if (item.date instanceof Date) {
-            date = item.date
-          } else {
-            return null
-          }
-
-          // Validate date
+          const date = new Date(item.date)
+          // Check if date is valid
           if (isNaN(date.getTime())) {
-            console.warn('Invalid date in sales trend data:', item.date)
+            console.warn('Invalid date in trend data:', item.date)
             return null
           }
-
-          let formattedDate = ''
-          let fullDate = '' // For tooltip
-
-          // Format date based on selected range for better readability
-          switch(selectedDateRange) {
-            case 'thisYear':
-              // Monthly aggregates - show month names
-              formattedDate = date.toLocaleDateString('en-US', { month: 'short', year: '2-digit' })
-              fullDate = date.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
-              break
-            case 'thisQuarter':
-            case 'lastQuarter':
-              // Weekly aggregates - show week starting date
-              formattedDate = date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
-              fullDate = 'Week of ' + date.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
-              break
-            default:
-              // Daily aggregates - show month and day
-              formattedDate = date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
-              fullDate = date.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
-          }
-
           return {
-            date: formattedDate,
-            fullDate: fullDate,
-            dateObj: date, // Keep original date object for sorting
-            sales: parseFloat(item.sales?.toString() || '0') || 0,
-            orders: parseInt(item.orders?.toString() || '0') || 0,
-            customers: parseInt(item.customers?.toString() || '0') || 0
+            ...item,
+            parsedDate: date
           }
         } catch (error) {
-          console.warn('Error processing sales trend data point:', item, error)
+          console.error('Error parsing date in trend data:', item, error)
           return null
         }
       })
-      .filter((item): item is NonNullable<typeof item> => item !== null)
-      .sort((a, b) => a.dateObj.getTime() - b.dateObj.getTime()) // Sort chronologically
+      .filter(item => item !== null) // Remove null items
+      .sort((a, b) => a!.parsedDate.getTime() - b!.parsedDate.getTime()) // Sort by date
+    
+    // Then format for display
+    return validData.map(item => {
+      const date = item!.parsedDate
+      let formattedDate = ''
+      let fullDate = ''
 
-    return processedData
-  }, [salesTrendData, selectedDateRange])
+      // Format date based on selected range for better readability
+      switch(selectedDateRange) {
+        case 'thisYear':
+          // Monthly aggregates - show month names
+          formattedDate = date.toLocaleDateString('en-US', { month: 'short', year: '2-digit' })
+          fullDate = date.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
+          break
+        case 'thisQuarter':
+        case 'lastQuarter':
+          // Weekly aggregates - show week starting date
+          formattedDate = date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+          fullDate = 'Week of ' + date.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
+          break
+        default:
+          // Daily aggregates - show month and day
+          formattedDate = date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+          fullDate = date.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
+      }
+
+      return {
+        date: formattedDate,
+        fullDate: fullDate,
+        sales: parseFloat(item!.sales) || 0,
+        orders: parseInt(item!.orders) || 0,
+        customers: parseInt(item!.customers) || 0
+      }
+    })
+  }, [dailySalesTrendData, selectedDateRange])
 
   // View customer orders in dialog
   const viewCustomerOrders = async (customer: any) => {
@@ -604,7 +634,7 @@ export const DynamicWorkingDashboard: React.FC = () => {
                     <Tooltip
                       formatter={(value: any, name: string) => {
                         if (name === 'Sales (AED)') {
-                          return [`AED ${Number(value).toLocaleString('en-IN')}`, name]
+                          return [`AED${Number(value).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, name]
                         }
                         return [Number(value).toLocaleString(), name]
                       }}
@@ -674,12 +704,26 @@ export const DynamicWorkingDashboard: React.FC = () => {
               ) : (
                 <div style={{
                   display: 'flex',
+                  flexDirection: 'column',
                   justifyContent: 'center',
                   alignItems: 'center',
                   height: '100%',
                   color: '#6b7280'
                 }}>
-                  No sales data available for selected period
+                  <svg
+                    style={{ width: '48px', height: '48px', marginBottom: '8px', color: '#d1d5db' }}
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"
+                    />
+                  </svg>
+                  <p style={{ fontSize: '14px', margin: 0 }}>No trend data available for the selected period</p>
                 </div>
               )}
             </div>

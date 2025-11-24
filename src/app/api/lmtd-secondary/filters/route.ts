@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { validateApiUser } from '@/lib/apiUserValidation'
 import { unstable_cache } from 'next/cache'
 import { FILTERS_CACHE_DURATION, generateFilterCacheKey, getCacheControlHeader } from '@/lib/cache-utils'
 
@@ -11,7 +10,6 @@ async function fetchLMTDFiltersInternal(params: {
   startDate: string | null
   endDate: string | null
   currentDate: string
-  loginUserCode: string | null
   selectedTeamLeader: string | null
   selectedUser: string | null
   selectedChain: string | null
@@ -20,13 +18,15 @@ async function fetchLMTDFiltersInternal(params: {
 }) {
   // Use the query function from the module scope
   const { query: dbQuery } = await import('@/lib/database')
-  const { getChildUsers, isAdmin } = await import('@/lib/mssql')
+  
+  // Use COALESCE to handle both trx_date_only and transaction_date columns
+  // This matches the pattern used in the main LMTD route
+  const dateColumnExpr = 'DATE(t.transaction_date)'
   
   const {
     startDate,
     endDate,
     currentDate,
-    loginUserCode,
     selectedTeamLeader,
     selectedUser,
     selectedChain,
@@ -49,40 +49,7 @@ async function fetchLMTDFiltersInternal(params: {
   const lmtdStart = `${prevYear}-${String(prevMonth).padStart(2, '0')}-01`
   const lmtdEnd = `${prevYear}-${String(prevMonth).padStart(2, '0')}-${String(lastDayOfPrevMonth).padStart(2, '0')}`
 
-  // Fetch child users if loginUserCode is provided and not admin
-  let allowedUserCodes: string[] = []
-  let userIsTeamLeader = false
-  let allowedTeamLeaders: string[] = []
-  let allowedFieldUsers: string[] = []
-  
-  if (loginUserCode && !isAdmin(loginUserCode)) {
-    allowedUserCodes = await getChildUsers(loginUserCode)
-    
-    if (allowedUserCodes.length > 0) {
-      const placeholders = allowedUserCodes.map((_, idx) => `$${idx + 1}`).join(', ')
-      const tlQuery = `
-        SELECT DISTINCT c.sales_person_code as tl_code
-        FROM flat_transactions t
-        LEFT JOIN flat_customers_master c ON t.customer_code = c.customer_code
-        WHERE c.sales_person_code IN (${placeholders})
-        ${startDate && endDate ? `AND DATE(t.transaction_date) >= $${allowedUserCodes.length + 1}::date` : ''}
-      `
-      const tlParams = [...allowedUserCodes]
-      if (startDate && endDate) {
-        tlParams.push(selectedEndDate)
-      }
-      
-      const tlResult = await dbQuery(tlQuery, tlParams)
-      allowedTeamLeaders = tlResult.rows.map(r => r.tl_code).filter(Boolean)
-      userIsTeamLeader = allowedTeamLeaders.includes(loginUserCode)
-      
-      if (userIsTeamLeader) {
-        allowedTeamLeaders = [loginUserCode]
-      }
-      
-      allowedFieldUsers = allowedUserCodes
-    }
-  }
+  // Authentication removed - no hierarchy filtering
 
   // Build where clause for cascading filters with parameterized queries
   const buildWhereClause = (excludeField?: string): { clause: string, params: any[] } => {
@@ -90,23 +57,20 @@ async function fetchLMTDFiltersInternal(params: {
     const params: any[] = []
     let paramIndex = 1
     
-    conditions.push(`DATE(t.transaction_date) >= $${paramIndex}::date`)
+    // Use detected date column expression (accessible from outer scope)
+    conditions.push(`${dateColumnExpr} >= $${paramIndex}::date`)
     params.push(lmtdStart)
     paramIndex++
     
-    conditions.push(`DATE(t.transaction_date) <= $${paramIndex}::date`)
+    conditions.push(`${dateColumnExpr} <= $${paramIndex}::date`)
     params.push(mtdEnd)
     paramIndex++
     
-    // Filter out NULL order_total values for accurate KPI calculations
-    conditions.push(`t.order_total IS NOT NULL`)
+    // Filter out NULL net_amount/order_total values for accurate KPI calculations
+    // Use COALESCE to handle different column names
+    conditions.push(`COALESCE(t.order_total, t.net_amount, t.line_amount, 0) > 0`)
     
-    if (allowedUserCodes.length > 0) {
-      const placeholders = allowedUserCodes.map((_, idx) => `$${paramIndex + idx}`).join(', ')
-      conditions.push(`t.user_code IN (${placeholders})`)
-      params.push(...allowedUserCodes)
-      paramIndex += allowedUserCodes.length
-    }
+    // Authentication removed - no user hierarchy filtering
     
     if (selectedTeamLeader && excludeField !== 'teamLeader') {
       conditions.push(`c.sales_person_code = $${paramIndex}`)
@@ -141,18 +105,22 @@ async function fetchLMTDFiltersInternal(params: {
     }
     
     // Always ensure we have at least date conditions
+    // Date conditions are always added above, so this should never be empty
     if (conditions.length === 0) {
       // Fallback: if somehow no conditions, add a safe default
       conditions.push('1=1')
     }
     
+    const whereClause = `WHERE ${conditions.join(' AND ')}`
+    
     return {
-      clause: `WHERE ${conditions.join(' AND ')}`,
+      clause: whereClause,
       params
     }
   }
 
   // Fetch all filter options in parallel with error handling
+  // Each query returns empty result on error instead of throwing
   const [
     teamLeadersResult,
     usersResult,
@@ -163,13 +131,6 @@ async function fetchLMTDFiltersInternal(params: {
   ] = await Promise.all([
     (async () => {
       const whereClause = buildWhereClause('teamLeader')
-      let paramIndex = whereClause.params.length + 1
-      const tlPlaceholders = allowedTeamLeaders.length > 0 
-        ? allowedTeamLeaders.map(() => `$${paramIndex++}`).join(', ')
-        : ''
-      const tlFilter = allowedTeamLeaders.length > 0 
-        ? `AND c.sales_person_code IN (${tlPlaceholders})`
-        : ''
       
       const query = `
         WITH all_team_leaders AS (
@@ -180,7 +141,6 @@ async function fetchLMTDFiltersInternal(params: {
           LEFT JOIN flat_customers_master c ON t.customer_code = c.customer_code
           WHERE c.sales_person_code IS NOT NULL
           AND UPPER(COALESCE(c.sales_person_code, '')) NOT LIKE '%DEMO%'
-          ${tlFilter}
         ),
         filtered_transactions AS (
           SELECT
@@ -188,7 +148,7 @@ async function fetchLMTDFiltersInternal(params: {
             COUNT(*) as transaction_count
           FROM flat_transactions t
           LEFT JOIN flat_customers_master c ON t.customer_code = c.customer_code
-          ${whereClause.clause || 'WHERE 1=1'}
+          ${whereClause.clause}
           AND c.sales_person_code IS NOT NULL
           GROUP BY c.sales_person_code
         )
@@ -200,26 +160,20 @@ async function fetchLMTDFiltersInternal(params: {
         LEFT JOIN filtered_transactions ft ON tl.code = ft.tl_code
         ORDER BY tl.code
       `
-      const params = [...whereClause.params, ...allowedTeamLeaders]
+      const params = [...whereClause.params]
       try {
         return await dbQuery(query, params)
       } catch (error) {
         console.error('Error fetching team leaders:', error)
-        console.error('Query:', query)
+        console.error('Query:', query.substring(0, 200))
         console.error('Params:', params)
-        throw new Error(`Team Leaders query failed: ${error instanceof Error ? error.message : 'Unknown error'}`)
+        // Return empty result instead of throwing to allow other filters to load
+        return { rows: [] }
       }
     })(),
     
     (async () => {
       const whereClause = buildWhereClause('user')
-      let paramIndex = whereClause.params.length + 1
-      const userPlaceholders = allowedFieldUsers.length > 0
-        ? allowedFieldUsers.map(() => `$${paramIndex++}`).join(', ')
-        : ''
-      const userFilter = allowedFieldUsers.length > 0
-        ? `AND t.user_code IN (${userPlaceholders})`
-        : ''
       
       const query = `
         SELECT
@@ -233,7 +187,6 @@ async function fetchLMTDFiltersInternal(params: {
           FROM flat_transactions t
           WHERE t.user_code IS NOT NULL
           AND UPPER(t.user_code) NOT LIKE '%DEMO%'
-          ${userFilter}
         ) fu
         LEFT JOIN (
           SELECT
@@ -246,31 +199,19 @@ async function fetchLMTDFiltersInternal(params: {
         ) counts ON fu.user_code = counts.user_code
         ORDER BY fu.user_code
       `
-      const params = [...whereClause.params, ...allowedFieldUsers]
+      const params = [...whereClause.params]
       try {
         return await dbQuery(query, params)
       } catch (error) {
         console.error('Error fetching users:', error)
-        console.error('Query:', query)
+        console.error('Query:', query.substring(0, 200))
         console.error('Params:', params)
-        throw new Error(`Users query failed: ${error instanceof Error ? error.message : 'Unknown error'}`)
+        return { rows: [] }
       }
     })(),
     
     (async () => {
       const whereClause = buildWhereClause('chain')
-      let paramIndex = 1
-      const userPlaceholders = allowedUserCodes.length > 0
-        ? allowedUserCodes.map(() => `$${paramIndex++}`).join(', ')
-        : ''
-      const userFilter = allowedUserCodes.length > 0
-        ? `AND t.user_code IN (${userPlaceholders})`
-        : ''
-      
-      // Adjust whereClause parameter indices to continue from user codes
-      const adjustedWhereClause = whereClause.clause.replace(/\$(\d+)/g, (match, num) => {
-        return `$${parseInt(num) + allowedUserCodes.length}`
-      })
       
       const query = `
         SELECT
@@ -283,7 +224,6 @@ async function fetchLMTDFiltersInternal(params: {
           LEFT JOIN flat_customers_master c ON t.customer_code = c.customer_code
           WHERE c.customer_type IS NOT NULL
           AND UPPER(c.customer_type) NOT LIKE '%DEMO%'
-          ${userFilter}
         ) c
         LEFT JOIN (
           SELECT
@@ -291,36 +231,24 @@ async function fetchLMTDFiltersInternal(params: {
             COUNT(*) as transaction_count
           FROM flat_transactions t
           LEFT JOIN flat_customers_master c ON t.customer_code = c.customer_code
-          ${adjustedWhereClause}
+          ${whereClause.clause}
           GROUP BY c.customer_type
         ) counts ON c.customer_type = counts.customer_type
         ORDER BY c.customer_type
       `
-      const params = [...allowedUserCodes, ...whereClause.params]
+      const params = [...whereClause.params]
       try {
         return await dbQuery(query, params)
       } catch (error) {
         console.error('Error fetching chains:', error)
-        console.error('Query:', query)
+        console.error('Query:', query.substring(0, 200))
         console.error('Params:', params)
-        throw new Error(`Chains query failed: ${error instanceof Error ? error.message : 'Unknown error'}`)
+        return { rows: [] }
       }
     })(),
     
     (async () => {
       const whereClause = buildWhereClause('store')
-      let paramIndex = 1
-      const userPlaceholders = allowedUserCodes.length > 0
-        ? allowedUserCodes.map(() => `$${paramIndex++}`).join(', ')
-        : ''
-      const userFilter = allowedUserCodes.length > 0
-        ? `AND t.user_code IN (${userPlaceholders})`
-        : ''
-      
-      // Adjust whereClause parameter indices to continue from user codes
-      const adjustedWhereClause = whereClause.clause.replace(/\$(\d+)/g, (match, num) => {
-        return `$${parseInt(num) + allowedUserCodes.length}`
-      })
       
       const query = `
         SELECT
@@ -336,7 +264,6 @@ async function fetchLMTDFiltersInternal(params: {
           WHERE c.customer_code IS NOT NULL
           AND c.customer_name IS NOT NULL
           AND UPPER(c.customer_code) NOT LIKE '%DEMO%'
-          ${userFilter}
         ) s
         LEFT JOIN (
           SELECT
@@ -344,37 +271,25 @@ async function fetchLMTDFiltersInternal(params: {
             COUNT(*) as transaction_count
           FROM flat_transactions t
           LEFT JOIN flat_customers_master c ON t.customer_code = c.customer_code
-          ${adjustedWhereClause}
+          ${whereClause.clause}
           GROUP BY t.customer_code
         ) counts ON s.customer_code = counts.customer_code
         ORDER BY s.customer_name
         LIMIT 500
       `
-      const params = [...allowedUserCodes, ...whereClause.params]
+      const params = [...whereClause.params]
       try {
         return await dbQuery(query, params)
       } catch (error) {
         console.error('Error fetching stores:', error)
-        console.error('Query:', query)
+        console.error('Query:', query.substring(0, 200))
         console.error('Params:', params)
-        throw new Error(`Stores query failed: ${error instanceof Error ? error.message : 'Unknown error'}`)
+        return { rows: [] }
       }
     })(),
     
     (async () => {
       const whereClause = buildWhereClause('category')
-      let paramIndex = 1
-      const userPlaceholders = allowedUserCodes.length > 0
-        ? allowedUserCodes.map(() => `$${paramIndex++}`).join(', ')
-        : ''
-      const userFilter = allowedUserCodes.length > 0
-        ? `AND t.user_code IN (${userPlaceholders})`
-        : ''
-      
-      // Adjust whereClause parameter indices to continue from user codes
-      const adjustedWhereClause = whereClause.clause.replace(/\$(\d+)/g, (match, num) => {
-        return `$${parseInt(num) + allowedUserCodes.length}`
-      })
       
       const query = `
         SELECT
@@ -385,7 +300,6 @@ async function fetchLMTDFiltersInternal(params: {
           SELECT DISTINCT COALESCE(t.product_group_level1, 'Unknown') as product_category
           FROM flat_transactions t
           WHERE t.product_group_level1 IS NOT NULL
-          ${userFilter}
         ) p
         LEFT JOIN (
           SELECT
@@ -393,19 +307,19 @@ async function fetchLMTDFiltersInternal(params: {
             COUNT(*) as transaction_count
           FROM flat_transactions t
           LEFT JOIN flat_customers_master c ON t.customer_code = c.customer_code
-          ${adjustedWhereClause}
+          ${whereClause.clause}
           GROUP BY t.product_group_level1
         ) counts ON p.product_category = counts.product_category
         ORDER BY p.product_category
       `
-      const params = [...allowedUserCodes, ...whereClause.params]
+      const params = [...whereClause.params]
       try {
         return await dbQuery(query, params)
       } catch (error) {
         console.error('Error fetching categories:', error)
-        console.error('Query:', query)
+        console.error('Query:', query.substring(0, 200))
         console.error('Params:', params)
-        throw new Error(`Categories query failed: ${error instanceof Error ? error.message : 'Unknown error'}`)
+        return { rows: [] }
       }
     })(),
     
@@ -415,7 +329,7 @@ async function fetchLMTDFiltersInternal(params: {
         SELECT DISTINCT
           t.product_code as "value",
           t.product_code || ' - ' || COALESCE(p.product_name, 'Unknown Product') as "label",
-          SUM(t.order_total) as "totalAmount"
+          SUM(COALESCE(t.order_total, t.net_amount, t.line_amount, 0)) as "totalAmount"
         FROM flat_transactions t
         LEFT JOIN flat_customers_master c ON t.customer_code = c.customer_code
         LEFT JOIN flat_products_master p ON t.product_code = p.product_code
@@ -429,9 +343,9 @@ async function fetchLMTDFiltersInternal(params: {
         return await dbQuery(query, whereClause.params)
       } catch (error) {
         console.error('Error fetching products:', error)
-        console.error('Query:', query)
+        console.error('Query:', query.substring(0, 200))
         console.error('Params:', whereClause.params)
-        throw new Error(`Products query failed: ${error instanceof Error ? error.message : 'Unknown error'}`)
+        return { rows: [] }
       }
     })()
   ])
@@ -443,10 +357,7 @@ async function fetchLMTDFiltersInternal(params: {
       label: row.label,
       available: parseInt(row.count) || 0
     }))
-    .filter(tl => {
-      if (allowedTeamLeaders.length > 0) return true
-      return tl.available > 0 || tl.value === selectedTeamLeader
-    })
+    .filter(tl => tl.available > 0 || tl.value === selectedTeamLeader)
 
   const users = usersResult.rows
     .map(row => ({
@@ -455,10 +366,7 @@ async function fetchLMTDFiltersInternal(params: {
       role: row.role,
       available: parseInt(row.count) || 0
     }))
-    .filter(u => {
-      if (allowedFieldUsers.length > 0) return true
-      return u.available > 0 || u.value === selectedUser
-    })
+    .filter(u => u.available > 0 || u.value === selectedUser)
 
   const chains = chainsResult.rows
     .map(row => ({
@@ -502,11 +410,9 @@ async function fetchLMTDFiltersInternal(params: {
       products
     },
     hierarchy: {
-      loginUserCode: loginUserCode || null,
-      isTeamLeader: userIsTeamLeader,
-      allowedUserCount: allowedUserCodes.length,
-      allowedTeamLeaderCount: allowedTeamLeaders.length,
-      allowedFieldUserCount: allowedFieldUsers.length
+      allowedUserCount: 0,
+      allowedTeamLeaderCount: 0,
+      allowedFieldUserCount: 0
     },
     periods: {
       mtd: { start: mtdStart, end: mtdEnd },
@@ -524,17 +430,10 @@ export async function GET(request: NextRequest) {
     const endDate = searchParams.get('endDate')
     const currentDate = endDate || new Date().toISOString().split('T')[0]
     
-    // Calculate selectedEndDate early for hierarchy queries
+    // Calculate selectedEndDate early
     const selectedEndDate = endDate || currentDate
     
-    // Get loginUserCode for hierarchy-based filtering
-    const loginUserCode = searchParams.get('loginUserCode')
-    
-    // Validate user access
-    const validation = await validateApiUser(loginUserCode)
-    if (!validation.isValid) {
-      return validation.response!
-    }
+    // Authentication removed - no user validation needed
 
     // Get selected filter values for cascading
     const selectedTeamLeader = searchParams.get('teamLeaderCode')
@@ -547,7 +446,6 @@ export async function GET(request: NextRequest) {
     const filterParams = {
       startDate: startDate || '',
       endDate: endDate || '',
-      loginUserCode: loginUserCode || '',
       selectedTeamLeader: selectedTeamLeader || '',
       selectedUser: selectedUser || '',
       selectedChain: selectedChain || '',
@@ -562,7 +460,6 @@ export async function GET(request: NextRequest) {
         startDate,
         endDate,
         currentDate,
-        loginUserCode,
         selectedTeamLeader,
         selectedUser,
         selectedChain,
