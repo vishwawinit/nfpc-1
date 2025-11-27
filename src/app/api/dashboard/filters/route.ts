@@ -4,143 +4,319 @@ import { query } from '@/lib/database'
 // Force dynamic rendering
 export const dynamic = 'force-dynamic'
 
-// Fetch dashboard filters from real database tables
-async function fetchDashboardFiltersInternal() {
-  // Initialize arrays for filter options
-  let regions: any[] = []
-  let warehouses: any[] = []
-  let routes: any[] = []
-  let users: any[] = []
-  let channels: any[] = []
-  let customers: any[] = []
+// Table name constant
+const SALES_TABLE = 'flat_daily_sales_report'
 
-  // Fetch all filters in parallel from real tables
-  await Promise.all([
-    // Fetch regions from tblRegion
-    query(`
-      SELECT DISTINCT
-        "Code" as value,
-        "Description" as label,
-        "CountryCode" as country
-      FROM "tblRegion"
-      WHERE "IsActive" = true
-      ORDER BY "Description"
-    `).then(result => { regions = result.rows || [] }).catch(err => console.error('Error fetching regions:', err)),
+// Fetch dashboard filters from flat_daily_sales_report table
+async function fetchDashboardFiltersInternal(params: {
+  startDate: string | null
+  endDate: string | null
+  areaCode: string | null
+  subAreaCode: string | null
+  fieldUserRole: string | null
+  teamLeaderCode: string | null
+  userCode: string | null
+  chainName: string | null
+  storeCode: string | null
+}) {
+  const {
+    startDate,
+    endDate,
+    areaCode,
+    subAreaCode,
+    fieldUserRole,
+    teamLeaderCode,
+    userCode,
+    chainName,
+    storeCode
+  } = params
 
-    // Fetch warehouses/depots from tblWarehouse
-    query(`
-      SELECT DISTINCT
-        "Code" as value,
-        "Description" as label,
-        "SalesOrgCode" as org_code
-      FROM "tblWarehouse"
-      WHERE "IsActive" = true
-      ORDER BY "Description"
-    `).then(result => { warehouses = result.rows || [] }).catch(err => console.error('Error fetching warehouses:', err)),
+  // Build dynamic where clause for availability counts
+  const buildAvailabilityWhere = (excludeField?: string) => {
+    const conditions = []
+    conditions.push(`UPPER(COALESCE(trx_usercode, '')) NOT LIKE '%DEMO%'`)
+    conditions.push(`UPPER(COALESCE(route_areacode, '')) NOT LIKE '%DEMO%'`)
+    conditions.push(`trx_trxtype = 1`)
 
-    // Fetch routes from tblRoute
-    query(`
-      SELECT DISTINCT
-        "Code" as value,
-        "Name" as label,
-        "SalesmanCode" as salesman_code,
-        "WHCode" as warehouse_code,
-        "AreaCode" as area_code
-      FROM "tblRoute"
-      WHERE "IsActive" = true
-      ORDER BY "Name"
-    `).then(result => { routes = result.rows || [] }).catch(err => console.error('Error fetching routes:', err)),
+    if (startDate && endDate) {
+      conditions.push(`trx_trxdate >= '${startDate}'::timestamp`)
+      conditions.push(`trx_trxdate < ('${endDate}'::timestamp + INTERVAL '1 day')`)
+    }
 
-    // Fetch users/salesmen from tblUser - get all active users
-    query(`
-      SELECT DISTINCT
-        "Code" as value,
-        "Description" as label,
-        "UserType" as user_type,
-        "Department" as department
-      FROM "tblUser"
-      WHERE "IsActive" = true
-      ORDER BY "Description"
-    `).then(result => { users = result.rows || [] }).catch(err => console.error('Error fetching users:', err)),
+    if (areaCode && excludeField !== 'area') {
+      conditions.push(`route_areacode = '${areaCode}'`)
+    }
+    if (subAreaCode && excludeField !== 'subArea') {
+      conditions.push(`route_subareacode = '${subAreaCode}'`)
+    }
+    if (fieldUserRole && excludeField !== 'fieldUserRole') {
+      conditions.push(`COALESCE(user_usertype, 'Field User') = '${fieldUserRole}'`)
+    }
+    if (teamLeaderCode && excludeField !== 'teamLeader') {
+      conditions.push(`route_salesmancode = '${teamLeaderCode}'`)
+    }
+    if (userCode && excludeField !== 'user') {
+      conditions.push(`trx_usercode = '${userCode}'`)
+    }
+    if (chainName && excludeField !== 'chain') {
+      conditions.push(`customer_channel_description = '${chainName}'`)
+    }
+    if (storeCode && excludeField !== 'store') {
+      conditions.push(`customer_code = '${storeCode}'`)
+    }
 
-    // Fetch channels from tblChannel
-    query(`
-      SELECT DISTINCT
-        "Code" as value,
-        "Description" as label
-      FROM "tblChannel"
-      WHERE "IsActive" = true
-      ORDER BY "Description"
-    `).then(result => { channels = result.rows || [] }).catch(err => console.error('Error fetching channels:', err)),
+    return conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : ''
+  }
 
-    // Fetch top customers from tblCustomer
+  // Fetch all filter options in parallel
+  const [
+    areasResult,
+    subAreasResult,
+    fieldUserRolesResult,
+    teamLeadersResult,
+    fieldUsersResult,
+    chainsResult,
+    storesResult,
+    dateRangeResult
+  ] = await Promise.all([
+    // Get areas
     query(`
-      SELECT DISTINCT
-        "Code" as value,
-        "Description" as label,
-        "RegionCode" as region,
-        "RouteCode" as route_code
-      FROM "tblCustomer"
-      WHERE "IsActive" = true
-      AND "IsBlocked" = false
-      ORDER BY "Description"
+      SELECT
+        route_areacode as "value",
+        route_areacode as "label",
+        COUNT(*) as "transactionCount"
+      FROM ${SALES_TABLE}
+      ${buildAvailabilityWhere('area')}
+      GROUP BY route_areacode
+      HAVING route_areacode IS NOT NULL
+      AND route_areacode != ''
+      AND UPPER(route_areacode) NOT LIKE '%DEMO%'
+      ORDER BY route_areacode
+    `),
+
+    // Get sub areas
+    query(`
+      SELECT
+        route_subareacode as "value",
+        route_subareacode as "label",
+        COUNT(*) as "transactionCount",
+        COUNT(DISTINCT customer_code) as "storeCount"
+      FROM ${SALES_TABLE}
+      ${buildAvailabilityWhere('subArea')}
+      GROUP BY route_subareacode
+      HAVING route_subareacode IS NOT NULL
+      AND route_subareacode != ''
+      AND UPPER(route_subareacode) NOT LIKE '%DEMO%'
+      ORDER BY route_subareacode
+    `),
+
+    // Get field user roles
+    query(`
+      SELECT
+        COALESCE(user_usertype, 'Field User') as "value",
+        CASE COALESCE(user_usertype, 'Field User')
+          WHEN 'ATL' THEN 'Asst. Team Leader'
+          ELSE COALESCE(user_usertype, 'Field User')
+        END as "label",
+        COUNT(*) as "transactionCount"
+      FROM ${SALES_TABLE}
+      ${buildAvailabilityWhere('fieldUserRole')}
+      AND COALESCE(user_usertype, 'Field User') != 'Team Leader'
+      GROUP BY user_usertype
+      ORDER BY
+        CASE COALESCE(user_usertype, 'Field User')
+          WHEN 'ATL' THEN 1
+          WHEN 'Promoter' THEN 2
+          WHEN 'Merchandiser' THEN 3
+          WHEN 'Field User' THEN 4
+          ELSE 5
+        END
+    `),
+
+    // Get team leaders
+    query(`
+      SELECT
+        route_salesmancode as "value",
+        route_salesmancode as "label",
+        COUNT(*) as "transactionCount"
+      FROM ${SALES_TABLE}
+      ${buildAvailabilityWhere('teamLeader')}
+      AND route_salesmancode IS NOT NULL
+      GROUP BY route_salesmancode
+      HAVING UPPER(route_salesmancode) NOT LIKE '%DEMO%'
+      ORDER BY route_salesmancode
+    `),
+
+    // Get field users
+    query(`
+      SELECT
+        trx_usercode as "value",
+        COALESCE(MAX(user_description), trx_usercode) || ' (' || trx_usercode || ')' as "label",
+        COALESCE(MAX(user_usertype), 'Field User') as "role",
+        COUNT(*) as "transactionCount"
+      FROM ${SALES_TABLE}
+      ${buildAvailabilityWhere('user')}
+      AND COALESCE(user_usertype, 'Field User') != 'Team Leader'
+      GROUP BY trx_usercode
+      HAVING trx_usercode IS NOT NULL
+      AND UPPER(trx_usercode) NOT LIKE '%DEMO%'
+      ORDER BY MAX(user_description)
+    `),
+
+    // Get chains/channels
+    query(`
+      SELECT
+        COALESCE(customer_channel_description, customer_channelcode, 'Unknown') as "value",
+        COALESCE(customer_channel_description, customer_channelcode, 'Unknown') as "label",
+        COUNT(*) as "transactionCount",
+        COUNT(DISTINCT customer_code) as "storeCount"
+      FROM ${SALES_TABLE}
+      ${buildAvailabilityWhere('chain')}
+      GROUP BY customer_channel_description, customer_channelcode
+      HAVING customer_channel_description IS NOT NULL OR customer_channelcode IS NOT NULL
+      ORDER BY "value"
+    `),
+
+    // Get stores/customers
+    query(`
+      SELECT
+        customer_code as "value",
+        COALESCE(MAX(customer_description), customer_code) || ' (' || customer_code || ')' as "label",
+        COALESCE(MAX(customer_channel_description), MAX(customer_channelcode), 'Unknown') as "chainName",
+        COUNT(*) as "transactionCount"
+      FROM ${SALES_TABLE}
+      ${buildAvailabilityWhere('store')}
+      GROUP BY customer_code
+      HAVING customer_code IS NOT NULL
+      AND MAX(customer_description) IS NOT NULL
+      ORDER BY MAX(customer_description)
       LIMIT 500
-    `).then(result => { customers = result.rows || [] }).catch(err => console.error('Error fetching customers:', err))
+    `),
+
+    // Get date range
+    query(`
+      SELECT
+        MIN(trx_trxdate::date) as "minDate",
+        MAX(trx_trxdate::date) as "maxDate",
+        COUNT(DISTINCT trx_trxdate::date) as "daysWithData"
+      FROM ${SALES_TABLE}
+      ${buildAvailabilityWhere()}
+    `)
   ])
 
-  // Get date range from transactions
-  let dateRange = { min: '', max: '', daysWithData: 0 }
-  try {
-    const dateResult = await query(`
-      SELECT
-        MIN(DATE("TrxDate"))::text as min_date,
-        MAX(DATE("TrxDate"))::text as max_date,
-        COUNT(DISTINCT DATE("TrxDate")) as days_with_data
-      FROM "tblTrxHeader"
-      WHERE "TrxType" = 1
-    `)
-    if (dateResult.rows[0]) {
-      dateRange = {
-        min: dateResult.rows[0].min_date || '',
-        max: dateResult.rows[0].max_date || '',
-        daysWithData: parseInt(dateResult.rows[0].days_with_data || '0')
-      }
+  // Format results
+  const areas = areasResult.rows.map(row => ({
+    value: row.value,
+    label: row.label,
+    available: parseInt(row.transactionCount) || 0
+  })).filter(r => r.available > 0 || r.value === areaCode)
+
+  const subAreas = subAreasResult.rows.map(row => ({
+    value: row.value,
+    label: row.label,
+    available: parseInt(row.transactionCount) || 0,
+    storeCount: parseInt(row.storeCount) || 0
+  })).filter(c => c.available > 0 || c.value === subAreaCode)
+
+  const fieldUserRoles = fieldUserRolesResult.rows.map(row => ({
+    value: row.value,
+    label: row.label,
+    available: parseInt(row.transactionCount) || 0
+  })).filter(r => r.available > 0 || r.value === fieldUserRole)
+
+  const teamLeaders = teamLeadersResult.rows.map(row => ({
+    value: row.value,
+    label: row.label,
+    available: parseInt(row.transactionCount) || 0
+  })).filter(tl => tl.available > 0 || tl.value === teamLeaderCode)
+
+  const fieldUsers = fieldUsersResult.rows.map(row => ({
+    value: row.value,
+    label: row.label,
+    role: row.role,
+    available: parseInt(row.transactionCount) || 0
+  })).filter(u => u.available > 0 || u.value === userCode)
+
+  const chains = chainsResult.rows.map(row => ({
+    value: row.value,
+    label: row.label,
+    available: parseInt(row.transactionCount) || 0,
+    storeCount: parseInt(row.storeCount) || 0
+  })).filter(c => c.available > 0 || c.value === chainName)
+
+  const stores = storesResult.rows.map(row => ({
+    value: row.value,
+    label: row.label,
+    chainName: row.chainName,
+    available: parseInt(row.transactionCount) || 0
+  })).filter(s => s.available > 0 || s.value === storeCode)
+
+  // Get date range info
+  const dateRange = dateRangeResult.rows[0] || {}
+
+  // Calculate summary statistics
+  const summary = {
+    totalAreas: areas.length,
+    totalSubAreas: subAreas.length,
+    totalUsers: fieldUsers.length,
+    totalTeamLeaders: teamLeaders.length,
+    totalChains: chains.length,
+    totalStores: stores.length,
+    totalCustomers: stores.length,
+    totalChannels: chains.length,
+    totalWarehouses: 0, // Not available in flat table
+    dateRange: {
+      min: dateRange.minDate,
+      max: dateRange.maxDate,
+      daysWithData: dateRange.daysWithData || 0
     }
-  } catch (err) {
-    console.error('Error fetching date range:', err)
   }
 
   return {
-    regions,
-    warehouses,
-    depots: warehouses, // Alias
-    routes,
-    users,
-    salesmen: users, // Alias
-    channels,
-    customers,
-    stores: customers, // Alias
-    summary: {
-      totalRegions: regions.length,
-      totalWarehouses: warehouses.length,
-      totalRoutes: routes.length,
-      totalUsers: users.length,
-      totalChannels: channels.length,
-      totalCustomers: customers.length,
-      dateRange
-    }
+    areas,
+    subAreas,
+    regions: areas, // Alias for backward compatibility
+    cities: subAreas, // Alias for backward compatibility
+    routes: subAreas, // Alias
+    fieldUserRoles,
+    teamLeaders,
+    fieldUsers,
+    users: fieldUsers, // Alias
+    salesmen: fieldUsers, // Alias
+    channels: chains,
+    chains,
+    stores,
+    customers: stores, // Alias
+    summary,
+    warehouses: [], // Empty as not available in flat table
+    depots: [] // Empty as not available in flat table
   }
 }
 
 export async function GET(request: NextRequest) {
   try {
-    const filterData = await fetchDashboardFiltersInternal()
+    const searchParams = request.nextUrl.searchParams
+
+    // Get filter parameters - support both old (region/city) and new (area/subArea) names
+    const params = {
+      startDate: searchParams.get('startDate'),
+      endDate: searchParams.get('endDate'),
+      areaCode: searchParams.get('areaCode') || searchParams.get('regionCode'),
+      subAreaCode: searchParams.get('subAreaCode') || searchParams.get('cityCode'),
+      fieldUserRole: searchParams.get('fieldUserRole'),
+      teamLeaderCode: searchParams.get('teamLeaderCode'),
+      userCode: searchParams.get('userCode'),
+      chainName: searchParams.get('chainName'),
+      storeCode: searchParams.get('storeCode')
+    }
+
+    const filterData = await fetchDashboardFiltersInternal(params)
 
     return NextResponse.json({
       success: true,
       data: filterData,
       timestamp: new Date().toISOString(),
-      source: 'postgresql-real-tables'
+      source: 'flat_daily_sales_report'
     })
   } catch (error) {
     console.error('Dashboard Filters API error:', error)

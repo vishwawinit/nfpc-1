@@ -5,47 +5,81 @@
 
 /**
  * Get cache duration based on date range
+ * Optimized cache durations for better performance:
+ * - Historical data (past): Long cache (hours to days)
+ * - Current period data: Shorter cache (minutes)
+ *
  * @param dateRange - The date range string (today, yesterday, thisWeek, etc.)
  * @param hasCustomDates - Whether custom start/end dates are provided
+ * @param startDate - Optional start date to check if historical
+ * @param endDate - Optional end date to check if historical
  * @returns Cache duration in seconds
  */
-export function getCacheDuration(dateRange: string, hasCustomDates: boolean = false): number {
-  // If custom dates represent a standard range, use longer cache
-  // Otherwise use medium cache for custom dates
-  if (hasCustomDates) {
-    // Check if it's likely "this month" or similar standard range
-    // Use longer cache for standard ranges, shorter for truly custom
-    return 1800 // 30 minutes - increased for better performance
+export function getCacheDuration(
+  dateRange: string,
+  hasCustomDates: boolean = false,
+  startDate?: string | null,
+  endDate?: string | null
+): number {
+  // Check if this is historical data (fully in the past)
+  if (startDate && endDate) {
+    const today = new Date()
+    today.setHours(0, 0, 0, 0)
+    const end = new Date(endDate)
+    end.setHours(0, 0, 0, 0)
+
+    // If end date is before today, it's historical - cache for 24 hours
+    if (end < today) {
+      return 86400 // 24 hours
+    }
   }
-  
+
+  // If custom dates represent a standard range, use appropriate cache
+  if (hasCustomDates) {
+    return 3600 // 1 hour for custom ranges that include current data
+  }
+
   switch(dateRange.toLowerCase()) {
-    // Short cache - Changes frequently
+    // Very short cache - Current day data (changes frequently)
     case 'today':
+      return 300 // 5 minutes
+
+    // Short cache - Recent past
     case 'yesterday':
-      return 600 // 10 minutes
-    
-    // Medium cache - Moderately dynamic
+      return 3600 // 1 hour (yesterday won't change)
+
+    // Medium cache - Last week data
     case 'thisweek':
     case 'lastweek':
     case 'last7days':
-      return 900 // 15 minutes
-    
-    // Long cache - Daily updates (default case - most common)
+      return 1800 // 30 minutes
+
+    // Medium-Long cache - Current month (changes daily)
     case 'thismonth':
     case 'last30days':
-      return 1800 // 30 minutes
-    
-    // Extended cache - Historical data (stable)
+      return 3600 // 1 hour
+
+    // Long cache - Last month (historical, won't change)
     case 'lastmonth':
+      return 7200 // 2 hours
+
+    // Long cache - Quarter data
     case 'thisquarter':
+      return 3600 // 1 hour (still accumulating)
+
     case 'lastquarter':
+      return 14400 // 4 hours (historical)
+
+    // Long cache - Year data
     case 'thisyear':
+      return 7200 // 2 hours (still accumulating)
+
     case 'lastyear':
-      return 3600 // 60 minutes
-    
-    // Default medium cache (for unknown ranges, treat as standard)
+      return 43200 // 12 hours (historical, stable)
+
+    // Default cache
     default:
-      return 1800 // 30 minutes - increased for better performance
+      return 1800 // 30 minutes
   }
 }
 

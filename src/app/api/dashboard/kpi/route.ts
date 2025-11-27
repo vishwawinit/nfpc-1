@@ -1,8 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { query } from '@/lib/database'
 
-// Force dynamic rendering for routes that use searchParams
+// Force dynamic rendering
 export const dynamic = 'force-dynamic'
+
+const SALES_TABLE = 'flat_daily_sales_report'
 
 // Helper function to parse date range string
 const getDateRangeFromString = (dateRange: string) => {
@@ -49,150 +51,115 @@ const getDateRangeFromString = (dateRange: string) => {
       startDate.setDate(startDate.getDate() - 29)
   }
 
-  return {
-    startDate,
-    endDate
-  }
+  return { startDate, endDate }
 }
 
-// Internal function to fetch KPI data from real tblTrxHeader table
+// Build WHERE clause for filters
+const buildWhereClause = (params: any) => {
+  const conditions: string[] = []
+
+  // Always filter for sales transactions
+  conditions.push(`trx_trxtype = 1`)
+
+  // Date conditions
+  if (params.startDate) {
+    conditions.push(`trx_trxdate >= '${params.startDate}'::timestamp`)
+  }
+  if (params.endDate) {
+    conditions.push(`trx_trxdate < ('${params.endDate}'::timestamp + INTERVAL '1 day')`)
+  }
+
+  // Region filter
+  if (params.regionCode) {
+    conditions.push(`customer_regioncode = '${params.regionCode}'`)
+  }
+
+  // City filter
+  if (params.cityCode) {
+    conditions.push(`(customer_citycode = '${params.cityCode}' OR city_description = '${params.cityCode}')`)
+  }
+
+  // Route filter
+  if (params.routeCode) {
+    conditions.push(`trx_routecode = '${params.routeCode}'`)
+  }
+
+  // User filter
+  if (params.userCode) {
+    conditions.push(`trx_usercode = '${params.userCode}'`)
+  }
+
+  // Customer filter
+  if (params.customerCode) {
+    conditions.push(`customer_code = '${params.customerCode}'`)
+  }
+
+  // Team leader filter
+  if (params.teamLeaderCode) {
+    conditions.push(`route_salesmancode = '${params.teamLeaderCode}'`)
+  }
+
+  // Channel filter
+  if (params.chainName) {
+    conditions.push(`customer_channel_description = '${params.chainName}'`)
+  }
+
+  return conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : ''
+}
+
+// Fetch KPI data from flat_daily_sales_report
 async function fetchKPIDataInternal(params: {
   dateRange: string
   regionCode: string | null
   cityCode: string | null
   teamLeaderCode: string | null
-  warehouseCode: string | null
   routeCode: string | null
   userCode: string | null
   customerCode: string | null
+  chainName: string | null
   customStartDate: string | null
   customEndDate: string | null
 }) {
-  const {
-    dateRange,
-    regionCode,
-    cityCode,
-    teamLeaderCode,
-    warehouseCode,
-    routeCode,
-    userCode,
-    customerCode,
-    customStartDate,
-    customEndDate
-  } = params
-
   const currentDate = new Date()
 
-  // Get date range - prioritize custom dates if provided
+  // Get date range
   let startDate: Date, endDate: Date
-  if (customStartDate && customEndDate) {
-    startDate = new Date(customStartDate)
-    endDate = new Date(customEndDate)
+  if (params.customStartDate && params.customEndDate) {
+    startDate = new Date(params.customStartDate)
+    endDate = new Date(params.customEndDate)
   } else {
-    const dateRangeResult = getDateRangeFromString(dateRange)
+    const dateRangeResult = getDateRangeFromString(params.dateRange)
     startDate = dateRangeResult.startDate
     endDate = dateRangeResult.endDate
   }
 
-  // Build filter conditions using real tblTrxHeader columns
-  const conditions: string[] = []
-  const queryParams: any[] = []
-  let paramIndex = 1
-
-  // Date conditions - using TrxDate column
-  conditions.push(`t."TrxDate" >= $${paramIndex}::timestamp`)
-  queryParams.push(startDate.toISOString().split('T')[0])
-  paramIndex++
-  conditions.push(`t."TrxDate" < ($${paramIndex}::timestamp + INTERVAL '1 day')`)
-  queryParams.push(endDate.toISOString().split('T')[0])
-  paramIndex++
-
-  // Only include invoices/sales (TrxType = 1)
-  conditions.push(`t."TrxType" = 1`)
-
-  // Build JOIN clauses for filters (more efficient than EXISTS subqueries)
-  const joins: string[] = []
-
-  // Region or City filter - join with tblCustomer once
-  if (regionCode || cityCode) {
-    joins.push(`INNER JOIN "tblCustomer" c ON t."ClientCode" = c."Code"`)
-    if (regionCode) {
-      conditions.push(`c."RegionCode" = $${paramIndex}`)
-      queryParams.push(regionCode)
-      paramIndex++
-    }
-    if (cityCode) {
-      conditions.push(`c."CityCode" = $${paramIndex}`)
-      queryParams.push(cityCode)
-      paramIndex++
-    }
+  const filterParams = {
+    ...params,
+    startDate: startDate.toISOString().split('T')[0],
+    endDate: endDate.toISOString().split('T')[0]
   }
 
-  // Team Leader filter - join with tblUser
-  if (teamLeaderCode) {
-    joins.push(`INNER JOIN "tblUser" u ON t."UserCode" = u."Code"`)
-    conditions.push(`u."ReportsTo" = $${paramIndex}`)
-    queryParams.push(teamLeaderCode)
-    paramIndex++
-  }
+  const whereClause = buildWhereClause(filterParams)
 
-  // Route filter
-  if (routeCode) {
-    conditions.push(`t."RouteCode" = $${paramIndex}`)
-    queryParams.push(routeCode)
-    paramIndex++
-  }
-
-  // User/Salesman filter
-  if (userCode) {
-    conditions.push(`t."UserCode" = $${paramIndex}`)
-    queryParams.push(userCode)
-    paramIndex++
-  }
-
-  // Customer filter
-  if (customerCode) {
-    conditions.push(`t."ClientCode" = $${paramIndex}`)
-    queryParams.push(customerCode)
-    paramIndex++
-  }
-
-  // Warehouse filter (via route or org)
-  if (warehouseCode) {
-    conditions.push(`t."OrgCode" = $${paramIndex}`)
-    queryParams.push(warehouseCode)
-    paramIndex++
-  }
-
-  const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : ''
-  const joinClause = joins.length > 0 ? joins.join(' ') : ''
-
-  // Build optimized KPI query using real tblTrxHeader table with quantity from tblTrxDetail
-  const buildKPIQuery = (joinClause: string, whereClause: string) => `
+  // Build KPI query for current period
+  const kpiQuery = `
     SELECT
-      COALESCE(SUM(CASE WHEN t."TotalAmount" >= 0 THEN t."TotalAmount" ELSE 0 END), 0) as total_sales,
-      COALESCE(SUM(CASE WHEN t."TotalAmount" < 0 THEN ABS(t."TotalAmount") ELSE 0 END), 0) as return_sales,
-      COALESCE(SUM(t."TotalAmount"), 0) as net_sales,
-      COUNT(DISTINCT CASE WHEN t."TotalAmount" >= 0 THEN t."TrxCode" END) as total_orders,
-      COUNT(DISTINCT CASE WHEN t."TotalAmount" < 0 THEN t."TrxCode" END) as return_orders,
-      COUNT(DISTINCT t."ClientCode") as unique_customers,
-      COUNT(DISTINCT t."UserCode") as unique_salesmen,
-      COALESCE(MAX(t."CurrencyCode"), 'AED') as currency_code,
-      COUNT(*) as total_records,
-      COALESCE((
-        SELECT SUM(ABS(COALESCE(d."QuantityBU", 0)))
-        FROM "tblTrxDetail" d
-        INNER JOIN "tblTrxHeader" th ON d."TrxCode" = th."TrxCode"
-        ${joinClause.replace(/t\./g, 'th.')}
-        ${whereClause.replace(/t\./g, 'th.')}
-      ), 0) as total_quantity
-    FROM "tblTrxHeader" t
-    ${joinClause}
+      COALESCE(SUM(CASE WHEN trx_totalamount >= 0 THEN trx_totalamount ELSE 0 END), 0) as total_sales,
+      COALESCE(SUM(CASE WHEN trx_totalamount < 0 THEN ABS(trx_totalamount) ELSE 0 END), 0) as return_sales,
+      COALESCE(SUM(trx_totalamount), 0) as net_sales,
+      COUNT(DISTINCT CASE WHEN trx_totalamount >= 0 THEN trx_trxcode END) as total_orders,
+      COUNT(DISTINCT CASE WHEN trx_totalamount < 0 THEN trx_trxcode END) as return_orders,
+      COUNT(DISTINCT customer_code) as unique_customers,
+      COUNT(DISTINCT trx_usercode) as unique_salesmen,
+      COALESCE(SUM(ABS(line_quantitybu)), 0) as total_quantity,
+      COALESCE(MAX(trx_currencycode), 'AED') as currency_code,
+      COUNT(*) as total_records
+    FROM ${SALES_TABLE}
     ${whereClause}
   `
 
   // Execute current period query
-  const currentResult = await query(buildKPIQuery(joinClause, whereClause), queryParams)
+  const currentResult = await query(kpiQuery)
   const current = currentResult.rows[0] || {}
 
   const currentTotalSales = parseFloat(current.total_sales || '0')
@@ -205,8 +172,8 @@ async function fetchKPIDataInternal(params: {
   const currentUniqueSalesmen = parseInt(current.unique_salesmen || '0')
   const currentCurrencyCode = current.currency_code || 'AED'
   const currentAvgOrder = currentNetOrders > 0 ? currentNetSales / currentNetOrders : 0
-  const totalRecords = parseInt(current.total_records || '0')
   const currentTotalQuantity = parseFloat(current.total_quantity || '0')
+  const totalRecords = parseInt(current.total_records || '0')
 
   // Previous period stats
   const periodLength = Math.ceil((endDate.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24)) || 1
@@ -215,52 +182,14 @@ async function fetchKPIDataInternal(params: {
   const prevEndDate = new Date(startDate)
   prevEndDate.setDate(prevEndDate.getDate() - 1)
 
-  const prevConditions: string[] = []
-  const prevParams: any[] = []
-  let prevParamIndex = 1
-
-  prevConditions.push(`t."TrxDate" >= $${prevParamIndex}::timestamp`)
-  prevParams.push(prevStartDate.toISOString().split('T')[0])
-  prevParamIndex++
-  prevConditions.push(`t."TrxDate" < ($${prevParamIndex}::timestamp + INTERVAL '1 day')`)
-  prevParams.push(prevEndDate.toISOString().split('T')[0])
-  prevParamIndex++
-  prevConditions.push(`t."TrxType" = 1`)
-
-  // Build JOIN clauses for previous period - same as current period
-  const prevJoins: string[] = []
-
-  // Region or City filter
-  if (regionCode || cityCode) {
-    prevJoins.push(`INNER JOIN "tblCustomer" c ON t."ClientCode" = c."Code"`)
-    if (regionCode) {
-      prevConditions.push(`c."RegionCode" = $${prevParamIndex}`)
-      prevParams.push(regionCode)
-      prevParamIndex++
-    }
-    if (cityCode) {
-      prevConditions.push(`c."CityCode" = $${prevParamIndex}`)
-      prevParams.push(cityCode)
-      prevParamIndex++
-    }
+  const prevFilterParams = {
+    ...params,
+    startDate: prevStartDate.toISOString().split('T')[0],
+    endDate: prevEndDate.toISOString().split('T')[0]
   }
 
-  // Team Leader filter
-  if (teamLeaderCode) {
-    prevJoins.push(`INNER JOIN "tblUser" u ON t."UserCode" = u."Code"`)
-    prevConditions.push(`u."ReportsTo" = $${prevParamIndex}`)
-    prevParams.push(teamLeaderCode)
-    prevParamIndex++
-  }
-
-  if (routeCode) { prevConditions.push(`t."RouteCode" = $${prevParamIndex}`); prevParams.push(routeCode); prevParamIndex++ }
-  if (userCode) { prevConditions.push(`t."UserCode" = $${prevParamIndex}`); prevParams.push(userCode); prevParamIndex++ }
-  if (customerCode) { prevConditions.push(`t."ClientCode" = $${prevParamIndex}`); prevParams.push(customerCode); prevParamIndex++ }
-  if (warehouseCode) { prevConditions.push(`t."OrgCode" = $${prevParamIndex}`); prevParams.push(warehouseCode); prevParamIndex++ }
-
-  const prevWhereClause = `WHERE ${prevConditions.join(' AND ')}`
-  const prevJoinClause = prevJoins.length > 0 ? prevJoins.join(' ') : ''
-  const prevResult = await query(buildKPIQuery(prevJoinClause, prevWhereClause), prevParams)
+  const prevWhereClause = buildWhereClause(prevFilterParams)
+  const prevResult = await query(kpiQuery.replace(whereClause, prevWhereClause))
 
   const prev = prevResult.rows[0] || {}
   const prevNetSales = parseFloat(prev.net_sales || '0')
@@ -281,24 +210,25 @@ async function fetchKPIDataInternal(params: {
   // MTD calculations
   const mtdStartDate = new Date(currentDate.getFullYear(), currentDate.getMonth(), 1)
   const mtdQuery = `
-    SELECT COALESCE(SUM("TotalAmount"), 0) as net_sales
-    FROM "tblTrxHeader"
-    WHERE "TrxDate" >= $1::timestamp
-    AND "TrxDate" < ($2::timestamp + INTERVAL '1 day')
-    AND "TrxType" = 1
+    SELECT COALESCE(SUM(trx_totalamount), 0) as net_sales
+    FROM ${SALES_TABLE}
+    WHERE trx_trxdate >= '${mtdStartDate.toISOString().split('T')[0]}'::timestamp
+    AND trx_trxdate < ('${currentDate.toISOString().split('T')[0]}'::timestamp + INTERVAL '1 day')
+    AND trx_trxtype = 1
   `
-  const mtdResult = await query(mtdQuery, [
-    mtdStartDate.toISOString().split('T')[0],
-    currentDate.toISOString().split('T')[0]
-  ])
+  const mtdResult = await query(mtdQuery)
   const mtdSales = parseFloat(mtdResult.rows[0]?.net_sales || '0')
 
   // YTD calculations
   const ytdStartDate = new Date(currentDate.getFullYear(), 0, 1)
-  const ytdResult = await query(mtdQuery, [
-    ytdStartDate.toISOString().split('T')[0],
-    currentDate.toISOString().split('T')[0]
-  ])
+  const ytdQuery = `
+    SELECT COALESCE(SUM(trx_totalamount), 0) as net_sales
+    FROM ${SALES_TABLE}
+    WHERE trx_trxdate >= '${ytdStartDate.toISOString().split('T')[0]}'::timestamp
+    AND trx_trxdate < ('${currentDate.toISOString().split('T')[0]}'::timestamp + INTERVAL '1 day')
+    AND trx_trxtype = 1
+  `
+  const ytdResult = await query(ytdQuery)
   const ytdSales = parseFloat(ytdResult.rows[0]?.net_sales || '0')
 
   return {
@@ -315,7 +245,6 @@ async function fetchKPIDataInternal(params: {
     currentUniqueSalesmen,
     currentTotalQuantity,
     totalQuantity: currentTotalQuantity,
-    // Add aliases expected by DynamicKPICards component
     currentUnits: currentTotalQuantity,
     todayUnits: currentTotalQuantity,
     unitsChange,
@@ -341,17 +270,17 @@ async function fetchKPIDataInternal(params: {
     currencySymbol: 'AED',
     debug: {
       totalRecords,
-      dateRange,
+      dateRange: params.dateRange,
       startDate: startDate.toISOString().split('T')[0],
       endDate: endDate.toISOString().split('T')[0],
       appliedFilters: {
-        regionCode,
-        cityCode,
-        teamLeaderCode,
-        warehouseCode,
-        routeCode,
-        userCode,
-        customerCode
+        regionCode: params.regionCode,
+        cityCode: params.cityCode,
+        teamLeaderCode: params.teamLeaderCode,
+        routeCode: params.routeCode,
+        userCode: params.userCode,
+        customerCode: params.customerCode,
+        chainName: params.chainName
       }
     }
   }
@@ -362,28 +291,17 @@ export async function GET(request: NextRequest) {
     const searchParams = request.nextUrl.searchParams
     const dateRange = searchParams.get('range') || 'thisMonth'
 
-    // Get filter parameters
-    const regionCode = searchParams.get('regionCode')
-    const cityCode = searchParams.get('cityCode')
-    const teamLeaderCode = searchParams.get('teamLeaderCode')
-    const warehouseCode = searchParams.get('warehouseCode') || searchParams.get('depotCode')
-    const routeCode = searchParams.get('routeCode')
-    const userCode = searchParams.get('userCode') || searchParams.get('salesmanCode')
-    const customerCode = searchParams.get('customerCode') || searchParams.get('storeCode')
-    const customStartDate = searchParams.get('startDate')
-    const customEndDate = searchParams.get('endDate')
-
     const filterParams = {
       dateRange,
-      regionCode,
-      cityCode,
-      teamLeaderCode,
-      warehouseCode,
-      routeCode,
-      userCode,
-      customerCode,
-      customStartDate,
-      customEndDate
+      regionCode: searchParams.get('regionCode'),
+      cityCode: searchParams.get('cityCode'),
+      teamLeaderCode: searchParams.get('teamLeaderCode'),
+      routeCode: searchParams.get('routeCode'),
+      userCode: searchParams.get('userCode') || searchParams.get('salesmanCode'),
+      customerCode: searchParams.get('customerCode') || searchParams.get('storeCode'),
+      chainName: searchParams.get('chainName'),
+      customStartDate: searchParams.get('startDate'),
+      customEndDate: searchParams.get('endDate')
     }
 
     const kpiData = await fetchKPIDataInternal(filterParams)
@@ -392,7 +310,7 @@ export async function GET(request: NextRequest) {
       success: true,
       data: kpiData,
       timestamp: new Date().toISOString(),
-      source: 'postgresql-tblTrxHeader'
+      source: 'flat_daily_sales_report'
     })
 
   } catch (error) {

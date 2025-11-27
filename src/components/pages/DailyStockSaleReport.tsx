@@ -934,16 +934,20 @@ export const DailyStockSaleReport: React.FC = () => {
               ) : salesByChannelData && salesByChannelData.length > 0 ? (
                 <div>
                   {/* Pie Chart - Shows channels >= 5% individually, others grouped */}
-                  <div style={{ height: isMobile ? '200px' : '250px', width: '100%' }}>
+                  <div style={{ height: isMobile ? '250px' : '300px', width: '100%' }}>
                     <ResponsiveContainer width="100%" height="100%">
                       <PieChart>
                         <Pie
                           data={pieChartData}
                           cx="50%"
                           cy="50%"
-                          labelLine={false}
-                          label={({ channel, percentage }) => `${channel}: ${percentage.toFixed(2)}%`}
-                          outerRadius={isMobile ? 70 : 90}
+                          labelLine={true}
+                          label={({ channel, percentage }) => {
+                            // Shorten long channel names for better display
+                            const shortName = channel.length > 12 ? channel.substring(0, 12) + '...' : channel
+                            return `${shortName} ${percentage.toFixed(1)}%`
+                          }}
+                          outerRadius={isMobile ? 60 : 80}
                           fill="#8884d8"
                           dataKey="sales"
                         >

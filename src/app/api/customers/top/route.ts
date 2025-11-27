@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { query } from '@/lib/database'
-import { getChildUsers, isAdmin } from '@/lib/mssql'
 
-// Force dynamic rendering for routes that use searchParams
+// Force dynamic rendering
 export const dynamic = 'force-dynamic'
+
+const SALES_TABLE = 'flat_daily_sales_report'
 
 /**
  * API Endpoint: GET /api/customers/top
@@ -11,13 +12,15 @@ export const dynamic = 'force-dynamic'
  * Query Parameters:
  *   - limit: Number of customers to return (default: 10)
  *   - range: Date range filter (thisMonth, lastMonth, thisQuarter, etc.)
+ *   - startDate/endDate: Custom date range
+ *   - regionCode, cityCode, teamLeaderCode, userCode, chainName, storeCode: Filter parameters
  * Returns: Array of top customers with their sales data
  */
 
 // Optimized caching aligned with other services
 function getCacheDuration(dateRange: string, hasCustomDates: boolean): number {
   if (hasCustomDates) return 900 // 15 minutes for custom dates
-  
+
   switch(dateRange) {
     case 'today':
       return 300 // 5 minutes for today
@@ -94,6 +97,59 @@ const getDateRangeFromString = (dateRange: string) => {
   }
 }
 
+// Build WHERE clause for filters
+const buildWhereClause = (params: any) => {
+  const conditions: string[] = []
+
+  // Always filter for sales transactions
+  conditions.push(`trx_trxtype = 1`)
+
+  // Date conditions
+  if (params.startDate) {
+    conditions.push(`trx_trxdate >= '${params.startDate}'::timestamp`)
+  }
+  if (params.endDate) {
+    conditions.push(`trx_trxdate < ('${params.endDate}'::timestamp + INTERVAL '1 day')`)
+  }
+
+  // Region filter
+  if (params.regionCode) {
+    conditions.push(`customer_regioncode = '${params.regionCode}'`)
+  }
+
+  // City filter
+  if (params.cityCode) {
+    conditions.push(`(customer_citycode = '${params.cityCode}' OR city_description = '${params.cityCode}')`)
+  }
+
+  // Route filter
+  if (params.routeCode) {
+    conditions.push(`trx_routecode = '${params.routeCode}'`)
+  }
+
+  // User filter
+  if (params.userCode) {
+    conditions.push(`trx_usercode = '${params.userCode}'`)
+  }
+
+  // Team leader filter
+  if (params.teamLeaderCode) {
+    conditions.push(`route_salesmancode = '${params.teamLeaderCode}'`)
+  }
+
+  // Channel filter
+  if (params.chainName) {
+    conditions.push(`customer_channel_description = '${params.chainName}'`)
+  }
+
+  // Store filter
+  if (params.storeCode) {
+    conditions.push(`customer_code = '${params.storeCode}'`)
+  }
+
+  return conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : ''
+}
+
 export async function GET(request: NextRequest) {
   try {
     const searchParams = request.nextUrl.searchParams
@@ -104,19 +160,12 @@ export async function GET(request: NextRequest) {
     const regionCode = searchParams.get('regionCode')
     const cityCode = searchParams.get('city') || searchParams.get('cityCode')
     const teamLeaderCode = searchParams.get('teamLeaderCode')
-    const fieldUserRole = searchParams.get('fieldUserRole')
+    const routeCode = searchParams.get('routeCode')
     const userCode = searchParams.get('userCode')
+    const chainName = searchParams.get('chainName')
+    const storeCode = searchParams.get('storeCode')
     const customStartDate = searchParams.get('startDate')
     const customEndDate = searchParams.get('endDate')
-    
-    // Get loginUserCode for hierarchy-based filtering
-    const loginUserCode = searchParams.get('loginUserCode')
-    
-    // Fetch child users if loginUserCode is provided
-    let allowedUserCodes: string[] = []
-    if (loginUserCode && !isAdmin(loginUserCode)) {
-      allowedUserCodes = await getChildUsers(loginUserCode)
-    }
 
     // Get date range - prioritize custom dates
     let startDate: string, endDate: string
@@ -129,185 +178,61 @@ export async function GET(request: NextRequest) {
       endDate = dateRangeResult.endDate
     }
 
-    // Build WHERE conditions
-    const conditions: string[] = []
-    const params: any[] = []
-    let paramIndex = 1
-
-    // Optimized date range filter - use direct date comparison for index usage
-    if (startDate && endDate) {
-      conditions.push(`t.transaction_date >= $${paramIndex}::date`)
-      params.push(startDate)
-      paramIndex++
-      conditions.push(`t.transaction_date < ($${paramIndex}::date + INTERVAL '1 day')`)
-      params.push(endDate)
-      paramIndex++
+    const filterParams = {
+      startDate,
+      endDate,
+      regionCode,
+      cityCode,
+      teamLeaderCode,
+      routeCode,
+      userCode,
+      chainName,
+      storeCode
     }
 
-    // Region filter - use state from customers master
-    if (regionCode) {
-      conditions.push(`c.state = $${paramIndex}`)
-      params.push(regionCode)
-      paramIndex++
-    }
+    const whereClause = buildWhereClause(filterParams)
 
-    // City filter
-    if (cityCode) {
-      conditions.push(`c.city = $${paramIndex}`)
-      params.push(cityCode)
-      paramIndex++
-    }
-
-    // Team Leader filter - using sales_person_code
-    if (teamLeaderCode) {
-      conditions.push(`c.sales_person_code = $${paramIndex}`)
-      params.push(teamLeaderCode)
-      paramIndex++
-    }
-
-    // Field User Role filter - using sales_person_code
-    if (fieldUserRole) {
-      conditions.push(`c.sales_person_code = $${paramIndex}`)
-      params.push(fieldUserRole)
-      paramIndex++
-    }
-
-    // User filter
-    if (userCode) {
-      conditions.push(`t.user_code = $${paramIndex}`)
-      params.push(userCode)
-      paramIndex++
-    }
-
-    // Chain filter - using customer_type
-    const chainName = searchParams.get('chainName')
-    if (chainName) {
-      conditions.push(`c.customer_type = $${paramIndex}`)
-      params.push(chainName)
-      paramIndex++
-    }
-
-    // Store filter
-    const storeCode = searchParams.get('storeCode')
-    if (storeCode) {
-      conditions.push(`t.customer_code = $${paramIndex}`)
-      params.push(storeCode)
-      paramIndex++
-    }
-
-    const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : ''
-
-    // Add limit param
-    params.push(limit)
-    const limitParam = `$${paramIndex}`
-
-    // Log for debugging
-    console.log('Top customers query params:', { startDate, endDate, limit, conditions: conditions.length })
-
-    // Log query details for debugging
     console.log('🔍 Top customers query details:', {
       startDate,
       endDate,
       limit,
-      filters: {
-        regionCode,
-        cityCode,
-        teamLeaderCode,
-        fieldUserRole,
-        userCode,
-        chainName,
-        storeCode
-      },
-      whereClause,
-      paramCount: params.length
+      filters: { regionCode, cityCode, teamLeaderCode, routeCode, userCode, chainName, storeCode },
+      whereClause
     })
 
-    // Build query with date filtering
-    console.log('🔄 Using customers query with date filters, limit:', limit)
-    
-    // Build final query with all filters
-    console.log('🔄 Building top customers query with filters')
-    console.log('📊 Query conditions:', { whereClause, paramCount: params.length, limit })
-    
-    // Construct the final WHERE clause
-    let finalConditions = []
-    let queryParams = []
-    let currentParamIndex = 1
-    
-    // Add date conditions if they exist - optimized for index usage
-    if (startDate && endDate) {
-      finalConditions.push(`t."TrxDate" >= $${currentParamIndex}::timestamp`)
-      queryParams.push(startDate)
-      currentParamIndex++
-
-      finalConditions.push(`t."TrxDate" < ($${currentParamIndex}::timestamp + INTERVAL '1 day')`)
-      queryParams.push(endDate)
-      currentParamIndex++
-    }
-
-    // Only include invoices/sales (TrxType = 1)
-    finalConditions.push(`t."TrxType" = 1`)
-
-    // Add other filters
-    if (regionCode) {
-      finalConditions.push(`c."RegionCode" = $${currentParamIndex}`)
-      queryParams.push(regionCode)
-      currentParamIndex++
-    }
-
-    // City filter - disabled as City column may not exist
-    // if (cityCode) {
-    //   finalConditions.push(`c."City" = $${currentParamIndex}`)
-    //   queryParams.push(cityCode)
-    //   currentParamIndex++
-    // }
-
-    if (userCode) {
-      finalConditions.push(`t."UserCode" = $${currentParamIndex}`)
-      queryParams.push(userCode)
-      currentParamIndex++
-    }
-
-    // Always include these base conditions
-    finalConditions.push('t."ClientCode" IS NOT NULL')
-    finalConditions.push('t."TotalAmount" IS NOT NULL')
-    
-    const finalWhere = finalConditions.length > 0 ? `WHERE ${finalConditions.join(' AND ')}` : ''
-    
-    // Add limit parameter
-    queryParams.push(limit)
-    
-    console.log('🎯 Final query conditions:', {
-      finalWhere,
-      queryParams: queryParams.map((p, i) => `$${i+1}: ${p}`)
-    })
-    
-    const result = await query(`
+    // Query to get top customers with all metrics
+    const topCustomersQuery = `
       SELECT
-        t."ClientCode" as "customerCode",
-        COALESCE(MAX(c."Description"), 'Unknown Customer') as "customerName",
-        COUNT(DISTINCT t."TrxCode") as "totalOrders",
-        COALESCE(MAX(c."RouteCode"), 'Unknown') as "customerType",
-        'Unknown' as "city",
-        COALESCE(MAX(c."RegionCode"), 'Unknown') as "state",
-        COALESCE(MAX(c."SalesmanCode"), 'Unknown') as "salesPerson",
-        COALESCE(SUM(CASE WHEN t."TotalAmount" > 0 THEN t."TotalAmount" ELSE 0 END), 0) as "totalSales",
-        CASE WHEN COUNT(DISTINCT t."TrxCode") > 0 THEN COALESCE(SUM(CASE WHEN t."TotalAmount" > 0 THEN t."TotalAmount" ELSE 0 END), 0) / COUNT(DISTINCT t."TrxCode") ELSE 0 END as "avgOrderValue",
-        MAX(t."TrxDate") as "lastOrderDate",
-        COALESCE(MAX(t."CurrencyCode"), 'AED') as "currency"
-      FROM "tblTrxHeader" t
-      LEFT JOIN "tblCustomer" c ON t."ClientCode" = c."Code"
-      ${finalWhere}
-      GROUP BY t."ClientCode"
-      ORDER BY SUM(CASE WHEN t."TotalAmount" > 0 THEN t."TotalAmount" ELSE 0 END) DESC
-      LIMIT $${currentParamIndex}
-    `, queryParams)
+        customer_code as "customerCode",
+        COALESCE(MAX(customer_description), customer_code) as "customerName",
+        COALESCE(MAX(customer_channel_description), MAX(customer_channelcode), 'Unknown') as "customerType",
+        COALESCE(MAX(city_description), MAX(customer_citycode), 'Unknown') as "city",
+        COALESCE(MAX(region_description), MAX(customer_regioncode), 'Unknown') as "state",
+        COALESCE(MAX(route_salesmancode), 'Unknown') as "salesPerson",
+        COALESCE(SUM(CASE WHEN trx_totalamount > 0 THEN trx_totalamount ELSE 0 END), 0) as "totalSales",
+        COUNT(DISTINCT CASE WHEN trx_totalamount > 0 THEN trx_trxcode END) as "totalOrders",
+        COUNT(DISTINCT line_itemcode) as "uniqueProducts",
+        COALESCE(SUM(ABS(line_quantitybu)), 0) as "totalQuantity",
+        CASE
+          WHEN COUNT(DISTINCT CASE WHEN trx_totalamount > 0 THEN trx_trxcode END) > 0
+          THEN COALESCE(SUM(CASE WHEN trx_totalamount > 0 THEN trx_totalamount ELSE 0 END), 0) / COUNT(DISTINCT CASE WHEN trx_totalamount > 0 THEN trx_trxcode END)
+          ELSE 0
+        END as "avgOrderValue",
+        MAX(trx_trxdate) as "lastOrderDate",
+        COALESCE(MAX(trx_currencycode), 'AED') as "currency"
+      FROM ${SALES_TABLE}
+      ${whereClause}
+      GROUP BY customer_code
+      HAVING customer_code IS NOT NULL
+      ORDER BY COALESCE(SUM(CASE WHEN trx_totalamount > 0 THEN trx_totalamount ELSE 0 END), 0) DESC
+      LIMIT ${limit}
+    `
+
+    const result = await query(topCustomersQuery)
 
     console.log('✅ Top customers query executed successfully')
     console.log('📊 Query returned:', result.rows.length, 'rows')
 
-    // Debug: Log query results
-    console.log(`📊 Top customers query returned ${result.rows.length} rows`)
     if (result.rows.length > 0) {
       console.log('💰 Sample customer data:', result.rows[0])
     } else {
@@ -323,9 +248,9 @@ export async function GET(request: NextRequest) {
       state: String(row.state || 'Unknown'),
       salesPerson: String(row.salesPerson || 'Unknown'),
       totalOrders: Number(row.totalOrders) || 0,
-      uniqueProducts: 0, // Not available without joining tblTrxDetail
+      uniqueProducts: Number(row.uniqueProducts) || 0,
       avgOrderValue: Number(row.avgOrderValue) || 0,
-      totalQuantity: 0, // Not available without joining tblTrxDetail
+      totalQuantity: Number(row.totalQuantity) || 0,
       lastOrderDate: row.lastOrderDate || null,
       currency: String(row.currency || 'AED')
     }))
@@ -345,7 +270,7 @@ export async function GET(request: NextRequest) {
         dateRange,
         hasCustomDates
       },
-      source: 'postgresql-flat-table'
+      source: 'flat_daily_sales_report'
     }, {
       headers: {
         'Cache-Control': `public, s-maxage=${cacheDuration}, stale-while-revalidate=${staleWhileRevalidate}`

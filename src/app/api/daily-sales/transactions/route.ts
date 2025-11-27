@@ -43,7 +43,7 @@ export async function GET(request: Request) {
 
     const shouldCache = shouldCacheFilters(dateRange || null, startDate, endDate)
     const hasCustomDates = !!(startDate && endDate)
-    const cacheDuration = getCacheDuration(dateRange || 'thisMonth', hasCustomDates)
+    const cacheDuration = getCacheDuration(dateRange || 'thisMonth', hasCustomDates, startDate, endDate)
 
     let data
     if (shouldCache) {

@@ -1,140 +1,179 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { query } from '@/lib/database'
+import { getCacheDuration, getCacheControlHeader } from '@/lib/cache-utils'
 
 // Force dynamic rendering for routes that use searchParams
 export const dynamic = 'force-dynamic'
 
-// Intelligent caching - longer cache for data with date filters (30 mins default)
-const DEFAULT_CACHE_DURATION = 1800 // 30 minutes
+// Table name constant
+const SALES_TABLE = 'flat_daily_sales_report'
+
+/**
+ * Build WHERE clause with filters for flat table
+ */
+const buildWhereClause = (filters: any, params: any[], startParamIndex: number = 1) => {
+  const conditions: string[] = []
+  let paramCount = startParamIndex
+
+  // Date filters (always include if provided) - optimized to use indexes
+  if (filters.startDate && filters.endDate) {
+    conditions.push(`trx_trxdate >= $${paramCount}::timestamp`)
+    params.push(filters.startDate)
+    paramCount++
+    conditions.push(`trx_trxdate < ($${paramCount}::timestamp + INTERVAL '1 day')`)
+    params.push(filters.endDate)
+    paramCount++
+  }
+
+  // Transaction type filter (1 = Sales)
+  conditions.push(`trx_trxtype = 1`)
+
+  // Region filter
+  if (filters.regionCode) {
+    conditions.push(`customer_regioncode = $${paramCount}`)
+    params.push(filters.regionCode)
+    paramCount++
+  }
+
+  // City filter
+  if (filters.cityCode) {
+    conditions.push(`(customer_citycode = $${paramCount} OR city_description = $${paramCount})`)
+    params.push(filters.cityCode)
+    paramCount++
+  }
+
+  // Team Leader filter (via route_salesmancode)
+  if (filters.teamLeaderCode) {
+    conditions.push(`route_salesmancode = $${paramCount}`)
+    params.push(filters.teamLeaderCode)
+    paramCount++
+  }
+
+  // Field User Role filter
+  if (filters.fieldUserRole) {
+    conditions.push(`user_usertype = $${paramCount}`)
+    params.push(filters.fieldUserRole)
+    paramCount++
+  }
+
+  // User Code filter
+  if (filters.userCode) {
+    conditions.push(`trx_usercode = $${paramCount}`)
+    params.push(filters.userCode)
+    paramCount++
+  }
+
+  // Chain Name filter (using customer_jdecustomertype)
+  if (filters.chainName) {
+    conditions.push(`customer_jdecustomertype = $${paramCount}`)
+    params.push(filters.chainName)
+    paramCount++
+  }
+
+  // Store Code filter
+  if (filters.storeCode) {
+    conditions.push(`customer_code = $${paramCount}`)
+    params.push(filters.storeCode)
+    paramCount++
+  }
+
+  // Product Code filter
+  if (filters.productCode) {
+    conditions.push(`line_itemcode = $${paramCount}`)
+    params.push(filters.productCode)
+    paramCount++
+  }
+
+  // Product Category filter
+  if (filters.productCategory) {
+    conditions.push(`item_grouplevel1 = $${paramCount}`)
+    params.push(filters.productCategory)
+    paramCount++
+  }
+
+  // Route Code filter
+  if (filters.routeCode) {
+    conditions.push(`trx_routecode = $${paramCount}`)
+    params.push(filters.routeCode)
+    paramCount++
+  }
+
+  // Channel Code filter (for filtering by specific channel)
+  if (filters.channelCode) {
+    conditions.push(`customer_channelcode = $${paramCount}`)
+    params.push(filters.channelCode)
+    paramCount++
+  }
+
+  return {
+    whereClause: `WHERE ${conditions.join(' AND ')}`,
+    paramCount
+  }
+}
 
 /**
  * API Endpoint: GET /api/dashboard/sales-by-channel
- * Description: Fetches sales distribution by channel (chain_name)
+ * Description: Fetches sales distribution by channel using customer_channelcode and customer_channel_description
  * Query Parameters:
  *   - startDate: Start date filter (format: YYYY-MM-DD)
  *   - endDate: End date filter (format: YYYY-MM-DD)
  *   - regionCode: Filter by region
+ *   - cityCode: Filter by city
  *   - teamLeaderCode: Filter by team leader
  *   - fieldUserRole: Filter by field user role
  *   - userCode: Filter by field user
+ *   - chainName: Filter by chain name
+ *   - storeCode: Filter by store
+ *   - productCode: Filter by product
+ *   - productCategory: Filter by product category
+ *   - routeCode: Filter by route
  * Returns: Array of channels with their sales and percentage contribution
  */
 export async function GET(request: NextRequest) {
   try {
     const searchParams = request.nextUrl.searchParams
 
-    // Get filter parameters
-    const regionCode = searchParams.get('regionCode')
-    const cityCode = searchParams.get('cityCode')
-    const teamLeaderCode = searchParams.get('teamLeaderCode')
-    const fieldUserRole = searchParams.get('fieldUserRole')
-    const userCode = searchParams.get('userCode')
-    const customStartDate = searchParams.get('startDate')
-    const customEndDate = searchParams.get('endDate')
+    // Build filters object
+    const filters: any = {
+      startDate: searchParams.get('startDate') || undefined,
+      endDate: searchParams.get('endDate') || undefined,
+      regionCode: searchParams.get('regionCode') || undefined,
+      cityCode: searchParams.get('cityCode') || undefined,
+      teamLeaderCode: searchParams.get('teamLeaderCode') || undefined,
+      fieldUserRole: searchParams.get('fieldUserRole') || undefined,
+      userCode: searchParams.get('userCode') || undefined,
+      chainName: searchParams.get('chainName') || undefined,
+      storeCode: searchParams.get('storeCode') || undefined,
+      productCode: searchParams.get('productCode') || undefined,
+      productCategory: searchParams.get('productCategory') || undefined,
+      routeCode: searchParams.get('routeCode') || undefined,
+      channelCode: searchParams.get('channelCode') || undefined
+    }
 
-    // Get date range - prioritize custom dates
-    const startDate = customStartDate || null
-    const endDate = customEndDate || null
-
-    const conditions: string[] = []
     const params: any[] = []
-    const joins: string[] = []
-    let paramIndex = 1
-
-    // Date filters - optimized for index usage (no DATE() function)
-    if (startDate && endDate) {
-      conditions.push(`t."TrxDate" >= $${paramIndex}::timestamp`)
-      params.push(startDate)
-      paramIndex++
-      conditions.push(`t."TrxDate" < ($${paramIndex}::timestamp + INTERVAL '1 day')`)
-      params.push(endDate)
-      paramIndex++
-    }
-
-    // Only include invoices/sales (TrxType = 1)
-    conditions.push(`t."TrxType" = 1`)
-
-    // Region filter - use RegionCode from tblCustomer
-    if (regionCode) {
-      conditions.push(`c."RegionCode" = $${paramIndex}`)
-      params.push(regionCode)
-      paramIndex++
-    }
-
-    // City filter - use CityCode from tblCustomer
-    if (cityCode) {
-      conditions.push(`c."CityCode" = $${paramIndex}`)
-      params.push(cityCode)
-      paramIndex++
-    }
-
-    // Team Leader filter - use JOIN instead of EXISTS for better performance
-    if (teamLeaderCode) {
-      joins.push(`INNER JOIN "tblUser" u ON t."UserCode" = u."Code"`)
-      conditions.push(`u."ReportsTo" = $${paramIndex}`)
-      params.push(teamLeaderCode)
-      paramIndex++
-    }
-
-    // Field User Role filter - not directly applicable
-    // if (fieldUserRole) {
-    //   conditions.push(`cd."UserCode" = $${paramIndex}`)
-    //   params.push(fieldUserRole)
-    //   paramIndex++
-    // }
-
-    // User filter
-    if (userCode) {
-      conditions.push(`t."UserCode" = $${paramIndex}`)
-      params.push(userCode)
-      paramIndex++
-    }
-
-    // Chain/Channel filter - using ChannelCode from tblCustomerDetail
-    const chainName = searchParams.get('chainName')
-    if (chainName) {
-      conditions.push(`TRIM(cd."ChannelCode") = $${paramIndex}`)
-      params.push(chainName)
-      paramIndex++
-    }
-
-    // Store filter
-    const storeCode = searchParams.get('storeCode')
-    if (storeCode) {
-      conditions.push(`t."ClientCode" = $${paramIndex}`)
-      params.push(storeCode)
-      paramIndex++
-    }
-
-    // Add TotalAmount filter
-    conditions.push(`t."TotalAmount" IS NOT NULL`)
-
-    const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : ''
-    const additionalJoins = joins.length > 0 ? joins.join(' ') : ''
+    const { whereClause } = buildWhereClause(filters, params)
 
     // Log for debugging
-    console.log('Sales by channel query params:', { startDate, endDate, conditions: conditions.length, whereClause, params })
+    console.log('Sales by channel query params:', {
+      startDate: filters.startDate,
+      endDate: filters.endDate,
+      whereClause,
+      params
+    })
 
-    // Fetch sales by channel using tblTrxHeader -> tblCustomerDetail -> tblChannel
-    // Channel is linked via tblCustomerDetail.ChannelCode -> tblChannel.Code
-    // Also join tblCustomer for region filtering
+    // Fetch sales by channel using flat table with customer_channelcode and customer_channel_description
     const result = await query(`
       SELECT
-        COALESCE(ch."Description", TRIM(cd."ChannelCode"), 'Unassigned') as channel,
-        TRIM(cd."ChannelCode") as channel_code,
-        COALESCE(SUM(CASE WHEN t."TotalAmount" >= 0 THEN t."TotalAmount" ELSE 0 END), 0) as sales,
-        COUNT(DISTINCT t."TrxCode") as orders,
-        COUNT(DISTINCT t."ClientCode") as customers,
-        AVG(t."TotalAmount") as avg_order_value,
-        COALESCE(SUM(ABS(COALESCE(d."QuantityBU", 0))), 0) as total_quantity
-      FROM "tblTrxHeader" t
-      LEFT JOIN "tblCustomer" c ON t."ClientCode" = c."Code"
-      LEFT JOIN "tblCustomerDetail" cd ON t."ClientCode" = cd."CustomerCode"
-      LEFT JOIN "tblChannel" ch ON TRIM(cd."ChannelCode") = ch."Code"
-      LEFT JOIN "tblTrxDetail" d ON t."TrxCode" = d."TrxCode"
-      ${additionalJoins}
+        COALESCE(customer_channel_description, customer_channelcode, 'Unassigned') as channel,
+        customer_channelcode as channel_code,
+        COALESCE(SUM(CASE WHEN trx_totalamount >= 0 THEN trx_totalamount ELSE 0 END), 0) as sales,
+        COUNT(DISTINCT trx_trxcode) as orders,
+        COUNT(DISTINCT customer_code) as customers,
+        COALESCE(AVG(NULLIF(trx_totalamount, 0)), 0) as avg_order_value,
+        COALESCE(SUM(ABS(line_quantitybu)), 0) as total_quantity
+      FROM ${SALES_TABLE}
       ${whereClause}
-      GROUP BY TRIM(cd."ChannelCode"), ch."Description"
+      GROUP BY customer_channelcode, customer_channel_description
       ORDER BY sales DESC
     `, params)
 
@@ -158,27 +197,40 @@ export async function GET(request: NextRequest) {
       }
     })
 
+    // Determine cache duration based on date range
+    const hasCustomDates = !!(filters.startDate && filters.endDate)
+    const dateRangeType = hasCustomDates ? 'custom' : 'thisMonth'
+    const cacheDuration = getCacheDuration(dateRangeType, hasCustomDates, filters.startDate, filters.endDate)
+
     return NextResponse.json({
       success: true,
       data: channelData,
       totalSales: parseFloat(totalSales.toFixed(2)),
       filters: {
-        startDate: startDate || null,
-        endDate: endDate || null,
-        regionCode: regionCode || null,
-        teamLeaderCode: teamLeaderCode || null,
-        fieldUserRole: fieldUserRole || null,
-        userCode: userCode || null
+        startDate: filters.startDate || null,
+        endDate: filters.endDate || null,
+        regionCode: filters.regionCode || null,
+        cityCode: filters.cityCode || null,
+        teamLeaderCode: filters.teamLeaderCode || null,
+        fieldUserRole: filters.fieldUserRole || null,
+        userCode: filters.userCode || null,
+        chainName: filters.chainName || null,
+        storeCode: filters.storeCode || null,
+        productCode: filters.productCode || null,
+        productCategory: filters.productCategory || null,
+        routeCode: filters.routeCode || null,
+        channelCode: filters.channelCode || null
       },
       timestamp: new Date().toISOString(),
       cached: true,
       cacheInfo: {
-        duration: DEFAULT_CACHE_DURATION
+        duration: cacheDuration,
+        dateRange: dateRangeType
       },
       source: 'postgresql-flat-table'
     }, {
       headers: {
-        'Cache-Control': `public, s-maxage=${DEFAULT_CACHE_DURATION}, stale-while-revalidate=${DEFAULT_CACHE_DURATION * 2}`
+        'Cache-Control': getCacheControlHeader(cacheDuration)
       }
     })
 

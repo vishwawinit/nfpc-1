@@ -6,6 +6,9 @@ import { FILTERS_CACHE_DURATION, shouldCacheFilters, generateFilterCacheKey, get
 // Force dynamic rendering for routes that use searchParams
 export const dynamic = 'force-dynamic'
 
+// Table name constant
+const SALES_TABLE = 'flat_daily_sales_report'
+
 // Internal function to fetch daily sales filters (will be cached)
 async function fetchDailySalesFiltersInternal(params: {
   startDate: string | null
@@ -41,36 +44,37 @@ async function fetchDailySalesFiltersInternal(params: {
     // Build dynamic where clause for availability counts
     const buildAvailabilityWhere = (excludeField?: string) => {
       const conditions = []
-      conditions.push(`UPPER(COALESCE(field_user_code, '')) NOT LIKE '%DEMO%'`)
-      conditions.push(`UPPER(COALESCE(region_code, '')) NOT LIKE '%DEMO%'`)
+      conditions.push(`UPPER(COALESCE(trx_usercode, '')) NOT LIKE '%DEMO%'`)
+      conditions.push(`UPPER(COALESCE(customer_regioncode, '')) NOT LIKE '%DEMO%'`)
+      conditions.push(`trx_trxtype = 1`)
 
       if (startDate && endDate) {
-        conditions.push(`trx_date_only >= '${startDate}'::date`)
-        conditions.push(`trx_date_only <= '${endDate}'::date`)
+        conditions.push(`trx_trxdate >= '${startDate}'::timestamp`)
+        conditions.push(`trx_trxdate < ('${endDate}'::timestamp + INTERVAL '1 day')`)
       }
-      
+
       // Authentication removed - no user code restrictions
 
       if (selectedRegion && excludeField !== 'region') {
-        conditions.push(`region_code = '${selectedRegion}'`)
+        conditions.push(`customer_regioncode = '${selectedRegion}'`)
       }
       if (selectedCity && excludeField !== 'city') {
-        conditions.push(`(city_code = '${selectedCity}' OR city_name = '${selectedCity}')`)
+        conditions.push(`(customer_citycode = '${selectedCity}' OR city_description = '${selectedCity}')`)
       }
       if (selectedFieldUserRole && excludeField !== 'fieldUserRole') {
-        conditions.push(`COALESCE(user_role, 'Field User') = '${selectedFieldUserRole}'`)
+        conditions.push(`COALESCE(user_usertype, 'Field User') = '${selectedFieldUserRole}'`)
       }
       if (selectedTeamLeader && excludeField !== 'teamLeader') {
-        conditions.push(`tl_code = '${selectedTeamLeader}'`)
+        conditions.push(`route_salesmancode = '${selectedTeamLeader}'`)
       }
       if (selectedUser && excludeField !== 'user') {
-        conditions.push(`field_user_code = '${selectedUser}'`)
+        conditions.push(`trx_usercode = '${selectedUser}'`)
       }
       if (selectedChain && excludeField !== 'chain') {
-        conditions.push(`chain_name = '${selectedChain}'`)
+        conditions.push(`customer_channel_description = '${selectedChain}'`)
       }
       if (selectedStore && excludeField !== 'store') {
-        conditions.push(`store_code = '${selectedStore}'`)
+        conditions.push(`customer_code = '${selectedStore}'`)
       }
 
       return conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : ''
@@ -90,100 +94,60 @@ async function fetchDailySalesFiltersInternal(params: {
       // Get ALL regions with counts based on other filters
       query(`
         SELECT
-          r.region_code as "value",
-          r.region_code as "label",
-          COALESCE(counts.transaction_count, 0) as "transactionCount"
-        FROM (
-          SELECT DISTINCT region_code
-          FROM flat_sales_transactions
-          WHERE region_code IS NOT NULL
-          AND UPPER(region_code) NOT LIKE '%DEMO%'
-        ) r
-        LEFT JOIN (
-          SELECT
-            region_code,
-            COUNT(*) as transaction_count
-          FROM flat_sales_transactions
-          ${buildAvailabilityWhere('region')}
-          GROUP BY region_code
-        ) counts ON r.region_code = counts.region_code
-        ORDER BY r.region_code
+          customer_regioncode as "value",
+          COALESCE(MAX(region_description), customer_regioncode) as "label",
+          COUNT(*) as "transactionCount"
+        FROM ${SALES_TABLE}
+        ${buildAvailabilityWhere('region')}
+        GROUP BY customer_regioncode
+        HAVING customer_regioncode IS NOT NULL
+        AND UPPER(customer_regioncode) NOT LIKE '%DEMO%'
+        ORDER BY customer_regioncode
       `),
 
       // Get cities
       query(`
         SELECT
-          c.city_value as "value",
-          c.city_label as "label",
-          COALESCE(counts.transaction_count, 0) as "transactionCount",
-          COALESCE(counts.store_count, 0) as "storeCount"
-        FROM (
-          SELECT DISTINCT
-            COALESCE(
-              city_name,
-              CASE
-                WHEN city_code LIKE '%_%' THEN SUBSTRING(city_code FROM POSITION('_' IN city_code) + 1)
-                ELSE city_code
-              END
-            ) as city_value,
-            COALESCE(
-              city_name,
-              CASE
-                WHEN city_code LIKE '%_%' THEN SUBSTRING(city_code FROM POSITION('_' IN city_code) + 1)
-                ELSE city_code
-              END
-            ) as city_label
-          FROM flat_sales_transactions
-          WHERE (city_name IS NOT NULL OR city_code IS NOT NULL)
-          AND UPPER(COALESCE(city_name, city_code)) NOT LIKE '%DEMO%'
-        ) c
-        LEFT JOIN (
-          SELECT
-            COALESCE(
-              city_name,
-              CASE
-                WHEN city_code LIKE '%_%' THEN SUBSTRING(city_code FROM POSITION('_' IN city_code) + 1)
-                ELSE city_code
-              END
-            ) as city_value,
-            COUNT(*) as transaction_count,
-            COUNT(DISTINCT store_code) as store_count
-          FROM flat_sales_transactions
-          ${buildAvailabilityWhere('city')}
-          GROUP BY city_value
-        ) counts ON c.city_value = counts.city_value
-        WHERE c.city_value IS NOT NULL
-        AND c.city_value != ''
-        ORDER BY c.city_label
+          COALESCE(
+            city_description,
+            CASE
+              WHEN customer_citycode LIKE '%_%' THEN SUBSTRING(customer_citycode FROM POSITION('_' IN customer_citycode) + 1)
+              ELSE customer_citycode
+            END
+          ) as "value",
+          COALESCE(
+            city_description,
+            CASE
+              WHEN customer_citycode LIKE '%_%' THEN SUBSTRING(customer_citycode FROM POSITION('_' IN customer_citycode) + 1)
+              ELSE customer_citycode
+            END
+          ) as "label",
+          COUNT(*) as "transactionCount",
+          COUNT(DISTINCT customer_code) as "storeCount"
+        FROM ${SALES_TABLE}
+        ${buildAvailabilityWhere('city')}
+        GROUP BY city_description, customer_citycode
+        HAVING COALESCE(city_description, customer_citycode) IS NOT NULL
+        AND COALESCE(city_description, customer_citycode) != ''
+        AND UPPER(COALESCE(city_description, customer_citycode)) NOT LIKE '%DEMO%'
+        ORDER BY "label"
       `),
 
       // Get field user roles (excluding Team Leader)
       query(`
         SELECT
-          r.role as "value",
-          CASE r.role
+          COALESCE(user_usertype, 'Field User') as "value",
+          CASE COALESCE(user_usertype, 'Field User')
             WHEN 'ATL' THEN 'Asst. Team Leader'
-            ELSE r.role
+            ELSE COALESCE(user_usertype, 'Field User')
           END as "label",
-          COALESCE(counts.transaction_count, 0) as "transactionCount"
-        FROM (
-          SELECT DISTINCT COALESCE(user_role, 'Field User') as role
-          FROM flat_sales_transactions
-          WHERE field_user_code IS NOT NULL
-          AND UPPER(field_user_code) NOT LIKE '%DEMO%'
-          AND COALESCE(user_role, 'Field User') != 'Team Leader'
-        ) r
-        LEFT JOIN (
-          SELECT
-            COALESCE(user_role, 'Field User') as role,
-            COUNT(*) as transaction_count
-          FROM flat_sales_transactions
-          ${buildAvailabilityWhere('fieldUserRole')}
-          AND COALESCE(user_role, 'Field User') != 'Team Leader'
-          GROUP BY user_role
-        ) counts ON r.role = counts.role
+          COUNT(*) as "transactionCount"
+        FROM ${SALES_TABLE}
+        ${buildAvailabilityWhere('fieldUserRole')}
+        AND COALESCE(user_usertype, 'Field User') != 'Team Leader'
+        GROUP BY user_usertype
         ORDER BY
-          CASE r.role
+          CASE COALESCE(user_usertype, 'Field User')
             WHEN 'ATL' THEN 1
             WHEN 'Promoter' THEN 2
             WHEN 'Merchandiser' THEN 3
@@ -194,118 +158,70 @@ async function fetchDailySalesFiltersInternal(params: {
 
       // Get Team Leaders
       query(`
-        WITH all_team_leaders AS (
-          SELECT DISTINCT
-            tl_code as code,
-            tl_name as name
-          FROM flat_sales_transactions
-          WHERE tl_code IS NOT NULL
-          AND UPPER(COALESCE(tl_code, '')) NOT LIKE '%DEMO%'
-        ),
-        filtered_transactions AS (
-          SELECT
-            tl_code,
-            COUNT(*) as transaction_count
-          FROM flat_sales_transactions
-          ${buildAvailabilityWhere('teamLeader') || 'WHERE 1=1'}
-          AND tl_code IS NOT NULL
-          GROUP BY tl_code
-        )
         SELECT
-          tl.code as "value",
-          tl.name || ' (' || tl.code || ')' as "label",
-          COALESCE(ft.transaction_count, 0) as "transactionCount"
-        FROM all_team_leaders tl
-        LEFT JOIN filtered_transactions ft ON tl.code = ft.tl_code
-        ORDER BY tl.name
+          route_salesmancode as "value",
+          route_salesmancode as "label",
+          COUNT(*) as "transactionCount"
+        FROM ${SALES_TABLE}
+        ${buildAvailabilityWhere('teamLeader')}
+        AND route_salesmancode IS NOT NULL
+        GROUP BY route_salesmancode
+        HAVING UPPER(route_salesmancode) NOT LIKE '%DEMO%'
+        ORDER BY route_salesmancode
       `),
 
       // Get field users
       query(`
         SELECT
-          fu.field_user_code as "value",
-          fu.field_user_name || ' (' || fu.field_user_code || ')' as "label",
-          fu.role as "role",
-          COALESCE(counts.transaction_count, 0) as "transactionCount"
-        FROM (
-          SELECT DISTINCT
-            field_user_code,
-            field_user_name,
-            COALESCE(user_role, 'Field User') as role
-          FROM flat_sales_transactions
-          WHERE field_user_code IS NOT NULL
-          AND COALESCE(user_role, 'Field User') != 'Team Leader'
-          AND UPPER(field_user_code) NOT LIKE '%DEMO%'
-        ) fu
-        LEFT JOIN (
-          SELECT
-            field_user_code,
-            COUNT(*) as transaction_count
-          FROM flat_sales_transactions
-          ${buildAvailabilityWhere('user')}
-          GROUP BY field_user_code
-        ) counts ON fu.field_user_code = counts.field_user_code
-        ORDER BY fu.field_user_name
+          trx_usercode as "value",
+          COALESCE(MAX(user_description), trx_usercode) || ' (' || trx_usercode || ')' as "label",
+          COALESCE(MAX(user_usertype), 'Field User') as "role",
+          COUNT(*) as "transactionCount"
+        FROM ${SALES_TABLE}
+        ${buildAvailabilityWhere('user')}
+        AND COALESCE(user_usertype, 'Field User') != 'Team Leader'
+        GROUP BY trx_usercode
+        HAVING trx_usercode IS NOT NULL
+        AND UPPER(trx_usercode) NOT LIKE '%DEMO%'
+        ORDER BY MAX(user_description)
       `),
 
       // Get chains/channels
       query(`
         SELECT
-          c.chain_name as "value",
-          c.chain_name as "label",
-          COALESCE(counts.transaction_count, 0) as "transactionCount",
-          COALESCE(counts.store_count, 0) as "storeCount"
-        FROM (
-          SELECT DISTINCT COALESCE(chain_name, 'Unknown') as chain_name
-          FROM flat_sales_transactions
-          WHERE chain_name IS NOT NULL
-        ) c
-        LEFT JOIN (
-          SELECT
-            COALESCE(chain_name, 'Unknown') as chain_name,
-            COUNT(*) as transaction_count,
-            COUNT(DISTINCT store_code) as store_count
-          FROM flat_sales_transactions
-          ${buildAvailabilityWhere('chain')}
-          GROUP BY chain_name
-        ) counts ON c.chain_name = counts.chain_name
-        ORDER BY c.chain_name
+          COALESCE(customer_channel_description, customer_channelcode, 'Unknown') as "value",
+          COALESCE(customer_channel_description, customer_channelcode, 'Unknown') as "label",
+          COUNT(*) as "transactionCount",
+          COUNT(DISTINCT customer_code) as "storeCount"
+        FROM ${SALES_TABLE}
+        ${buildAvailabilityWhere('chain')}
+        GROUP BY customer_channel_description, customer_channelcode
+        HAVING customer_channel_description IS NOT NULL OR customer_channelcode IS NOT NULL
+        ORDER BY "value"
       `),
 
       // Get stores/customers
       query(`
         SELECT
-          s.store_code as "value",
-          s.store_name || ' (' || s.store_code || ')' as "label",
-          s.chain_name as "chainName",
-          COALESCE(counts.transaction_count, 0) as "transactionCount"
-        FROM (
-          SELECT DISTINCT
-            store_code,
-            store_name,
-            COALESCE(chain_name, 'Unknown') as chain_name
-          FROM flat_sales_transactions
-          WHERE store_code IS NOT NULL
-          AND store_name IS NOT NULL
-        ) s
-        LEFT JOIN (
-          SELECT
-            store_code,
-            COUNT(*) as transaction_count
-          FROM flat_sales_transactions
-          ${buildAvailabilityWhere('store')}
-          GROUP BY store_code
-        ) counts ON s.store_code = counts.store_code
-        ORDER BY s.store_name
+          customer_code as "value",
+          COALESCE(MAX(customer_description), customer_code) || ' (' || customer_code || ')' as "label",
+          COALESCE(MAX(customer_channel_description), MAX(customer_channelcode), 'Unknown') as "chainName",
+          COUNT(*) as "transactionCount"
+        FROM ${SALES_TABLE}
+        ${buildAvailabilityWhere('store')}
+        GROUP BY customer_code
+        HAVING customer_code IS NOT NULL
+        AND MAX(customer_description) IS NOT NULL
+        ORDER BY MAX(customer_description)
       `),
 
       // Get date range
       query(`
         SELECT
-          MIN(trx_date_only) as "minDate",
-          MAX(trx_date_only) as "maxDate",
-          COUNT(DISTINCT trx_date_only) as "daysWithData"
-        FROM flat_sales_transactions
+          MIN(trx_trxdate::date) as "minDate",
+          MAX(trx_trxdate::date) as "maxDate",
+          COUNT(DISTINCT trx_trxdate::date) as "daysWithData"
+        FROM ${SALES_TABLE}
         ${buildAvailabilityWhere()}
       `)
     ])
