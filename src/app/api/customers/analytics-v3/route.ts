@@ -5,6 +5,35 @@ import { resolveTransactionsTable, getTransactionColumnExpressions } from '@/ser
 // Force dynamic rendering for routes that use searchParams
 export const dynamic = 'force-dynamic'
 
+/**
+ * Determine the customer table and join column based on transactions table
+ */
+function getCustomerTableInfo(transactionsTable: string) {
+  const isTblTrxHeader = transactionsTable === '"tblTrxHeader"'
+
+  if (isTblTrxHeader) {
+    return {
+      table: '"tblCustomer"',
+      joinColumn: '"Code"',
+      nameColumn: '"Description"',
+      regionColumn: '"RegionCode"',
+      cityColumn: '"CityCode"',
+      typeColumn: '"JDECustomerType"',
+      salesPersonColumn: '"SalesmanCode"'
+    }
+  }
+
+  return {
+    table: 'flat_customers_master',
+    joinColumn: 'customer_code',
+    nameColumn: 'customer_name',
+    regionColumn: 'state',
+    cityColumn: 'city',
+    typeColumn: 'customer_type',
+    salesPersonColumn: 'sales_person_code'
+  }
+}
+
 // Intelligent caching based on date range
 function getCacheDuration(dateRange: string, hasCustomDates: boolean): number {
   if (hasCustomDates) return 900 // 15 minutes for custom dates
@@ -101,47 +130,7 @@ function getDateRange(rangeStr: string) {
  *   - product_code - product identifier
  *   - product_group_level1 or product_group - product category
  */
-// Helper to get column-safe expressions
-function getCustomerColumnExpressions(columns: Set<string>) {
-  const has = (column: string) => columns.has(column)
-
-  return {
-    storeCode: has('store_code') ? 'store_code' : 'customer_code',
-    storeName: has('store_name') ? 'store_name' : 'NULL',
-    regionCode: has('region_code') ? 'region_code' : 'NULL',
-    regionName: has('region_name') ? 'region_name' : 'NULL',
-    cityCode: has('city_code') ? 'city_code' : 'NULL',
-    cityName: has('city_name') ? 'city_name' : 'NULL',
-    chainCode: has('chain_code') ? 'chain_code' : 'NULL',
-    chainName: has('chain_name') ? 'chain_name' : 'NULL',
-    tlCode: has('tl_code') ? 'tl_code' : 'NULL',
-    tlName: has('tl_name') ? 'tl_name' : 'NULL',
-    fieldUserCode: has('field_user_code')
-      ? 'field_user_code'
-      : has('user_code')
-        ? 'user_code'
-        : 'NULL',
-    fieldUserName: has('field_user_name') ? 'field_user_name' : 'NULL',
-    trxCode: has('trx_code') ? 'trx_code' : 'transaction_code',
-    trxDateOnly: has('trx_date_only') ? 'trx_date_only' : 'DATE(t.transaction_date)',
-    trxType: has('trx_type') ? 'trx_type' : has('transaction_type') ? 'transaction_type' : '5',
-    netAmount: has('order_total')
-      ? 'order_total'
-      : has('net_amount')
-        ? 'net_amount'
-        : has('line_amount')
-          ? 'line_amount'
-          : '0',
-    quantity: has('quantity_bu')
-      ? 'quantity_bu'
-      : has('quantity')
-        ? 'quantity'
-        : '0',
-    productGroup: has('product_group_level1') ? 'product_group_level1' : has('product_group') ? 'product_group' : 'NULL',
-    productCode: has('product_code') ? 'product_code' : 'NULL',
-    routeCode: has('user_route_code') ? 'user_route_code' : 'NULL'
-  }
-}
+// Use imported getTransactionColumnExpressions from dailySalesService
 
 export async function GET(request: NextRequest) {
   try {
@@ -181,7 +170,15 @@ export async function GET(request: NextRequest) {
     await db.initialize()
     const tableInfo = await resolveTransactionsTable()
     const transactionsTable = tableInfo.name
-    const col = getCustomerColumnExpressions(tableInfo.columns)
+    const col = getTransactionColumnExpressions(tableInfo.columns)
+    const custTable = getCustomerTableInfo(transactionsTable)
+
+    console.log('🔧 Table configuration:', {
+      transactionsTable,
+      customerTable: custTable.table,
+      isTblTrxHeader: transactionsTable === '"tblTrxHeader"',
+      columns: Array.from(tableInfo.columns).slice(0, 5)
+    })
     
     // Verify flat_customers_master columns exist
     try {
@@ -230,89 +227,113 @@ export async function GET(request: NextRequest) {
       actualRouteCode = 'NULL'
     }
 
+    // Detect if using tblTrxHeader
+    const isTblTrxHeader = transactionsTable === '"tblTrxHeader"'
+
     // Build WHERE clause
     let whereConditions: string[] = []
-    
-    // Note: Removed trx_type filter to show all transactions for customer analytics
-    // If you need to filter by transaction type, uncomment and adjust the value:
-    // if (col.trxType !== '5' && col.trxType !== 'NULL') {
-    //   whereConditions.push(`t.${col.trxType} = 5`)  // Sales Orders
-    // }
-    
+
     // Date range filters - handle both column names and function expressions
-    const dateExpr = col.trxDateOnly.startsWith('DATE(') 
-      ? col.trxDateOnly 
+    const dateExpr = col.trxDateOnly.startsWith('DATE(')
+      ? col.trxDateOnly
       : `t.${col.trxDateOnly}`
     whereConditions.push(`${dateExpr} >= '${startDate}'`)
     whereConditions.push(`${dateExpr} <= '${endDate}'`)
-    
-    // Filter out NULL order_total values
-    whereConditions.push(`t.order_total IS NOT NULL`)
-    
+
+    // Filter out NULL amount values - use correct column name
+    if (isTblTrxHeader) {
+      whereConditions.push(`t."TotalAmount" IS NOT NULL`)
+      // Add transaction type filter for sales
+      whereConditions.push(`t."TrxType" = 1`)
+    } else {
+      whereConditions.push(`t.order_total IS NOT NULL`)
+    }
+
     // Authentication removed - no hierarchy filtering
 
     if (customer) {
       whereConditions.push(`t.${col.storeCode} = '${customer}'`)
     }
-    
+
     if (region) {
-      // flat_customers_master has 'state' column for region
-      whereConditions.push(`COALESCE(c.state, '') = '${region}'`)
+      // Use dynamic customer table column
+      if (isTblTrxHeader) {
+        whereConditions.push(`COALESCE(c.${custTable.regionColumn}, '') = '${region}'`)
+      } else {
+        whereConditions.push(`COALESCE(c.state, '') = '${region}'`)
+      }
     }
-    
+
     if (city) {
-      // flat_customers_master has 'city' column
-      whereConditions.push(`COALESCE(c.city, '') = '${city}'`)
+      // Use dynamic customer table column
+      if (!isTblTrxHeader) {
+        whereConditions.push(`COALESCE(c.city, '') = '${city}'`)
+      }
     }
-    
+
     if (chain) {
-      // flat_customers_master has 'customer_type' column for chain classification
-      whereConditions.push(`COALESCE(c.customer_type, '') = '${chain}'`)
+      // Use dynamic customer table column
+      if (!isTblTrxHeader) {
+        whereConditions.push(`COALESCE(c.customer_type, '') = '${chain}'`)
+      }
     }
-    
-    if (salesman) {
+
+    if (salesman && col.fieldUserCode !== 'NULL') {
       whereConditions.push(`t.${col.fieldUserCode} = '${salesman}'`)
     }
-    
-    if (teamLeader) {
+
+    if (teamLeader && col.tlCode !== 'NULL') {
       whereConditions.push(`t.${col.tlCode} = '${teamLeader}'`)
     }
-    
+
     if (category) {
-      if (col.productGroup === 'NULL') {
-        // If product group column doesn't exist, we can't filter by it
-        // Skip this filter or use a different approach
-      } else {
+      if (col.productGroup !== 'NULL') {
         whereConditions.push(`t.${col.productGroup} = '${category}'`)
       }
     }
-    
+
     if (search) {
-      const storeNameExpr = col.storeName === 'NULL' ? 'c.customer_name' : `COALESCE(t.${col.storeName}, c.customer_name, '')`
-      whereConditions.push(`(
-        LOWER(t.${col.storeCode}) LIKE LOWER('%${search}%') OR 
-        LOWER(${storeNameExpr}) LIKE LOWER('%${search}%')
-      )`)
+      if (isTblTrxHeader) {
+        whereConditions.push(`(
+          LOWER(CAST(t."ClientCode" AS TEXT)) LIKE LOWER('%${search}%') OR
+          LOWER(COALESCE(c."Description", '')) LIKE LOWER('%${search}%')
+        )`)
+      } else {
+        const storeNameExpr = col.storeName === 'NULL' ? 'c.customer_name' : `COALESCE(t.${col.storeName}, c.customer_name, '')`
+        whereConditions.push(`(
+          LOWER(t.${col.storeCode}) LIKE LOWER('%${search}%') OR
+          LOWER(${storeNameExpr}) LIKE LOWER('%${search}%')
+        )`)
+      }
     }
 
-    const whereClause = whereConditions.length > 0 
+    const whereClause = whereConditions.length > 0
       ? `WHERE ${whereConditions.join(' AND ')}`
       : ''
 
     // Date expression for use in all queries
     const trxDateExpr = col.trxDateOnly.startsWith('DATE(') ? col.trxDateOnly : `t.${col.trxDateOnly}`
-    
-    // Handle netAmount and quantity expressions for all queries
-    // Prioritize order_total for transaction amounts
-    const netAmountExpr = col.netAmount === 'order_total'
-      ? 'COALESCE(t.order_total, 0)'
-      : col.netAmount === '0' 
-        ? 'COALESCE(t.order_total, t.net_amount, t.line_amount, 0)'
-        : `COALESCE(t.${col.netAmount}, 0)`
-    
-    const quantityExpr = col.quantity === '0'
-      ? 'COALESCE(t.quantity_bu, t.quantity, 0)'
-      : `COALESCE(t.${col.quantity}, 0)`
+
+    // Handle netAmount and quantity expressions for all queries - use correct column names
+    let netAmountExpr: string
+    if (isTblTrxHeader) {
+      netAmountExpr = 'COALESCE(t."TotalAmount", 0)'
+    } else if (col.netAmount === 'order_total') {
+      netAmountExpr = 'COALESCE(t.order_total, 0)'
+    } else if (col.netAmount === '0') {
+      netAmountExpr = 'COALESCE(t.order_total, t.net_amount, t.line_amount, 0)'
+    } else {
+      netAmountExpr = `COALESCE(t.${col.netAmount}, 0)`
+    }
+
+    let quantityExpr: string
+    if (isTblTrxHeader) {
+      quantityExpr = '0'  // tblTrxHeader is header-only, no quantity column
+    } else if (col.quantity === '0') {
+      quantityExpr = 'COALESCE(t.quantity_bu, t.quantity, 0)'
+    } else {
+      quantityExpr = `COALESCE(t.${col.quantity}, 0)`
+    }
 
     // Quick test query to verify data exists for the date range
     const testQuery = `
@@ -337,9 +358,17 @@ export async function GET(request: NextRequest) {
       console.error('❌ Data availability check failed:', error)
     }
 
-    // Get overall metrics
-    const storeNameExpr = col.storeName === 'NULL' ? 'COALESCE(c.customer_name, \'Unknown\')' : `COALESCE(t.${col.storeName}, c.customer_name, 'Unknown')`
-    
+    // Get overall metrics - use dynamic customer table
+    const storeNameExpr = isTblTrxHeader
+      ? `COALESCE(c.${custTable.nameColumn}, 'Unknown')`
+      : col.storeName === 'NULL'
+        ? 'COALESCE(c.customer_name, \'Unknown\')'
+        : `COALESCE(t.${col.storeName}, c.customer_name, 'Unknown')`
+
+    const customerJoin = isTblTrxHeader
+      ? `LEFT JOIN ${custTable.table} c ON t.${col.storeCode} = c.${custTable.joinColumn}`
+      : `LEFT JOIN ${custTable.table} c ON t.${col.storeCode} = c.${custTable.joinColumn}`
+
     const metricsQuery = `
       WITH customer_data AS (
         SELECT
@@ -349,7 +378,7 @@ export async function GET(request: NextRequest) {
           COUNT(DISTINCT t.${col.trxCode}) as order_count,
           MAX(${trxDateExpr}) as last_order_date
         FROM ${transactionsTable} t
-        LEFT JOIN flat_customers_master c ON t.${col.storeCode} = c.customer_code
+        ${customerJoin}
         ${whereClause}
         GROUP BY t.${col.storeCode}, ${storeNameExpr}
       )
@@ -358,7 +387,7 @@ export async function GET(request: NextRequest) {
         COUNT(DISTINCT CASE WHEN last_order_date >= CURRENT_DATE - INTERVAL '30 days' THEN store_code END) as active_customers,
         COALESCE(SUM(total_sales), 0) as total_sales,
         COALESCE(SUM(order_count), 0) as total_orders,
-        CASE 
+        CASE
           WHEN SUM(order_count) > 0 THEN SUM(total_sales) / SUM(order_count)
           ELSE 0
         END as avg_order_value
@@ -406,9 +435,13 @@ export async function GET(request: NextRequest) {
       }
     })
 
-    // Sales by Region - Note: flat_customers_master doesn't have region_name, only state
-    const regionExpr = col.regionCode === 'NULL' ? 'c.state' : `COALESCE(c.state, t.${col.regionCode}, 'Unknown')`
-    const regionNameExpr = col.regionCode === 'NULL' ? 'COALESCE(c.state, \'Unknown\')' : `COALESCE(c.state, t.${col.regionCode}, 'Unknown')`
+    // Sales by Region - use dynamic customer table
+    const regionExpr = isTblTrxHeader
+      ? `COALESCE(c.${custTable.regionColumn}, 'Unknown')`
+      : col.regionCode === 'NULL' ? 'c.state' : `COALESCE(c.state, t.${col.regionCode}, 'Unknown')`
+    const regionNameExpr = isTblTrxHeader
+      ? `COALESCE(c.${custTable.regionColumn}, 'Unknown')`
+      : col.regionCode === 'NULL' ? 'COALESCE(c.state, \'Unknown\')' : `COALESCE(c.state, t.${col.regionCode}, 'Unknown')`
     const salesByRegionQuery = `
       SELECT
         ${regionExpr} as region_code,
@@ -417,7 +450,7 @@ export async function GET(request: NextRequest) {
         COUNT(DISTINCT t.${col.storeCode}) as customer_count,
         COUNT(DISTINCT t.${col.trxCode}) as order_count
       FROM ${transactionsTable} t
-      LEFT JOIN flat_customers_master c ON t.${col.storeCode} = c.customer_code
+      ${customerJoin}
       ${whereClause}
       GROUP BY ${regionExpr}, ${regionNameExpr}
       ORDER BY sales DESC
@@ -441,9 +474,13 @@ export async function GET(request: NextRequest) {
       orderCount: parseInt(row.order_count || '0')
     }))
 
-    // Sales by City - Note: flat_customers_master doesn't have city_name, only city
-    const cityExpr = col.cityCode === 'NULL' ? 'c.city' : `COALESCE(c.city, t.${col.cityCode}, 'Unknown')`
-    const cityNameExpr = col.cityCode === 'NULL' ? 'COALESCE(c.city, \'Unknown\')' : `COALESCE(c.city, t.${col.cityCode}, 'Unknown')`
+    // Sales by City - use dynamic customer table
+    const cityExpr = isTblTrxHeader
+      ? `COALESCE(c."CityCode", 'Unknown')`  // tblCustomer has CityCode column
+      : col.cityCode === 'NULL' ? 'c.city' : `COALESCE(c.city, t.${col.cityCode}, 'Unknown')`
+    const cityNameExpr = isTblTrxHeader
+      ? `COALESCE(c."CityCode", 'Unknown')`
+      : col.cityCode === 'NULL' ? 'COALESCE(c.city, \'Unknown\')' : `COALESCE(c.city, t.${col.cityCode}, 'Unknown')`
     const salesByCityQuery = `
       SELECT
         ${cityExpr} as city_code,
@@ -452,7 +489,7 @@ export async function GET(request: NextRequest) {
         COUNT(DISTINCT t.${col.storeCode}) as customer_count,
         COUNT(DISTINCT t.${col.trxCode}) as order_count
       FROM ${transactionsTable} t
-      LEFT JOIN flat_customers_master c ON t.${col.storeCode} = c.customer_code
+      ${customerJoin}
       ${whereClause}
       GROUP BY ${cityExpr}, ${cityNameExpr}
       ORDER BY sales DESC
@@ -476,18 +513,18 @@ export async function GET(request: NextRequest) {
       orderCount: parseInt(row.order_count || '0')
     }))
 
-    // Sales by Product Category - Handle NULL productGroup properly
+    // Sales by Product Category - use dynamic customer table
     let salesByCategoryQuery = ''
-    if (col.productGroup === 'NULL') {
+    if (col.productGroup === 'NULL' || isTblTrxHeader) {
       // If productGroup doesn't exist, return a single "Others" category
       salesByCategoryQuery = `
         SELECT
           'Others' as category,
           SUM(${netAmountExpr}) as sales,
-          COUNT(DISTINCT t.product_code) as product_count,
-          SUM(${quantityExpr}) as units_sold
+          0 as product_count,
+          0 as units_sold
         FROM ${transactionsTable} t
-        LEFT JOIN flat_customers_master c ON t.${col.storeCode} = c.customer_code
+        ${customerJoin}
         ${whereClause}
         GROUP BY 1
         ORDER BY sales DESC
@@ -503,7 +540,7 @@ export async function GET(request: NextRequest) {
           COUNT(DISTINCT t.product_code) as product_count,
           SUM(${quantityExpr}) as units_sold
         FROM ${transactionsTable} t
-        LEFT JOIN flat_customers_master c ON t.${col.storeCode} = c.customer_code
+        ${customerJoin}
         ${whereClause}
         GROUP BY ${productGroupExpr}
         ORDER BY sales DESC
@@ -528,47 +565,101 @@ export async function GET(request: NextRequest) {
       unitsSold: parseInt(row.units_sold || '0')
     }))
 
-    // Get top customers with pagination
+    // Get top customers with pagination - use dynamic customer table
     const offset = (page - 1) * limit
 
-    const customersQuery = `
-      WITH customer_data AS (
+    // Build customer query based on table type
+    let customersQuery: string
+    if (isTblTrxHeader) {
+      customersQuery = `
+        WITH transaction_quantities AS (
+          SELECT
+            d."TrxCode",
+            SUM(ABS(COALESCE(d."QuantityBU", 0))) as trx_quantity
+          FROM "tblTrxDetail" d
+          GROUP BY d."TrxCode"
+        ),
+        customer_data AS (
+          SELECT
+            t."ClientCode" as store_code,
+            MAX(COALESCE(c."Description", 'Unknown')) as store_name,
+            MAX(COALESCE(cd."SalesOfficeCode", '')) as region_code,
+            MAX(COALESCE(cd."SalesOfficeCode", 'Unknown')) as region_name,
+            MAX(COALESCE(cd."DivisionCode", '')) as city_code,
+            MAX(COALESCE(cd."DivisionCode", 'Unknown')) as city_name,
+            MAX(COALESCE(cd."ChannelCode", '')) as chain_code,
+            MAX(COALESCE(ch."Description", 'N/A')) as chain_name,
+            MAX(COALESCE(t."RouteCode", '')) as route_code,
+            MAX(COALESCE(t."UserCode", '')) as salesman_code,
+            MAX(COALESCE(sales_user."Description", t."UserCode", 'Unknown')) as salesman_name,
+            MAX(COALESCE(c."SalesmanCode", '')) as tl_code,
+            MAX(COALESCE(c."SalesmanName", 'Unknown')) as tl_name,
+            SUM(COALESCE(t."TotalAmount", 0)) as total_sales,
+            COUNT(DISTINCT t."TrxCode") as order_count,
+            COALESCE(SUM(tq.trx_quantity), 0) as total_quantity,
+            AVG(COALESCE(t."TotalAmount", 0)) as avg_order_value,
+            MAX(DATE(t."TrxDate")) as last_order_date,
+            CURRENT_DATE - MAX(DATE(t."TrxDate")) as days_since_last_order
+          FROM ${transactionsTable} t
+          LEFT JOIN "tblCustomer" c ON t."ClientCode" = c."Code"
+          LEFT JOIN "tblCustomerDetail" cd ON c."Code" = cd."CustomerCode"
+          LEFT JOIN "tblChannel" ch ON TRIM(cd."ChannelCode") = TRIM(ch."Code")
+          LEFT JOIN "tblUser" sales_user ON t."UserCode" = sales_user."Code"
+          LEFT JOIN transaction_quantities tq ON t."TrxCode" = tq."TrxCode"
+          ${whereClause}
+          GROUP BY t."ClientCode"
+        ),
+        counted AS (
+          SELECT COUNT(*) as total_count FROM customer_data
+        )
         SELECT
-          t.${col.storeCode} as store_code,
-          MAX(${col.storeName === 'NULL' ? 'c.customer_name' : `COALESCE(t.${col.storeName}, c.customer_name)`}) as store_name,
-          MAX(COALESCE(c.state, 'Unknown')) as region_code,
-          MAX(COALESCE(c.state, 'Unknown')) as region_name,
-          MAX(COALESCE(c.city, 'Unknown')) as city_code,
-          MAX(COALESCE(c.city, 'Unknown')) as city_name,
-          MAX(COALESCE(c.customer_type, 'Unknown')) as chain_code,
-          MAX(COALESCE(c.customer_type, 'Unknown')) as chain_name,
-          MAX(${actualRouteCode === 'NULL' ? 'NULL' : `t.${actualRouteCode}`}) as route_code,
-          MAX(${col.fieldUserCode === 'NULL' ? 'NULL' : `t.${col.fieldUserCode}`}) as salesman_code,
-          MAX(${col.fieldUserName === 'NULL' ? 'NULL' : `t.${col.fieldUserName}`}) as salesman_name,
-          MAX(COALESCE(c.sales_person_code, 'Unknown')) as tl_code,
-          MAX(COALESCE(c.sales_person_code, 'Unknown')) as tl_name,
-          SUM(${netAmountExpr}) as total_sales,
-          COUNT(DISTINCT t.${col.trxCode}) as order_count,
-          SUM(${quantityExpr}) as total_quantity,
-          AVG(${netAmountExpr}) as avg_order_value,
-          MAX(${trxDateExpr}) as last_order_date,
-          CURRENT_DATE - MAX(${trxDateExpr}) as days_since_last_order
-      FROM ${transactionsTable} t
-      LEFT JOIN flat_customers_master c ON t.${col.storeCode} = c.customer_code
-        ${whereClause}
-        GROUP BY t.${col.storeCode}
-      ),
-      counted AS (
-        SELECT COUNT(*) as total_count FROM customer_data
-      )
-      SELECT 
-        customer_data.*,
-        counted.total_count
-      FROM customer_data
-      CROSS JOIN counted
-      ORDER BY customer_data.total_sales DESC
-      LIMIT ${limit} OFFSET ${offset}
-    `
+          customer_data.*,
+          counted.total_count
+        FROM customer_data
+        CROSS JOIN counted
+        ORDER BY customer_data.total_sales DESC
+        LIMIT ${limit} OFFSET ${offset}
+      `
+    } else {
+      customersQuery = `
+        WITH customer_data AS (
+          SELECT
+            t.${col.storeCode} as store_code,
+            MAX(${col.storeName === 'NULL' ? 'c.customer_name' : `COALESCE(t.${col.storeName}, c.customer_name)`}) as store_name,
+            MAX(COALESCE(c.state, 'Unknown')) as region_code,
+            MAX(COALESCE(c.state, 'Unknown')) as region_name,
+            MAX(COALESCE(c.city, 'Unknown')) as city_code,
+            MAX(COALESCE(c.city, 'Unknown')) as city_name,
+            MAX(COALESCE(c.customer_type, 'Unknown')) as chain_code,
+            MAX(COALESCE(c.customer_type, 'Unknown')) as chain_name,
+            MAX(${actualRouteCode === 'NULL' ? 'NULL' : `t.${actualRouteCode}`}) as route_code,
+            MAX(${col.fieldUserCode === 'NULL' ? 'NULL' : `t.${col.fieldUserCode}`}) as salesman_code,
+            MAX(${col.fieldUserName === 'NULL' ? 'NULL' : `t.${col.fieldUserName}`}) as salesman_name,
+            MAX(COALESCE(c.sales_person_code, 'Unknown')) as tl_code,
+            MAX(COALESCE(c.sales_person_code, 'Unknown')) as tl_name,
+            SUM(${netAmountExpr}) as total_sales,
+            COUNT(DISTINCT t.${col.trxCode}) as order_count,
+            SUM(${quantityExpr}) as total_quantity,
+            AVG(${netAmountExpr}) as avg_order_value,
+            MAX(${trxDateExpr}) as last_order_date,
+            CURRENT_DATE - MAX(${trxDateExpr}) as days_since_last_order
+          FROM ${transactionsTable} t
+          ${customerJoin}
+          ${whereClause}
+          GROUP BY t.${col.storeCode}
+        ),
+        counted AS (
+          SELECT COUNT(*) as total_count FROM customer_data
+        )
+        SELECT
+          customer_data.*,
+          counted.total_count
+        FROM customer_data
+        CROSS JOIN counted
+        ORDER BY customer_data.total_sales DESC
+        LIMIT ${limit} OFFSET ${offset}
+      `
+    }
 
     console.log('🔍 Customer Analytics V3 - Query params:', {
       startDate,

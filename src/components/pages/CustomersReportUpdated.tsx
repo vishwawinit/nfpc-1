@@ -42,12 +42,9 @@ const truncateName = (name: string, maxLength: number = 15) => {
 interface CustomerData {
   customerCode: string
   customerName: string
-  region: string
   city: string
   chain: string
   routeCode: string
-  tlCode: string
-  tlName: string
   salesmanCode: string
   salesmanName: string
   totalSales: number
@@ -224,6 +221,11 @@ export function CustomersReportUpdated() {
       const detailResult = await detailResponse.json()
 
       if (detailResult.success) {
+        console.log('Customer detail received:', detailResult.data)
+        console.log('Region:', detailResult.data.region)
+        console.log('City:', detailResult.data.city)
+        console.log('Chain:', detailResult.data.chain)
+        console.log('TL Code:', detailResult.data.teamLeaderCode)
         setCustomerDetail(detailResult.data)
       }
 
@@ -285,11 +287,8 @@ export function CustomersReportUpdated() {
       worksheet.columns = [
         { header: 'Customer Code', key: 'customerCode', width: 15 },
         { header: 'Customer Name', key: 'customerName', width: 30 },
-        { header: 'Region', key: 'region', width: 20 },
         { header: 'City', key: 'city', width: 20 },
         { header: 'Chain', key: 'chain', width: 20 },
-        { header: 'TL Code', key: 'tlCode', width: 15 },
-        { header: 'TL Name', key: 'tlName', width: 25 },
         { header: 'Field User Code', key: 'fieldUserCode', width: 15 },
         { header: 'Field User Name', key: 'fieldUserName', width: 25 },
         { header: 'Total Sales', key: 'totalSales', width: 18 },
@@ -303,11 +302,8 @@ export function CustomersReportUpdated() {
       const formattedData = result.data.topCustomers.map((customer: any) => ({
         customerCode: customer.customerCode || '',
         customerName: customer.customerName || '',
-        region: customer.region || '',
         city: customer.city || '',
         chain: customer.chain || '',
-        tlCode: customer.tlCode || '',
-        tlName: customer.tlName || '',
         fieldUserCode: customer.salesmanCode || '',
         fieldUserName: customer.salesmanName || '',
         totalSales: customer.totalSales || 0,
@@ -886,11 +882,8 @@ export function CustomersReportUpdated() {
                   <tr>
                     <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider min-w-[120px]">Customer Code</th>
                     <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider min-w-[250px]">Customer Name</th>
-                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider min-w-[150px]">Region</th>
                     <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider min-w-[150px]">City</th>
                     <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider min-w-[150px]">Chain</th>
-                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider min-w-[100px]">TL Code</th>
-                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider min-w-[180px]">TL Name</th>
                     <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider min-w-[120px]">Field User Code</th>
                     <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider min-w-[180px]">Field User Name</th>
                     <th className="px-4 py-3 text-right text-xs font-semibold text-gray-700 uppercase tracking-wider min-w-[140px]">Total Sales</th>
@@ -907,11 +900,8 @@ export function CustomersReportUpdated() {
                       <tr key={customer.customerCode} className="hover:bg-gray-50 transition-colors">
                         <td className="px-4 py-3 text-sm font-medium text-gray-900">{customer.customerCode}</td>
                         <td className="px-4 py-3 text-sm text-gray-900">{customer.customerName}</td>
-                        <td className="px-4 py-3 text-sm text-gray-700">{customer.region || '-'}</td>
                         <td className="px-4 py-3 text-sm text-gray-700">{customer.city || '-'}</td>
                         <td className="px-4 py-3 text-sm text-gray-700">{customer.chain || '-'}</td>
-                        <td className="px-4 py-3 text-sm text-gray-700">{customer.tlCode || '-'}</td>
-                        <td className="px-4 py-3 text-sm text-gray-700">{customer.tlName || '-'}</td>
                         <td className="px-4 py-3 text-sm text-gray-700">{customer.salesmanCode || '-'}</td>
                         <td className="px-4 py-3 text-sm text-gray-700">{customer.salesmanName || '-'}</td>
                         <td className="px-4 py-3 text-sm text-right font-semibold text-green-600">
@@ -944,7 +934,7 @@ export function CustomersReportUpdated() {
                     ))
                   ) : (
                     <tr>
-                      <td colSpan={15} className="px-4 py-8 text-center text-sm text-gray-500">
+                      <td colSpan={12} className="px-4 py-8 text-center text-sm text-gray-500">
                         No customer data available for the selected filters
                       </td>
                     </tr>
@@ -1019,10 +1009,6 @@ export function CustomersReportUpdated() {
                     <div>
                       <p className="text-sm text-gray-600">Customer Name</p>
                       <p className="font-semibold">{customerDetail?.customerName || selectedCustomer?.customerName}</p>
-                    </div>
-                    <div>
-                      <p className="text-sm text-gray-600">Region</p>
-                      <p className="font-semibold">{customerDetail?.region || selectedCustomer?.region || 'N/A'}</p>
                     </div>
                     <div>
                       <p className="text-sm text-gray-600">City</p>
@@ -1178,7 +1164,6 @@ async function exportCustomerTransactions(customer: any, customerDetail: any, tr
     worksheet.addRow([])
     worksheet.addRow(['Customer Code:', customer.customerCode || ''])
     worksheet.addRow(['Customer Name:', customerDetail?.customerName || customer.customerName || ''])
-    worksheet.addRow(['Region:', customerDetail?.region || customer.region || ''])
     worksheet.addRow(['City:', customerDetail?.city || customer.city || ''])
     worksheet.addRow(['Chain:', customerDetail?.chain || customer.chain || ''])
     if (customerDetail?.address) {

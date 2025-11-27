@@ -87,55 +87,107 @@ export async function GET(
     const tableInfo = await resolveTransactionsTable()
     const transactionsTable = tableInfo.name
     const col = getTransactionColumnExpressions(tableInfo.columns)
-    
-    // Get transactions for the customer with proper joins to get names
-    const transactionsQuery = `
-      SELECT 
-        ${col.trxCode} as "transactionId",
-        ${col.trxDateOnly} as "transactionDate",
-        t.product_code as "productCode",
-        COALESCE(p.product_name, t.product_name, t.product_code) as "productName",
-        ${col.quantityValue} as "quantity",
-        ${col.unitPriceValue} as "unitPrice",
-        (${col.quantityValue} * ${col.unitPriceValue}) as "totalAmount",
-        ${col.discountValue} as "discount",
-        ${col.netAmountValue} as "netAmount",
-        COALESCE(t.transaction_type_name, 'Sales Order') as "orderType",
-        COALESCE(c.customer_name, 'Unknown') as "customerName",
-        COALESCE(c.state, 'Unknown') as "region",
-        COALESCE(c.city, 'Unknown') as "city",
-        COALESCE(c.customer_type, 'Unknown') as "chain",
-        COALESCE(c.sales_person_code, 'Unknown') as "tlCode",
-        COALESCE(c.sales_person_code, 'Unknown') as "tlName",
-        ${col.fieldUserCode === 'NULL' ? 'NULL' : `COALESCE(t.${col.fieldUserCode}, 'Unknown')`} as "fieldUserCode",
-        ${col.fieldUserName === 'NULL' ? 'NULL' : `COALESCE(t.${col.fieldUserName}, 'Unknown')`} as "fieldUserName"
-      FROM ${transactionsTable} t
-      LEFT JOIN flat_customers_master c ON t.${col.storeCode} = c.customer_code
-      LEFT JOIN flat_products_master p ON t.product_code = p.product_code
-      WHERE t.${col.storeCode} = $1
-        AND ${col.trxDateOnly} >= $2
-        AND ${col.trxDateOnly} <= $3
-      ORDER BY ${col.trxDateOnly} DESC
-      LIMIT 1000
-    `
-    
+    const isTblTrxHeader = transactionsTable === '"tblTrxHeader"'
+
+    let transactionsQuery: string
+    let summaryQuery: string
+
+    if (isTblTrxHeader) {
+      // tblTrxHeader specific query
+      transactionsQuery = `
+        SELECT
+          t."TrxCode" as "transactionId",
+          DATE(t."TrxDate") as "transactionDate",
+          '' as "productCode",
+          'N/A' as "productName",
+          0 as "quantity",
+          0 as "unitPrice",
+          COALESCE(t."TotalAmount", 0) as "totalAmount",
+          0 as "discount",
+          COALESCE(t."TotalAmount", 0) as "netAmount",
+          CASE t."TrxType" WHEN 1 THEN 'Sales' WHEN 2 THEN 'Return' ELSE 'Other' END as "orderType",
+          COALESCE(c."Description", 'Unknown') as "customerName",
+          COALESCE(c."RegionCode", 'Unknown') as "region",
+          COALESCE(c."CityCode", 'Unknown') as "city",
+          COALESCE(c."JDECustomerType", 'Unknown') as "chain",
+          COALESCE(t."RouteCode", 'Unknown') as "tlCode",
+          COALESCE(r."Description", t."RouteCode", 'Unknown') as "tlName",
+          COALESCE(t."UserCode", 'Unknown') as "fieldUserCode",
+          COALESCE(u."Description", 'Unknown') as "fieldUserName"
+        FROM ${transactionsTable} t
+        LEFT JOIN "tblCustomer" c ON t."ClientCode" = c."Code"
+        LEFT JOIN "tblUser" u ON t."UserCode" = u."Code"
+        LEFT JOIN "tblRoute" r ON t."RouteCode" = r."Code"
+        WHERE t."ClientCode" = $1
+          AND DATE(t."TrxDate") >= $2
+          AND DATE(t."TrxDate") <= $3
+          AND t."TrxType" = 1
+        ORDER BY DATE(t."TrxDate") DESC
+        LIMIT 1000
+      `
+
+      summaryQuery = `
+        SELECT
+          SUM(COALESCE(t."TotalAmount", 0)) as "totalSales",
+          COUNT(DISTINCT t."TrxCode") as "totalOrders",
+          AVG(COALESCE(t."TotalAmount", 0)) as "avgOrderValue",
+          0 as "uniqueProducts",
+          MAX(DATE(t."TrxDate")) as "lastOrderDate",
+          MIN(DATE(t."TrxDate")) as "firstOrderDate"
+        FROM ${transactionsTable} t
+        WHERE t."ClientCode" = $1
+          AND DATE(t."TrxDate") >= $2
+          AND DATE(t."TrxDate") <= $3
+          AND t."TrxType" = 1
+      `
+    } else {
+      // flat_* tables query
+      transactionsQuery = `
+        SELECT
+          ${col.trxCode} as "transactionId",
+          ${col.trxDateOnly} as "transactionDate",
+          t.product_code as "productCode",
+          COALESCE(p.product_name, t.product_name, t.product_code) as "productName",
+          ${col.quantityValue} as "quantity",
+          ${col.unitPriceValue} as "unitPrice",
+          (${col.quantityValue} * ${col.unitPriceValue}) as "totalAmount",
+          ${col.discountValue} as "discount",
+          ${col.netAmountValue} as "netAmount",
+          COALESCE(t.transaction_type_name, 'Sales Order') as "orderType",
+          COALESCE(c.customer_name, 'Unknown') as "customerName",
+          COALESCE(c.state, 'Unknown') as "region",
+          COALESCE(c.city, 'Unknown') as "city",
+          COALESCE(c.customer_type, 'Unknown') as "chain",
+          COALESCE(c.sales_person_code, 'Unknown') as "tlCode",
+          COALESCE(c.sales_person_code, 'Unknown') as "tlName",
+          ${col.fieldUserCode === 'NULL' ? 'NULL' : `COALESCE(t.${col.fieldUserCode}, 'Unknown')`} as "fieldUserCode",
+          ${col.fieldUserName === 'NULL' ? 'NULL' : `COALESCE(t.${col.fieldUserName}, 'Unknown')`} as "fieldUserName"
+        FROM ${transactionsTable} t
+        LEFT JOIN flat_customers_master c ON t.${col.storeCode} = c.customer_code
+        LEFT JOIN flat_products_master p ON t.product_code = p.product_code
+        WHERE t.${col.storeCode} = $1
+          AND ${col.trxDateOnly} >= $2
+          AND ${col.trxDateOnly} <= $3
+        ORDER BY ${col.trxDateOnly} DESC
+        LIMIT 1000
+      `
+
+      summaryQuery = `
+        SELECT
+          SUM(${col.netAmountValue}) as "totalSales",
+          COUNT(DISTINCT ${col.trxCode}) as "totalOrders",
+          AVG(${col.netAmountValue}) as "avgOrderValue",
+          COUNT(DISTINCT t.product_code) as "uniqueProducts",
+          MAX(${col.trxDateOnly}) as "lastOrderDate",
+          MIN(${col.trxDateOnly}) as "firstOrderDate"
+        FROM ${transactionsTable} t
+        WHERE ${col.storeCode} = $1
+          AND ${col.trxDateOnly} >= $2
+          AND ${col.trxDateOnly} <= $3
+      `
+    }
+
     const transactionsResult = await query(transactionsQuery, [customerCode, startDate, endDate])
-    
-    // Get summary statistics
-    const summaryQuery = `
-      SELECT 
-        SUM(${col.netAmountValue}) as "totalSales",
-        COUNT(DISTINCT ${col.trxCode}) as "totalOrders",
-        AVG(${col.netAmountValue}) as "avgOrderValue",
-        COUNT(DISTINCT t.product_code) as "uniqueProducts",
-        MAX(${col.trxDateOnly}) as "lastOrderDate",
-        MIN(${col.trxDateOnly}) as "firstOrderDate"
-      FROM ${transactionsTable} t
-      WHERE ${col.storeCode} = $1
-        AND ${col.trxDateOnly} >= $2
-        AND ${col.trxDateOnly} <= $3
-    `
-    
     const summaryResult = await query(summaryQuery, [customerCode, startDate, endDate])
     
     const summary = summaryResult.rows[0] || {

@@ -1,170 +1,146 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { query } from '@/lib/database'
-import { resolveTransactionsTable } from '@/services/dailySalesService'
-import { unstable_cache } from 'next/cache'
-import { FILTERS_CACHE_DURATION, generateFilterCacheKey, getCacheControlHeader } from '@/lib/cache-utils'
 
-// Force dynamic rendering for routes that use searchParams
+// Force dynamic rendering
 export const dynamic = 'force-dynamic'
 
-// Internal function to fetch dashboard filters (will be cached)
-async function fetchDashboardFiltersInternal(transactionsTable: string, columns: Set<string>) {
-  const { query } = await import('@/lib/database')
-    
-    // Initialize arrays for filter options
-    let regions: any[] = []
-    let cities: any[] = []
-    let salesPersons: any[] = []
-    let customerTypes: any[] = []
-    let productCategories: any[] = []
-    let stores: any[] = []
+// Fetch dashboard filters from real database tables
+async function fetchDashboardFiltersInternal() {
+  // Initialize arrays for filter options
+  let regions: any[] = []
+  let warehouses: any[] = []
+  let routes: any[] = []
+  let users: any[] = []
+  let channels: any[] = []
+  let customers: any[] = []
 
-  // Fetch all filters in parallel
+  // Fetch all filters in parallel from real tables
   await Promise.all([
-    // Fetch regions (states) from customers master
+    // Fetch regions from tblRegion
     query(`
-        SELECT DISTINCT 
-          state as value, 
-          state as label,
-          COUNT(DISTINCT customer_code) as available
-        FROM flat_customers_master
-        WHERE state IS NOT NULL AND state != ''
-        GROUP BY state
-        ORDER BY state
+      SELECT DISTINCT
+        "Code" as value,
+        "Description" as label,
+        "CountryCode" as country
+      FROM "tblRegion"
+      WHERE "IsActive" = true
+      ORDER BY "Description"
     `).then(result => { regions = result.rows || [] }).catch(err => console.error('Error fetching regions:', err)),
 
-    // Fetch cities from customers master
+    // Fetch warehouses/depots from tblWarehouse
     query(`
-        SELECT DISTINCT 
-          city as value, 
-          city as label,
-          COUNT(DISTINCT customer_code) as available
-        FROM flat_customers_master
-        WHERE city IS NOT NULL AND city != ''
-        GROUP BY city
-        ORDER BY city
-    `).then(result => { cities = result.rows || [] }).catch(err => console.error('Error fetching cities:', err)),
+      SELECT DISTINCT
+        "Code" as value,
+        "Description" as label,
+        "SalesOrgCode" as org_code
+      FROM "tblWarehouse"
+      WHERE "IsActive" = true
+      ORDER BY "Description"
+    `).then(result => { warehouses = result.rows || [] }).catch(err => console.error('Error fetching warehouses:', err)),
 
-    // Fetch sales persons from customers master
+    // Fetch routes from tblRoute
     query(`
-        SELECT DISTINCT 
-          sales_person_code as value,
-          sales_person_name as label,
-          COUNT(DISTINCT customer_code) as available
-        FROM flat_customers_master
-        WHERE sales_person_code IS NOT NULL 
-          AND sales_person_code != ''
-          AND sales_person_name IS NOT NULL
-        GROUP BY sales_person_code, sales_person_name
-        ORDER BY sales_person_name
-    `).then(result => { salesPersons = result.rows || [] }).catch(err => console.error('Error fetching sales persons:', err)),
+      SELECT DISTINCT
+        "Code" as value,
+        "Name" as label,
+        "SalesmanCode" as salesman_code,
+        "WHCode" as warehouse_code,
+        "AreaCode" as area_code
+      FROM "tblRoute"
+      WHERE "IsActive" = true
+      ORDER BY "Name"
+    `).then(result => { routes = result.rows || [] }).catch(err => console.error('Error fetching routes:', err)),
 
-    // Fetch customer types
+    // Fetch users/salesmen from tblUser - get all active users
     query(`
-        SELECT DISTINCT 
-          customer_type as value,
-          customer_type as label,
-          COUNT(DISTINCT customer_code) as available
-        FROM flat_customers_master
-        WHERE customer_type IS NOT NULL AND customer_type != ''
-        GROUP BY customer_type
-        ORDER BY customer_type
-    `).then(result => { customerTypes = result.rows || [] }).catch(err => console.error('Error fetching customer types:', err)),
+      SELECT DISTINCT
+        "Code" as value,
+        "Description" as label,
+        "UserType" as user_type,
+        "Department" as department
+      FROM "tblUser"
+      WHERE "IsActive" = true
+      ORDER BY "Description"
+    `).then(result => { users = result.rows || [] }).catch(err => console.error('Error fetching users:', err)),
 
-    // Fetch product categories from sales transactions
-    columns.has('product_group_level1') 
-      ? query(`
-        SELECT DISTINCT 
-            COALESCE(product_group_level1, 'Unknown') as value,
-            COALESCE(product_group_level1, 'Unknown') as label,
-          COUNT(DISTINCT product_code) as available
-          FROM ${transactionsTable}
-        WHERE product_group_level1 IS NOT NULL AND product_group_level1 != ''
-        GROUP BY product_group_level1
-        ORDER BY product_group_level1
-        `).then(result => { productCategories = result.rows || [] }).catch(err => console.error('Error fetching product categories:', err))
-      : Promise.resolve(),
-
-    // Fetch top stores/customers
+    // Fetch channels from tblChannel
     query(`
-        SELECT DISTINCT 
-          customer_code as value,
-          customer_name as label,
-          city,
-          state
-        FROM flat_customers_master
-        WHERE customer_code IS NOT NULL 
-          AND customer_name IS NOT NULL
-        ORDER BY customer_name
-        LIMIT 100
-    `).then(result => { stores = result.rows || [] }).catch(err => console.error('Error fetching stores:', err))
+      SELECT DISTINCT
+        "Code" as value,
+        "Description" as label
+      FROM "tblChannel"
+      WHERE "IsActive" = true
+      ORDER BY "Description"
+    `).then(result => { channels = result.rows || [] }).catch(err => console.error('Error fetching channels:', err)),
+
+    // Fetch top customers from tblCustomer
+    query(`
+      SELECT DISTINCT
+        "Code" as value,
+        "Description" as label,
+        "RegionCode" as region,
+        "RouteCode" as route_code
+      FROM "tblCustomer"
+      WHERE "IsActive" = true
+      AND "IsBlocked" = false
+      ORDER BY "Description"
+      LIMIT 500
+    `).then(result => { customers = result.rows || [] }).catch(err => console.error('Error fetching customers:', err))
   ])
 
+  // Get date range from transactions
+  let dateRange = { min: '', max: '', daysWithData: 0 }
+  try {
+    const dateResult = await query(`
+      SELECT
+        MIN(DATE("TrxDate"))::text as min_date,
+        MAX(DATE("TrxDate"))::text as max_date,
+        COUNT(DISTINCT DATE("TrxDate")) as days_with_data
+      FROM "tblTrxHeader"
+      WHERE "TrxType" = 1
+    `)
+    if (dateResult.rows[0]) {
+      dateRange = {
+        min: dateResult.rows[0].min_date || '',
+        max: dateResult.rows[0].max_date || '',
+        daysWithData: parseInt(dateResult.rows[0].days_with_data || '0')
+      }
+    }
+  } catch (err) {
+    console.error('Error fetching date range:', err)
+  }
+
   return {
-        regions,
-        cities,
-    fieldUserRoles: salesPersons,
-    teamLeaders: salesPersons,
-    fieldUsers: salesPersons,
-    chains: customerTypes,
-        stores,
-        summary: {
-          totalRegions: regions.length,
-          totalRoutes: 0,
-          totalUsers: 0,
-          totalTeamLeaders: 0,
-          totalChains: 0,
-          totalStores: 0,
-          dateRange: {
-            min: '',
-            max: '',
-            daysWithData: 0
-          }
-        }
+    regions,
+    warehouses,
+    depots: warehouses, // Alias
+    routes,
+    users,
+    salesmen: users, // Alias
+    channels,
+    customers,
+    stores: customers, // Alias
+    summary: {
+      totalRegions: regions.length,
+      totalWarehouses: warehouses.length,
+      totalRoutes: routes.length,
+      totalUsers: users.length,
+      totalChannels: channels.length,
+      totalCustomers: customers.length,
+      dateRange
+    }
   }
 }
 
-// Enhanced dashboard filters API that fetches comprehensive filter options
 export async function GET(request: NextRequest) {
   try {
-    console.log('Dashboard filters API called - fetching comprehensive filter data')
-    const { name: transactionsTable, columns } = await resolveTransactionsTable()
-    
-    // Create cache key
-    const cacheKey = generateFilterCacheKey('dashboard', { table: transactionsTable })
-    
-    // Fetch filters with caching
-    const cachedFetchFilters = unstable_cache(
-      async () => fetchDashboardFiltersInternal(transactionsTable, columns),
-      [cacheKey],
-      {
-        revalidate: FILTERS_CACHE_DURATION,
-        tags: ['dashboard-filters', `dashboard-filters-${transactionsTable}`]
-      }
-    )
+    const filterData = await fetchDashboardFiltersInternal()
 
-    const filterData = await cachedFetchFilters()
-    
-    // Return comprehensive filter options
     return NextResponse.json({
       success: true,
       data: filterData,
-      hierarchy: {
-        loginUserCode: null,
-        isTeamLeader: false,
-        allowedUserCount: 0,
-        allowedTeamLeaderCount: 0,
-        allowedFieldUserCount: 0
-      },
       timestamp: new Date().toISOString(),
-      cached: true,
-      cacheInfo: {
-        duration: FILTERS_CACHE_DURATION
-      }
-    }, {
-      headers: {
-        'Cache-Control': getCacheControlHeader(FILTERS_CACHE_DURATION)
-      }
+      source: 'postgresql-real-tables'
     })
   } catch (error) {
     console.error('Dashboard Filters API error:', error)

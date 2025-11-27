@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { query, db } from '@/lib/database'
-import { unstable_cache } from 'next/cache'
-import { getCacheDuration, getCacheControlHeader } from '@/lib/cache-utils'
-import { getChildUsers, isAdmin } from '@/lib/mssql'
+import { query } from '@/lib/database'
+
+// Force dynamic rendering
+export const dynamic = 'force-dynamic'
 
 // Helper function to parse date range string
 const getDateRangeFromString = (dateRange: string) => {
@@ -56,94 +56,94 @@ const getDateRangeFromString = (dateRange: string) => {
   }
 
   return {
-    start: startDate,
-    end: endDate
+    startDate: startDate.toISOString().split('T')[0],
+    endDate: endDate.toISOString().split('T')[0]
   }
 }
 
-// Cached product analytics fetcher - using flat_transactions (PostgreSQL)
-const getCachedProductAnalytics = unstable_cache(
-  async (dateRange: string, filters: any, allowedUserCodes: string[]) => {
-    const { start: startDate, end: endDate } = getDateRangeFromString(dateRange)
-    const startDateStr = startDate.toISOString().split('T')[0]
-    const endDateStr = endDate.toISOString().split('T')[0]
+export async function GET(request: NextRequest) {
+  try {
+    const { searchParams } = new URL(request.url)
+    const dateRange = searchParams.get('range') || 'thisMonth'
+    const customStartDate = searchParams.get('startDate')
+    const customEndDate = searchParams.get('endDate')
+    const categoryFilter = searchParams.get('category')
+    const productCodeFilter = searchParams.get('productCode')
 
-    await db.initialize()
+    // Get date range
+    let startDate: string, endDate: string
+    if (customStartDate && customEndDate) {
+      startDate = customStartDate
+      endDate = customEndDate
+    } else {
+      const dateRangeResult = getDateRangeFromString(dateRange)
+      startDate = dateRangeResult.startDate
+      endDate = dateRangeResult.endDate
+    }
 
-    // Build filter conditions - dates apply to transactions
+    // Build WHERE conditions
     const conditions: string[] = []
     const params: any[] = []
     let paramIndex = 1
 
     // Date conditions
-    conditions.push(`DATE(transaction_date) >= $${paramIndex}`)
-    params.push(startDateStr)
+    conditions.push(`h."TrxDate" >= $${paramIndex}::timestamp`)
+    params.push(startDate)
     paramIndex++
-    conditions.push(`DATE(transaction_date) <= $${paramIndex}`)
-    params.push(endDateStr)
+    conditions.push(`h."TrxDate" < ($${paramIndex}::timestamp + INTERVAL '1 day')`)
+    params.push(endDate)
     paramIndex++
 
-    // Add hierarchy filter if not admin
-    if (allowedUserCodes.length > 0) {
-      const placeholders = allowedUserCodes.map((_, i) => `$${paramIndex + i}`).join(', ')
-      conditions.push(`field_user_code IN (${placeholders})`)
-      params.push(...allowedUserCodes)
-      paramIndex += allowedUserCodes.length
-    }
+    // Only include invoices/sales (TrxType = 1)
+    conditions.push(`h."TrxType" = 1`)
 
-    // Category filter (using product_group - the actual category)
-    if (filters.category) {
-      conditions.push(`product_group_level1 = $${paramIndex}`)
-      params.push(filters.category)
+    // Category filter
+    if (categoryFilter) {
+      conditions.push(`i."GroupLevel1" = $${paramIndex}`)
+      params.push(categoryFilter)
       paramIndex++
     }
 
-    // Brand filter (product_brand is same as product_group)
-    if (filters.brand) {
-      conditions.push(`product_group_level2 = $${paramIndex}`)
-      params.push(filters.brand)
+    // Product code filter
+    if (productCodeFilter) {
+      conditions.push(`d."ItemCode" = $${paramIndex}`)
+      params.push(productCodeFilter)
       paramIndex++
     }
 
-    // Subcategory filter - skip since it's all "Farmley"
-    if (filters.subcategory && filters.subcategory.toLowerCase() !== 'farmley') {
-      conditions.push(`product_group_level3 = $${paramIndex}`)
-      params.push(filters.subcategory)
-      paramIndex++
-    }
-
-    // Product code filter (for specific product search)
-    if (filters.productCode) {
-      conditions.push(`product_code = $${paramIndex}`)
-      params.push(filters.productCode)
-      paramIndex++
-    }
+    // Base conditions
+    conditions.push('d."ItemCode" IS NOT NULL')
+    conditions.push('COALESCE(d."QuantityBU", 0) != 0')
 
     const whereClause = `WHERE ${conditions.join(' AND ')}`
 
-    // Get product summary data - aggregate from flat_transactions
+    // Get product summary data
     const productSummaryQuery = `
       SELECT
-        product_code,
-        MAX(product_name) as product_name,
-        MAX(product_group_level1) as category,
-        MAX(product_group_level2) as subcategory,
-        MAX(product_group_level3) as brand,
-        MAX(product_base_uom) as base_uom,
-        SUM(net_amount) as total_sales,
-        SUM(COALESCE(quantity_bu, quantity, 0)) as total_quantity,
-        COUNT(DISTINCT transaction_code) as total_orders,
-        AVG(NULLIF(unit_price, 0)) as avg_price,
-        CASE 
-          WHEN SUM(COALESCE(quantity_bu, quantity, 0)) > 1000 THEN 'Fast'
-          WHEN SUM(COALESCE(quantity_bu, quantity, 0)) > 100 THEN 'Medium'
-          WHEN SUM(COALESCE(quantity_bu, quantity, 0)) > 0 THEN 'Slow'
+        d."ItemCode" as product_code,
+        MAX(d."ItemDescription") as product_name,
+        COALESCE(MAX(i."GroupLevel1"), 'Uncategorized') as category,
+        COALESCE(MAX(i."GroupLevel2"), 'No Brand') as brand,
+        COALESCE(MAX(d."UOM"), 'PCS') as base_uom,
+        SUM(CASE WHEN (d."BasePrice" * d."QuantityBU") > 0 THEN (d."BasePrice" * d."QuantityBU") ELSE 0 END) as total_sales,
+        SUM(ABS(COALESCE(d."QuantityBU", 0))) as total_quantity,
+        COUNT(DISTINCT d."TrxCode") as total_orders,
+        CASE WHEN SUM(ABS(COALESCE(d."QuantityBU", 0))) > 0
+             THEN SUM(CASE WHEN (d."BasePrice" * d."QuantityBU") > 0 THEN (d."BasePrice" * d."QuantityBU") ELSE 0 END) / SUM(ABS(COALESCE(d."QuantityBU", 0)))
+             ELSE 0 END as avg_price,
+        CASE
+          WHEN SUM(ABS(COALESCE(d."QuantityBU", 0))) > 1000 THEN 'Fast'
+          WHEN SUM(ABS(COALESCE(d."QuantityBU", 0))) > 100 THEN 'Medium'
+          WHEN SUM(ABS(COALESCE(d."QuantityBU", 0))) > 0 THEN 'Slow'
           ELSE 'No Sales'
-        END as movement_status
-      FROM flat_transactions
+        END as movement_status,
+        COALESCE(MAX(h."CurrencyCode"), 'AED') as currency_code
+      FROM "tblTrxDetail" d
+      INNER JOIN "tblTrxHeader" h ON d."TrxCode" = h."TrxCode"
+      LEFT JOIN "tblItem" i ON d."ItemCode" = i."Code"
       ${whereClause}
-      GROUP BY product_code
-      ORDER BY SUM(net_amount) DESC
+      GROUP BY d."ItemCode"
+      ORDER BY SUM(CASE WHEN (d."BasePrice" * d."QuantityBU") > 0 THEN (d."BasePrice" * d."QuantityBU") ELSE 0 END) DESC
     `
 
     const productResult = await query(productSummaryQuery, params)
@@ -151,7 +151,7 @@ const getCachedProductAnalytics = unstable_cache(
 
     // Calculate overall metrics
     const totalProducts = products.length
-    const activeProducts = products.length // All products in sales are active
+    const activeProducts = products.length
     const totalSales = products.reduce((sum, p) => sum + parseFloat(p.total_sales || '0'), 0)
     const totalQuantity = products.reduce((sum, p) => sum + parseFloat(p.total_quantity || '0'), 0)
     const fastMoving = products.filter(p => p.movement_status === 'Fast').length
@@ -162,19 +162,19 @@ const getCachedProductAnalytics = unstable_cache(
     const isValidValue = (value: string | null | undefined): boolean => {
       if (!value) return false
       const normalized = value.trim().toLowerCase()
-      return normalized !== '' && 
-             normalized !== 'unknown' && 
-             normalized !== 'n/a' && 
-             normalized !== 'null' && 
+      return normalized !== '' &&
+             normalized !== 'unknown' &&
+             normalized !== 'n/a' &&
+             normalized !== 'null' &&
              normalized !== 'na' &&
-             normalized !== 'farmley' // Exclude company name
+             normalized !== 'uncategorized'
     }
 
-    // Brand/Category analysis (product_group_level1 is the meaningful grouping)
+    // Brand/Category analysis
     const categoryData = products.reduce((acc: any, product) => {
-      const category = product.category // This is product_group_level1
+      const category = product.category
       if (!isValidValue(category)) return acc
-      
+
       if (!acc[category]) {
         acc[category] = {
           products: 0,
@@ -221,10 +221,10 @@ const getCachedProductAnalytics = unstable_cache(
         quantity: parseFloat(product.total_quantity || '0'),
         avgPrice: parseFloat(product.avg_price || '0'),
         movementStatus: product.movement_status,
-        currencyCode: 'AED'
+        currencyCode: product.currency_code || 'AED'
       }))
 
-    return {
+    const data = {
       metrics: {
         totalProducts,
         activeProducts,
@@ -239,55 +239,14 @@ const getCachedProductAnalytics = unstable_cache(
       categorySalesDistribution,
       topProducts
     }
-  },
-  ['product-analytics'],
-  {
-    revalidate: 300, // Cache for 5 minutes
-    tags: ['product-analytics']
-  }
-)
-
-export async function GET(request: NextRequest) {
-  try {
-    const { searchParams } = new URL(request.url)
-    const dateRange = searchParams.get('range') || 'thisMonth'
-    const category = searchParams.get('category')
-    const brand = searchParams.get('brand')
-    const subcategory = searchParams.get('subcategory')
-    const productCode = searchParams.get('productCode')
-    const loginUserCode = searchParams.get('loginUserCode')
-    
-    // Get hierarchy-based allowed users
-    let allowedUserCodes: string[] = []
-    if (loginUserCode && !isAdmin(loginUserCode)) {
-      allowedUserCodes = await getChildUsers(loginUserCode)
-    }
-
-    const filters = {
-      category,
-      brand,
-      subcategory,
-      productCode
-    }
-
-    const data = await getCachedProductAnalytics(dateRange, filters, allowedUserCodes)
-    
-    // Calculate cache duration based on date range
-    const cacheDuration = getCacheDuration(dateRange, false)
 
     return NextResponse.json({
       success: true,
       data,
-      timestamp: new Date().toISOString(),
-      source: 'postgresql-flat-transactions',
-      cached: true,
-      cacheInfo: {
-        duration: cacheDuration,
-        dateRange
-      }
+      timestamp: new Date().toISOString()
     }, {
       headers: {
-        'Cache-Control': getCacheControlHeader(cacheDuration)
+        'Cache-Control': 'public, s-maxage=300, stale-while-revalidate=600'
       }
     })
 

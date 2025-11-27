@@ -25,6 +25,7 @@ export async function GET(request: NextRequest) {
 
     // Get filter parameters
     const regionCode = searchParams.get('regionCode')
+    const cityCode = searchParams.get('cityCode')
     const teamLeaderCode = searchParams.get('teamLeaderCode')
     const fieldUserRole = searchParams.get('fieldUserRole')
     const userCode = searchParams.get('userCode')
@@ -37,58 +38,62 @@ export async function GET(request: NextRequest) {
 
     const conditions: string[] = []
     const params: any[] = []
+    const joins: string[] = []
     let paramIndex = 1
 
     // Date filters - optimized for index usage (no DATE() function)
     if (startDate && endDate) {
-      conditions.push(`t.transaction_date >= $${paramIndex}::date`)
+      conditions.push(`t."TrxDate" >= $${paramIndex}::timestamp`)
       params.push(startDate)
       paramIndex++
-      conditions.push(`t.transaction_date < ($${paramIndex}::date + INTERVAL '1 day')`)
+      conditions.push(`t."TrxDate" < ($${paramIndex}::timestamp + INTERVAL '1 day')`)
       params.push(endDate)
       paramIndex++
     }
 
-    // Region filter - use state from customers master
+    // Only include invoices/sales (TrxType = 1)
+    conditions.push(`t."TrxType" = 1`)
+
+    // Region filter - use RegionCode from tblCustomer
     if (regionCode) {
-      conditions.push(`c.state = $${paramIndex}`)
+      conditions.push(`c."RegionCode" = $${paramIndex}`)
       params.push(regionCode)
       paramIndex++
     }
 
-    // City filter
-    const cityCode = searchParams.get('cityCode')
+    // City filter - use CityCode from tblCustomer
     if (cityCode) {
-      conditions.push(`c.city = $${paramIndex}`)
+      conditions.push(`c."CityCode" = $${paramIndex}`)
       params.push(cityCode)
       paramIndex++
     }
 
-    // Team Leader filter - using sales_person_code
+    // Team Leader filter - use JOIN instead of EXISTS for better performance
     if (teamLeaderCode) {
-      conditions.push(`c.sales_person_code = $${paramIndex}`)
+      joins.push(`INNER JOIN "tblUser" u ON t."UserCode" = u."Code"`)
+      conditions.push(`u."ReportsTo" = $${paramIndex}`)
       params.push(teamLeaderCode)
       paramIndex++
     }
 
-    // Field User Role filter - using sales_person_code
-    if (fieldUserRole) {
-      conditions.push(`c.sales_person_code = $${paramIndex}`)
-      params.push(fieldUserRole)
-      paramIndex++
-    }
+    // Field User Role filter - not directly applicable
+    // if (fieldUserRole) {
+    //   conditions.push(`cd."UserCode" = $${paramIndex}`)
+    //   params.push(fieldUserRole)
+    //   paramIndex++
+    // }
 
     // User filter
     if (userCode) {
-      conditions.push(`t.user_code = $${paramIndex}`)
+      conditions.push(`t."UserCode" = $${paramIndex}`)
       params.push(userCode)
       paramIndex++
     }
 
-    // Chain filter - using customer_type
+    // Chain/Channel filter - using ChannelCode from tblCustomerDetail
     const chainName = searchParams.get('chainName')
     if (chainName) {
-      conditions.push(`c.customer_type = $${paramIndex}`)
+      conditions.push(`TRIM(cd."ChannelCode") = $${paramIndex}`)
       params.push(chainName)
       paramIndex++
     }
@@ -96,32 +101,40 @@ export async function GET(request: NextRequest) {
     // Store filter
     const storeCode = searchParams.get('storeCode')
     if (storeCode) {
-      conditions.push(`t.customer_code = $${paramIndex}`)
+      conditions.push(`t."ClientCode" = $${paramIndex}`)
       params.push(storeCode)
       paramIndex++
     }
 
-    // Add order_total filter
-    conditions.push(`t.order_total IS NOT NULL`)
-    
+    // Add TotalAmount filter
+    conditions.push(`t."TotalAmount" IS NOT NULL`)
+
     const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : ''
+    const additionalJoins = joins.length > 0 ? joins.join(' ') : ''
 
     // Log for debugging
-    console.log('Sales by customer type query params:', { startDate, endDate, conditions: conditions.length, whereClause, params })
+    console.log('Sales by channel query params:', { startDate, endDate, conditions: conditions.length, whereClause, params })
 
-    // Fetch sales by customer type using master table - using order_total for transaction amounts
+    // Fetch sales by channel using tblTrxHeader -> tblCustomerDetail -> tblChannel
+    // Channel is linked via tblCustomerDetail.ChannelCode -> tblChannel.Code
+    // Also join tblCustomer for region filtering
     const result = await query(`
       SELECT
-        COALESCE(c.customer_type, 'Direct') as channel,
-        COALESCE(SUM(CASE WHEN t.order_total >= 0 THEN t.order_total ELSE 0 END), 0) as sales,
-        COUNT(DISTINCT t.transaction_code) as orders,
-        COUNT(DISTINCT t.customer_code) as customers,
-        AVG(t.order_total) as avg_order_value,
-        SUM(COALESCE(t.quantity_bu, 0)) as total_quantity
-      FROM flat_transactions t
-      LEFT JOIN flat_customers_master c ON t.customer_code = c.customer_code
+        COALESCE(ch."Description", TRIM(cd."ChannelCode"), 'Unassigned') as channel,
+        TRIM(cd."ChannelCode") as channel_code,
+        COALESCE(SUM(CASE WHEN t."TotalAmount" >= 0 THEN t."TotalAmount" ELSE 0 END), 0) as sales,
+        COUNT(DISTINCT t."TrxCode") as orders,
+        COUNT(DISTINCT t."ClientCode") as customers,
+        AVG(t."TotalAmount") as avg_order_value,
+        COALESCE(SUM(ABS(COALESCE(d."QuantityBU", 0))), 0) as total_quantity
+      FROM "tblTrxHeader" t
+      LEFT JOIN "tblCustomer" c ON t."ClientCode" = c."Code"
+      LEFT JOIN "tblCustomerDetail" cd ON t."ClientCode" = cd."CustomerCode"
+      LEFT JOIN "tblChannel" ch ON TRIM(cd."ChannelCode") = ch."Code"
+      LEFT JOIN "tblTrxDetail" d ON t."TrxCode" = d."TrxCode"
+      ${additionalJoins}
       ${whereClause}
-      GROUP BY c.customer_type
+      GROUP BY TRIM(cd."ChannelCode"), ch."Description"
       ORDER BY sales DESC
     `, params)
 
@@ -134,7 +147,8 @@ export async function GET(request: NextRequest) {
 
       return {
         channel: row.channel,
-        channelType: 'Customer Type',
+        channelCode: row.channel_code || null,
+        channelType: 'Channel',
         sales: parseFloat(sales.toFixed(2)),
         orders: parseInt(row.orders || '0'),
         customers: parseInt(row.customers || '0'),

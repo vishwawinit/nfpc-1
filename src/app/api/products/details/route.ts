@@ -1,170 +1,202 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { query, db } from '@/lib/database'
-import { unstable_cache } from 'next/cache'
-import { getChildUsers, isAdmin } from '@/lib/mssql'
+import { query } from '@/lib/database'
 import { getAssetBaseUrl } from '@/lib/utils'
 
-// Cached product details fetcher - using ONLY flat_sales_transactions (PostgreSQL)
-const getCachedProductDetails = unstable_cache(
-  async (dateRange: string, filters: any, page: number = 1, limit: number = 25, sortBy: string = 'total_sales', sortOrder: string = 'DESC', allowedUserCodes: string[] = []) => {
-    const current = new Date()
-    let startDate: Date = new Date(current)
-    let endDate: Date = new Date(current)
+// Force dynamic rendering
+export const dynamic = 'force-dynamic'
 
-    switch(dateRange) {
-      case 'today':
-        startDate = new Date(current)
-        endDate = new Date(current)
-        break
-      case 'yesterday':
-        startDate = new Date(current)
-        startDate.setDate(startDate.getDate() - 1)
-        endDate = new Date(startDate)
-        break
-      case 'thisWeek':
-      case 'last7Days':
-        startDate = new Date(current)
-        startDate.setDate(startDate.getDate() - 6)
-        endDate = new Date(current)
-        break
-      case 'last30Days':
-      case 'thisMonth':
-        startDate = new Date(current.getFullYear(), current.getMonth(), 1)
-        endDate = new Date(current)
-        break
-      case 'lastMonth':
-        startDate = new Date(current.getFullYear(), current.getMonth() - 1, 1)
-        endDate = new Date(current.getFullYear(), current.getMonth(), 0)
-        break
-      case 'thisQuarter':
-        const quarter = Math.floor(current.getMonth() / 3)
-        startDate = new Date(current.getFullYear(), quarter * 3, 1)
-        endDate = new Date(current)
-        break
-      case 'lastQuarter':
-        const lastQuarter = Math.floor(current.getMonth() / 3) - 1
-        startDate = new Date(current.getFullYear(), lastQuarter * 3, 1)
-        endDate = new Date(current.getFullYear(), lastQuarter * 3 + 3, 0)
-        break
-      case 'thisYear':
-        startDate = new Date(current.getFullYear(), 0, 1)
-        endDate = new Date(current)
-        break
-      default:
-        startDate = new Date(current)
-        startDate.setDate(startDate.getDate() - 29)
-        endDate = new Date(current)
+// Helper function to parse date range string
+const getDateRangeFromString = (dateRange: string) => {
+  const current = new Date()
+  let startDate: Date = new Date(current)
+  let endDate: Date = new Date(current)
+
+  switch(dateRange) {
+    case 'today':
+      startDate = new Date(current)
+      endDate = new Date(current)
+      break
+    case 'yesterday':
+      startDate = new Date(current)
+      startDate.setDate(startDate.getDate() - 1)
+      endDate = new Date(startDate)
+      break
+    case 'thisWeek':
+    case 'last7Days':
+      startDate = new Date(current)
+      startDate.setDate(startDate.getDate() - 6)
+      endDate = new Date(current)
+      break
+    case 'last30Days':
+    case 'thisMonth':
+      startDate = new Date(current.getFullYear(), current.getMonth(), 1)
+      endDate = new Date(current)
+      break
+    case 'lastMonth':
+      startDate = new Date(current.getFullYear(), current.getMonth() - 1, 1)
+      endDate = new Date(current.getFullYear(), current.getMonth(), 0)
+      break
+    case 'thisQuarter':
+      const quarter = Math.floor(current.getMonth() / 3)
+      startDate = new Date(current.getFullYear(), quarter * 3, 1)
+      endDate = new Date(current)
+      break
+    case 'lastQuarter':
+      const lastQuarter = Math.floor(current.getMonth() / 3) - 1
+      startDate = new Date(current.getFullYear(), lastQuarter * 3, 1)
+      endDate = new Date(current.getFullYear(), lastQuarter * 3 + 3, 0)
+      break
+    case 'thisYear':
+      startDate = new Date(current.getFullYear(), 0, 1)
+      endDate = new Date(current)
+      break
+    default:
+      startDate = new Date(current)
+      startDate.setDate(startDate.getDate() - 29)
+      endDate = new Date(current)
+  }
+
+  return {
+    startDate: startDate.toISOString().split('T')[0],
+    endDate: endDate.toISOString().split('T')[0]
+  }
+}
+
+export async function GET(request: NextRequest) {
+  try {
+    const { searchParams } = new URL(request.url)
+    const dateRange = searchParams.get('range') || 'thisMonth'
+    const customStartDate = searchParams.get('startDate')
+    const customEndDate = searchParams.get('endDate')
+    const categoryFilter = searchParams.get('category')
+    const productCodeFilter = searchParams.get('productCode')
+    const page = parseInt(searchParams.get('page') || '1')
+    const limit = parseInt(searchParams.get('limit') || '25')
+    const sortBy = searchParams.get('sortBy') || 'total_sales'
+    const sortOrder = searchParams.get('sortOrder') || 'DESC'
+
+    // Get date range
+    let startDate: string, endDate: string
+    if (customStartDate && customEndDate) {
+      startDate = customStartDate
+      endDate = customEndDate
+    } else {
+      const dateRangeResult = getDateRangeFromString(dateRange)
+      startDate = dateRangeResult.startDate
+      endDate = dateRangeResult.endDate
     }
 
-    const startDateStr = startDate.toISOString().split('T')[0]
-    const endDateStr = endDate.toISOString().split('T')[0]
-
-    await db.initialize()
-
-    // Build filter conditions - ALL from flat_sales_transactions
+    // Build WHERE conditions
     const conditions: string[] = []
     const params: any[] = []
     let paramIndex = 1
 
-    // Date conditions (on transactions)
-    conditions.push(`trx_date_only >= $${paramIndex}`)
-    params.push(startDateStr)
+    // Date conditions
+    conditions.push(`h."TrxDate" >= $${paramIndex}::timestamp`)
+    params.push(startDate)
     paramIndex++
-    conditions.push(`trx_date_only <= $${paramIndex}`)
-    params.push(endDateStr)
+    conditions.push(`h."TrxDate" < ($${paramIndex}::timestamp + INTERVAL '1 day')`)
+    params.push(endDate)
     paramIndex++
 
-    // Add hierarchy filter if not admin
-    if (allowedUserCodes.length > 0) {
-      const placeholders = allowedUserCodes.map((_, i) => `$${paramIndex + i}`).join(', ')
-      conditions.push(`field_user_code IN (${placeholders})`)
-      params.push(...allowedUserCodes)
-      paramIndex += allowedUserCodes.length
-    }
+    // Only include invoices/sales (TrxType = 1)
+    conditions.push(`h."TrxType" = 1`)
 
-    // Category filter (using product_group)
-    if (filters.category) {
-      conditions.push(`product_group = $${paramIndex}`)
-      params.push(filters.category)
+    // Category filter
+    if (categoryFilter) {
+      conditions.push(`i."GroupLevel1" = $${paramIndex}`)
+      params.push(categoryFilter)
       paramIndex++
     }
 
-    // Brand filter (product_brand)
-    if (filters.brand) {
-      conditions.push(`product_brand = $${paramIndex}`)
-      params.push(filters.brand)
+    // Product code filter
+    if (productCodeFilter) {
+      conditions.push(`d."ItemCode" = $${paramIndex}`)
+      params.push(productCodeFilter)
       paramIndex++
     }
 
-    // Subcategory filter - skip since it's all "Farmley"
-    if (filters.subcategory && filters.subcategory.toLowerCase() !== 'farmley') {
-      conditions.push(`product_subcategory = $${paramIndex}`)
-      params.push(filters.subcategory)
-      paramIndex++
-    }
-
-    // Product code filter (for specific product selection)
-    if (filters.productCode) {
-      conditions.push(`product_code = $${paramIndex}`)
-      params.push(filters.productCode)
-      paramIndex++
-    }
+    // Base conditions
+    conditions.push('d."ItemCode" IS NOT NULL')
+    conditions.push('COALESCE(d."QuantityBU", 0) != 0')
 
     const whereClause = `WHERE ${conditions.join(' AND ')}`
+
+    // Map sortBy to actual column names
+    const sortByColumnMap: Record<string, string> = {
+      'product_code': 'd."ItemCode"',
+      'product_name': 'product_name',
+      'category': 'category',
+      'total_sales': 'total_sales',
+      'total_quantity': 'total_quantity',
+      'avg_price': 'avg_price'
+    }
+    const orderByColumn = sortByColumnMap[sortBy] || 'total_sales'
 
     // Calculate offset for pagination
     const offset = (page - 1) * limit
 
-    // Add limit and offset to params
-    params.push(limit)
-    params.push(offset)
-
-    // Get product details - aggregate from flat_sales_transactions only
+    // Get product details
     const productDetailsQuery = `
-      SELECT
-        product_code,
-        MAX(product_name) as product_name,
-        MAX(product_group) as category,
-        MAX(product_subcategory) as subcategory,
-        MAX(product_brand) as brand,
-        MAX(product_base_uom) as base_uom,
-        MAX(product_image_path) as image_path,
-        SUM(net_amount) as total_sales,
-        SUM(quantity) as total_quantity,
-        COUNT(DISTINCT trx_code) as total_orders,
-        AVG(unit_price) as avg_price,
-        MAX(unit_price) as maximum_price,
-        MIN(unit_price) as minimum_price,
-        CASE 
-          WHEN SUM(quantity) > 1000 THEN 'Fast'
-          WHEN SUM(quantity) > 100 THEN 'Medium'
-          WHEN SUM(quantity) > 0 THEN 'Slow'
-          ELSE 'No Sales'
-        END as movement_status
-      FROM flat_sales_transactions
-      ${whereClause}
-      GROUP BY product_code
-      ORDER BY ${sortBy} ${sortOrder}
+      WITH product_aggregates AS (
+        SELECT
+          d."ItemCode" as product_code,
+          MAX(d."ItemDescription") as product_name,
+          COALESCE(MAX(i."GroupLevel1"), 'Uncategorized') as category,
+          COALESCE(MAX(i."GroupLevel2"), 'No Subcategory') as subcategory,
+          COALESCE(MAX(i."GroupLevel3"), 'No Brand') as brand,
+          COALESCE(MAX(d."UOM"), 'PCS') as base_uom,
+          COALESCE(MAX(i."ImagePath"), '') as image_path,
+          SUM(CASE WHEN (d."BasePrice" * d."QuantityBU") > 0 THEN (d."BasePrice" * d."QuantityBU") ELSE 0 END) as total_sales,
+          SUM(ABS(COALESCE(d."QuantityBU", 0))) as total_quantity,
+          COUNT(DISTINCT d."TrxCode") as total_orders,
+          CASE WHEN SUM(ABS(COALESCE(d."QuantityBU", 0))) > 0
+               THEN SUM(CASE WHEN (d."BasePrice" * d."QuantityBU") > 0 THEN (d."BasePrice" * d."QuantityBU") ELSE 0 END) / SUM(ABS(COALESCE(d."QuantityBU", 0)))
+               ELSE 0 END as avg_price,
+          MAX(d."BasePrice") as max_price,
+          MIN(CASE WHEN d."BasePrice" > 0 THEN d."BasePrice" ELSE NULL END) as min_price,
+          CASE
+            WHEN SUM(ABS(COALESCE(d."QuantityBU", 0))) > 1000 THEN 'Fast'
+            WHEN SUM(ABS(COALESCE(d."QuantityBU", 0))) > 100 THEN 'Medium'
+            WHEN SUM(ABS(COALESCE(d."QuantityBU", 0))) > 0 THEN 'Slow'
+            ELSE 'No Sales'
+          END as movement_status,
+          BOOL_OR(COALESCE(i."IsActive", false)) as is_active,
+          false as is_delist,
+          COALESCE(MAX(h."CurrencyCode"), 'AED') as currency_code
+        FROM "tblTrxDetail" d
+        INNER JOIN "tblTrxHeader" h ON d."TrxCode" = h."TrxCode"
+        LEFT JOIN "tblItem" i ON d."ItemCode" = i."Code"
+        ${whereClause}
+        GROUP BY d."ItemCode"
+      )
+      SELECT * FROM product_aggregates
+      ORDER BY ${orderByColumn} ${sortOrder}
       LIMIT $${paramIndex} OFFSET $${paramIndex + 1}
     `
+
+    params.push(limit)
+    params.push(offset)
 
     const productResult = await query(productDetailsQuery, params)
 
     // Get total count for pagination
     const countQuery = `
-      SELECT COUNT(DISTINCT product_code) as total_count
-      FROM flat_sales_transactions
+      SELECT COUNT(DISTINCT d."ItemCode") as total_count
+      FROM "tblTrxDetail" d
+      INNER JOIN "tblTrxHeader" h ON d."TrxCode" = h."TrxCode"
+      LEFT JOIN "tblItem" i ON d."ItemCode" = i."Code"
       ${whereClause}
     `
 
-    const countResult = await query(countQuery, params.slice(0, -2)) // Remove limit and offset params
+    const countResult = await query(countQuery, params.slice(0, paramIndex - 1))
     const totalCount = parseInt(countResult.rows[0].total_count || '0')
 
     // Helper function to clean values
     const cleanValue = (value: any, defaultValue: string = '-'): string => {
       if (!value) return defaultValue
       const normalized = String(value).trim().toLowerCase()
-      if (normalized === '' || normalized === 'unknown' || normalized === 'n/a' || normalized === 'null' || normalized === 'na' || normalized === 'farmley') {
+      if (normalized === '' || normalized === 'unknown' || normalized === 'n/a' || normalized === 'null' || normalized === 'na') {
         return defaultValue
       }
       return String(value).trim()
@@ -174,6 +206,8 @@ const getCachedProductDetails = unstable_cache(
     const getImageUrl = (imagePath: string | null): string => {
       if (!imagePath) return ''
       const path = String(imagePath).trim()
+      if (!path) return ''
+
       const base = getAssetBaseUrl().replace(/\/$/, '') + '/'
       // Convert relative paths to NFPC asset base
       if (path.startsWith('../')) {
@@ -192,77 +226,44 @@ const getCachedProductDetails = unstable_cache(
     const products = productResult.rows.map(product => ({
       productCode: product.product_code || '-',
       productName: cleanValue(product.product_name, 'Unnamed Product'),
-      category: cleanValue(product.category, 'Uncategorized'), // This is product_group
+      category: cleanValue(product.category, 'Uncategorized'),
       subcategory: cleanValue(product.subcategory, '-'),
-      productGroup: cleanValue(product.category, '-'), // Same as category
-      brand: cleanValue(product.brand, 'No Brand'), // This is also product_group/brand
+      productGroup: cleanValue(product.category, '-'),
+      brand: cleanValue(product.brand, 'No Brand'),
       baseUom: cleanValue(product.base_uom, 'Unit'),
       imageUrl: getImageUrl(product.image_path),
-      maxPrice: parseFloat(product.maximum_price || '0'),
-      minPrice: parseFloat(product.minimum_price || '0'),
+      maxPrice: parseFloat(product.max_price || '0'),
+      minPrice: parseFloat(product.min_price || '0'),
       totalSales: parseFloat(product.total_sales || '0'),
       totalQuantity: parseFloat(product.total_quantity || '0'),
       totalOrders: parseInt(product.total_orders || '0'),
       avgPrice: parseFloat(product.avg_price || '0'),
       movementStatus: product.movement_status,
-      isActive: true, // All products in sales transactions are considered active
-      isDelist: false,
-      currencyCode: 'AED'
+      isActive: product.is_active === true,
+      isDelist: product.is_delist === true,
+      currencyCode: product.currency_code || 'AED'
     }))
 
-    return {
-      products,
-      pagination: {
-        totalCount,
-        page,
-        limit,
-        totalPages: Math.ceil(totalCount / limit)
-      }
-    }
-  },
-  ['product-details'],  
-  {
-    revalidate: 300, // Cache for 5 minutes
-    tags: ['product-details']
-  }
-)
-
-export async function GET(request: NextRequest) {
-  try {
-    const { searchParams } = new URL(request.url)
-    const dateRange = searchParams.get('range') || 'thisMonth'
-    const page = parseInt(searchParams.get('page') || '1')
-    const limit = parseInt(searchParams.get('limit') || '25')
-    const sortBy = searchParams.get('sortBy') || 'total_sales'
-    const sortOrder = (searchParams.get('sortOrder')?.toUpperCase() === 'ASC' ? 'ASC' : 'DESC') as 'ASC' | 'DESC'
-    const productCode = searchParams.get('productCode')
-    const category = searchParams.get('category')
-    const brand = searchParams.get('brand')
-    const subcategory = searchParams.get('subcategory')
-    const status = searchParams.get('status')
-    const loginUserCode = searchParams.get('loginUserCode')
-    
-    // Get hierarchy-based allowed users
-    let allowedUserCodes: string[] = []
-    if (loginUserCode && !isAdmin(loginUserCode)) {
-      allowedUserCodes = await getChildUsers(loginUserCode)
-    }
-
-    const filters = {
-      productCode,
-      category,
-      brand,
-      subcategory,
-      status
-    }
-
-    const data = await getCachedProductDetails(dateRange, filters, page, limit, sortBy, sortOrder, allowedUserCodes)
+    const totalPages = Math.ceil(totalCount / limit)
 
     return NextResponse.json({
       success: true,
-      data,
-      timestamp: new Date().toISOString(),
-      source: 'postgresql-flat-sales-transactions'
+      data: {
+        products,
+        pagination: {
+          currentPage: page,
+          pageSize: limit,
+          totalCount,
+          totalPages,
+          hasNextPage: page < totalPages,
+          hasPrevPage: page > 1
+        }
+      },
+      timestamp: new Date().toISOString()
+    }, {
+      headers: {
+        'Cache-Control': 'public, s-maxage=300, stale-while-revalidate=600'
+      }
     })
 
   } catch (error) {

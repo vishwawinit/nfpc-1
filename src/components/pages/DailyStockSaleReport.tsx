@@ -151,7 +151,13 @@ export const DailyStockSaleReport: React.FC = () => {
 
     // Update filters with formatted dates (YYYY-MM-DD)
     if (startDate && endDate) {
-      const formatDate = (date: Date) => date.toISOString().split('T')[0]
+      // Format date without timezone conversion to avoid off-by-one errors
+      const formatDate = (date: Date) => {
+        const year = date.getFullYear()
+        const month = String(date.getMonth() + 1).padStart(2, '0')
+        const day = String(date.getDate()).padStart(2, '0')
+        return `${year}-${month}-${day}`
+      }
       setDateRange(formatDate(startDate), formatDate(endDate))
     }
   }
@@ -1227,9 +1233,6 @@ export const DailyStockSaleReport: React.FC = () => {
                             <th className="font-semibold text-gray-800 px-6 py-4 min-w-[120px] whitespace-nowrap text-left">Date</th>
                             <th className="font-semibold text-gray-800 px-6 py-4 min-w-[140px] whitespace-nowrap text-left">Field User Code</th>
                             <th className="font-semibold text-gray-800 px-6 py-4 min-w-[180px] whitespace-nowrap text-left">Field User Name</th>
-                            <th className="font-semibold text-gray-800 px-6 py-4 min-w-[150px] whitespace-nowrap text-left">Field User Role</th>
-                            <th className="font-semibold text-gray-800 px-6 py-4 min-w-[120px] whitespace-nowrap text-left">TL Code</th>
-                            <th className="font-semibold text-gray-800 px-6 py-4 min-w-[180px] whitespace-nowrap text-left">TL Name</th>
                             <th className="font-semibold text-gray-800 px-6 py-4 min-w-[120px] whitespace-nowrap text-left">Region</th>
                             <th className="font-semibold text-gray-800 px-6 py-4 min-w-[120px] whitespace-nowrap text-left">City</th>
                             <th className="font-semibold text-gray-800 px-6 py-4 min-w-[120px] whitespace-nowrap text-left">Store Code</th>
@@ -1244,7 +1247,7 @@ export const DailyStockSaleReport: React.FC = () => {
                         <tbody>
                           {paginatedTransactions.length === 0 ? (
                             <tr>
-                              <td colSpan={16} className="text-center py-12 text-gray-500">
+                              <td colSpan={13} className="text-center py-12 text-gray-500">
                                 <div className="flex flex-col items-center gap-2">
                                   <Package className="h-12 w-12 text-gray-300" />
                                   <div className="text-lg font-medium">
@@ -1292,11 +1295,8 @@ export const DailyStockSaleReport: React.FC = () => {
                                   <td className="text-sm px-6 py-4 whitespace-nowrap">{formatDate(trx.trxDateOnly)}</td>
                                   <td className="text-sm px-6 py-4 whitespace-nowrap">{trx.fieldUserCode || '-'}</td>
                                   <td className="text-sm px-6 py-4">{trx.fieldUserName || '-'}</td>
-                                  <td className="text-sm px-6 py-4"><Badge variant="outline" className="text-sm whitespace-nowrap">{trx.fieldUserRole || 'Field User'}</Badge></td>
-                                  <td className="text-sm px-6 py-4 whitespace-nowrap">{trx.tlCode || '-'}</td>
-                                  <td className="text-sm px-6 py-4">{trx.tlName || '-'}</td>
                                   <td className="text-sm px-6 py-4 whitespace-nowrap">{trx.regionCode || '-'}</td>
-                                  <td className="text-sm px-6 py-4 whitespace-nowrap">{trx.cityCode ? trx.cityCode.split('_').slice(1).join('_') || trx.cityCode : '-'}</td>
+                                  <td className="text-sm px-6 py-4 whitespace-nowrap">{trx.cityName || trx.cityCode || '-'}</td>
                                   <td className="text-sm px-6 py-4 whitespace-nowrap">{trx.storeCode || '-'}</td>
                                   <td className="text-sm px-6 py-4" title={trx.storeName}>{trx.storeName || '-'}</td>
                                   <td className="text-sm px-6 py-4 whitespace-nowrap">{trx.productCode || '-'}</td>

@@ -2,21 +2,11 @@
 
 import { useState, Suspense, useEffect } from 'react'
 import { DynamicWorkingDashboard } from '../components/pages/DynamicWorkingDashboard'
-import { UserAttendanceReport } from '../components/pages/UserAttendanceReport'
-import { UserWiseJourneyAttendance } from '../components/pages/UserWiseJourneyAttendance'
 import { DailyStockSaleReport } from '../components/pages/DailyStockSaleReport'
 import { StoreUserVisitReport } from '../components/pages/StoreUserVisitReport'
 import { LowStockReport } from '../components/pages/LowStockReport'
 import { LMTDSecondaryReport } from '../components/pages/LMTDSecondaryReport'
-import { OGPReport } from '../components/pages/OGPReport'
-import { AgeingReport } from '../components/pages/AgeingReport'
-import { BroadcastReport } from '../components/pages/BroadcastReport'
-import { CompetitionReport } from '../components/pages/CompetitionReport'
 import { PlanogramReport } from '../components/pages/PlanogramReport'
-import { POStatusReport } from '../components/pages/POStatusReport'
-import { SamplingReport } from '../components/pages/SamplingReport'
-import { OSOIReport } from '../components/pages/OSOIReport'
-import { ROTAReport } from '../components/pages/ROTAReport'
 import { TargetReport } from '../components/pages/TargetReport'
 import { CustomersReportUpdated as CustomersReport } from '../components/pages/CustomersReportUpdated'
 import { ProductsReport } from '../components/pages/ProductsReport'
@@ -26,25 +16,17 @@ import {
   LayoutDashboard,
   Package,
   Users,
-  Radio,
-  Calendar,
-  Eye,
-  FileText,
-  ClipboardList,
   Grid,
-  UserCheck,
   MapPin,
   Target,
   TrendingUp,
   AlertTriangle,
-  Activity,
   ChevronLeft,
   ChevronRight,
   ChevronDown,
   X,
   Store,
   BarChart3,
-  ClipboardCheck,
   ShoppingCart
 } from 'lucide-react'
 
@@ -52,19 +34,10 @@ type PageType =
   | 'dashboard'
   | 'dailyStockSale'
   | 'storeUserVisit'
-  | 'broadcastInitiative'
-  | 'ageingReport'
-  | 'competitionObservation'
-  | 'osoiReport'
   | 'planogramReport'
-  | 'poStatusReport'
-  | 'userJourneyAttendance'
-  | 'samplingReport'
   | 'targetAchievement'
-  | 'ogpReport'
   | 'lmtdSecondary'
   | 'lowStockCallout'
-  | 'rotaActivity'
   | 'customersReport'
   | 'productsReport'
   | 'ordersReport'
@@ -130,7 +103,6 @@ function HomePageContent() {
         { id: 'dailyStockSale' as PageType, label: 'Daily Sales Report', icon: TrendingUp },
         { id: 'customersReport' as PageType, label: 'Customers Report', icon: Users },
         { id: 'targetAchievement' as PageType, label: 'Target Vs Achievement', icon: Target },
-        { id: 'ogpReport' as PageType, label: 'Endorsement Report', icon: BarChart3 },
         { id: 'lmtdSecondary' as PageType, label: 'LMTD Secondary Sales Vs MTD', icon: BarChart3 },
       ]
     },
@@ -140,8 +112,6 @@ function HomePageContent() {
       icon: Users,
       items: [
         { id: 'storeUserVisit' as PageType, label: 'Store User Visit Report', icon: MapPin },
-        { id: 'userJourneyAttendance' as PageType, label: 'User Journey Attendance Reports', icon: UserCheck },
-        { id: 'rotaActivity' as PageType, label: 'ROTA Activity', icon: Activity },
       ]
     },
     {
@@ -155,31 +125,11 @@ function HomePageContent() {
       ]
     },
     {
-      id: 'quality',
-      label: 'Quality & Feedback',
-      icon: ClipboardCheck,
-      items: [
-        { id: 'competitionObservation' as PageType, label: 'Competition Observation', icon: Eye },
-        { id: 'samplingReport' as PageType, label: 'Sampling Report', icon: FileText },
-      ]
-    },
-    {
       id: 'store',
       label: 'Store Management',
       icon: Store,
       items: [
         { id: 'planogramReport' as PageType, label: 'Planogram Report', icon: Grid },
-        { id: 'osoiReport' as PageType, label: 'OSOI Report', icon: FileText },
-        { id: 'broadcastInitiative' as PageType, label: 'Broadcast Initiative', icon: Radio },
-      ]
-    },
-    {
-      id: 'analytics',
-      label: 'Reports & Analytics',
-      icon: BarChart3,
-      items: [
-        { id: 'ageingReport' as PageType, label: 'Ageing Report New', icon: Calendar },
-        { id: 'poStatusReport' as PageType, label: 'PO Status Report', icon: ClipboardList },
       ]
     },
   ]
@@ -434,19 +384,10 @@ function HomePageContent() {
           {currentPage === 'dashboard' && <DynamicWorkingDashboard />}
           {currentPage === 'dailyStockSale' && <DailyStockSaleReport />}
           {currentPage === 'storeUserVisit' && <StoreUserVisitReport />}
-          {currentPage === 'broadcastInitiative' && <BroadcastReport />}
-          {currentPage === 'ageingReport' && <AgeingReport />}
-          {currentPage === 'competitionObservation' && <CompetitionReport />}
-          {currentPage === 'osoiReport' && <OSOIReport />}
           {currentPage === 'planogramReport' && <PlanogramReport />}
-          {currentPage === 'poStatusReport' && <POStatusReport />}
-          {currentPage === 'userJourneyAttendance' && <UserWiseJourneyAttendance />}
-          {currentPage === 'samplingReport' && <SamplingReport />}
           {currentPage === 'targetAchievement' && <TargetReport />}
-          {currentPage === 'ogpReport' && <OGPReport />}
           {currentPage === 'lmtdSecondary' && <LMTDSecondaryReport />}
           {currentPage === 'lowStockCallout' && <LowStockReport />}
-          {currentPage === 'rotaActivity' && <ROTAReport />}
           {currentPage === 'customersReport' && <CustomersReport />}
           {currentPage === 'productsReport' && <ProductsReport />}
           {currentPage === 'ordersReport' && <OrdersReport />}

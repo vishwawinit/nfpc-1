@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { query, db } from '@/lib/database'
-import { resolveTransactionsTable, getTransactionColumnExpressions } from '@/services/dailySalesService'
 
 // Force dynamic rendering for routes that use searchParams
 export const dynamic = 'force-dynamic'
@@ -8,264 +7,229 @@ export const dynamic = 'force-dynamic'
 // Enable ISR with 60 second revalidation
 export const revalidate = 60
 
+/**
+ * Target vs Achievement API - Using tblCommonTarget for targets, tblTrxHeader for achievements
+ * Targets: From tblCommonTarget table (manual entry)
+ * Achievements: Calculated from tblTrxHeader (actual sales)
+ */
 export async function GET(request: NextRequest) {
   try {
     const searchParams = request.nextUrl.searchParams
-    // Authentication removed - no user validation needed
-    
+
     await db.initialize()
-    
-    // Detect which targets table exists - with better error handling
-    let targetsTable: string | null = null
-    
-    // Try to directly query each potential table - simplest approach
-    const potentialTables = ['tblcommontarget', 'flat_targets']
-    
-    for (const tableName of potentialTables) {
-      try {
-        // Try a simple SELECT 1 query to see if table exists
-        await query(`SELECT 1 FROM ${tableName} LIMIT 1`)
-        targetsTable = tableName
-        console.log(`✅ Found targets table: ${tableName}`)
-        break
-      } catch (e: any) {
-        // Table doesn't exist or query failed - continue to next
-        if (e?.message?.includes('does not exist')) {
-          // Expected - table doesn't exist
-          continue
-        }
-        // Other error - log but continue
-        console.warn(`Could not access table ${tableName}:`, e?.message)
-      }
-    }
-    
-    // If still not found, search information_schema
-    if (!targetsTable) {
-      try {
-        const tablesCheck = await query(`
-          SELECT table_name 
-          FROM information_schema.tables 
-          WHERE table_schema = 'public' 
-          AND (table_name LIKE '%target%' OR table_name LIKE '%common%')
-          ORDER BY table_name
-        `)
-        if (tablesCheck.rows.length > 0) {
-          const foundTable = tablesCheck.rows[0].table_name
-          // Verify we can actually query it
-          try {
-            await query(`SELECT 1 FROM ${foundTable} LIMIT 1`)
-            targetsTable = foundTable
-            console.log(`⚠️ Using detected targets table: ${targetsTable}`)
-          } catch (e) {
-            console.warn(`Detected table ${foundTable} but cannot query it:`, e)
+
+    // Check if tblCommonTarget table exists
+    let hasTargetTable = false
+    try {
+      await query(`SELECT 1 FROM "tblCommonTarget" LIMIT 1`)
+      hasTargetTable = true
+      console.log('✅ tblCommonTarget table found')
+    } catch (e: any) {
+      if (e?.message?.includes('does not exist')) {
+        console.warn('⚠️ tblCommonTarget table does not exist. Please create it using create_targets_table.sql')
+        return NextResponse.json({
+          success: false,
+          error: 'tblCommonTarget table not found',
+          message: 'Please create the tblCommonTarget table using the create_targets_table.sql script.',
+          data: [],
+          summary: {
+            totalTargets: 0,
+            totalTargetAmount: 0,
+            totalAchievement: 0,
+            overallAchievementPercentage: 0,
+            targetsAchieved: 0,
+            targetsNotAchieved: 0
           }
-        }
-      } catch (e) {
-        console.warn('Could not search for target tables:', e)
+        }, { status: 404 })
       }
+      throw e
     }
-    
-    // If no targets table found, return empty data
-    if (!targetsTable) {
-      console.warn('⚠️ No targets table found. Returning empty data.')
-      return NextResponse.json({
-        success: true,
-        data: [],
-        summary: {
-          totalTargets: 0,
-          totalTargetAmount: 0,
-          totalAchievement: 0,
-          overallAchievementPercentage: 0,
-          targetsAchieved: 0,
-          targetsNotAchieved: 0
-        },
-        count: 0,
-        timestamp: new Date().toISOString(),
-        source: 'postgresql - no targets table found',
-        message: 'No targets table found in database. Please check if tblcommontarget or flat_targets table exists.'
-      })
-    }
-    
-    // Get table info and column expressions for transactions
-    const tableInfo = await resolveTransactionsTable()
-    const transactionsTable = tableInfo.name
-    const col = getTransactionColumnExpressions(tableInfo.columns)
-    
-    const conditions: string[] = []
+
+    // Get filter parameters
+    const year = searchParams.get('year') ? parseInt(searchParams.get('year')!) : new Date().getFullYear()
+    const month = searchParams.get('month') ? parseInt(searchParams.get('month')!) : new Date().getMonth() + 1
+    const userCode = searchParams.get('userCode')
+    const customerCode = searchParams.get('customerCode')
+    const teamLeaderCode = searchParams.get('teamLeaderCode')
+
+    console.log('📊 Targets API - Params:', { year, month, userCode, customerCode, teamLeaderCode })
+
+    // Build WHERE conditions for targets (using actual column names from database)
+    const targetConditions: string[] = []
     const params: any[] = []
     let paramIndex = 1
-    
-    // Authentication removed - no hierarchy filtering
 
-    // Use tblcommontarget table - map filters to actual column names
-    if (searchParams.has('year')) {
-      conditions.push(`t.year = $${paramIndex}`)
-      params.push(parseInt(searchParams.get('year')!))
+    // Required filters for targets
+    targetConditions.push(`t."Year" = $${paramIndex}`)
+    params.push(year)
+    paramIndex++
+
+    targetConditions.push(`t."Month" = $${paramIndex}`)
+    params.push(month)
+    paramIndex++
+
+    targetConditions.push(`t."IsActive" = TRUE`)
+
+    // Optional filters
+    if (userCode) {
+      targetConditions.push(`t."SalesmanCode" = $${paramIndex}`)
+      params.push(userCode)
       paramIndex++
     }
 
-    if (searchParams.has('month')) {
-      conditions.push(`t.month = $${paramIndex}`)
-      params.push(parseInt(searchParams.get('month')!))
+    if (customerCode) {
+      targetConditions.push(`t."CustomerKey" = $${paramIndex}`)
+      params.push(customerCode)
       paramIndex++
     }
 
-    if (searchParams.has('userCode')) {
-      // Use salesmancode from tblcommontarget
-      conditions.push(`t.salesmancode = $${paramIndex}`)
-      params.push(searchParams.get('userCode'))
-      paramIndex++
-    }
+    // Note: TeamLeaderCode doesn't exist in this table schema
+    // if (teamLeaderCode) {
+    //   targetConditions.push(`t."TeamLeaderCode" = $${paramIndex}`)
+    //   params.push(teamLeaderCode)
+    //   paramIndex++
+    // }
 
-    // Note: tblcommontarget doesn't have customer_code or tl_code columns
-    // These filters will be ignored if the table doesn't support them
-    if (searchParams.has('customerCode')) {
-      // tblcommontarget doesn't have customer_code - skip this filter
-      console.warn('⚠️ customerCode filter not supported by tblcommontarget table')
-    }
+    const targetWhereClause = `WHERE ${targetConditions.join(' AND ')}`
 
-    if (searchParams.has('teamLeaderCode')) {
-      // tblcommontarget doesn't have tl_code - skip this filter
-      console.warn('⚠️ teamLeaderCode filter not supported by tblcommontarget table')
-    }
-
-    // Always include isactive filter
-    conditions.push(`t.isactive = true`)
-    const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : ''
-    // No limit - get ALL data for comprehensive reporting
-    const limit = parseInt(searchParams.get('limit') || '100000')
-
-    // Query to get targets with achievement data from sales transactions
-    // Use dynamic table and column expressions
-    let dateExpr: string
-    if (col.trxDateOnly.startsWith('DATE(')) {
-      // Handle DATE() function - replace table alias
-      dateExpr = col.trxDateOnly.replace(/t\.transaction_date/g, 's.transaction_date')
-        .replace(/t\.trx_date/g, 's.trx_date')
-    } else {
-      // Handle column name - add table alias
-      const colName = col.trxDateOnly.replace('t.', '')
-      dateExpr = `s.${colName}`
-    }
-    
-    // Build JOIN conditions properly
-    const userCodeJoin = col.fieldUserCode === 'NULL' 
-      ? 's.user_code' 
-      : col.fieldUserCode.replace(/t\./g, 's.')
-    
-    const storeCodeJoin = col.storeCode.replace(/t\./g, 's.')
-    
-    // Build net amount expression for sales table
-    const netAmountExpr = col.netAmountValue.replace(/t\./g, 's.')
-    
-    // Query using tblcommontarget table with proper column mapping
+    // Query to get targets with achievements
+    // Targets from tblCommonTarget, Achievements calculated from tblTrxHeader
+    // NOTE: Using actual database column names (Year, Month, SalesmanCode, etc.)
     const result = await query(`
+      WITH targets AS (
+        SELECT
+          t."Year" as "TargetYear",
+          t."Month" as "TargetMonth",
+          t."TimeFrame" as "TargetPeriod",
+          t."SalesmanCode" as "UserCode",
+          NULL as "TeamLeaderCode",
+          t."CustomerKey" as "CustomerCode",
+          t."SalesorgCode" as "SalesOrgCode",
+          t."Amount" as "TargetAmount",
+          COALESCE(t."Quantity", 0) as "TargetQuantity",
+          0 as "TargetVolume",
+          t."Currency" as "CurrencyCode",
+          t."UOM",
+          t."ItemKey" as "ProductCategory",
+          NULL as "ProductBrand",
+          NULL as "ChainCode",
+          NULL as "TargetType",
+          NULL as "TargetLevel",
+          t."TimeFrame" as "TargetFrequency",
+          t."CustomerLevel",
+          CASE WHEN t."IsActive" = TRUE THEN 'Active' ELSE 'Inactive' END as "TargetStatus",
+          t."IsActive",
+          FALSE as "IsApproved",
+          NULL as "Remarks",
+          t."CreatedBy",
+          t."CreatedOn",
+          t."ModifiedBy",
+          t."ModifiedOn"
+        FROM "tblCommonTarget" t
+        ${targetWhereClause}
+      ),
+      achievements AS (
+        SELECT
+          trx."UserCode",
+          trx."ClientCode" as "CustomerCode",
+          SUM(trx."TotalAmount") as achievement_amount,
+          COUNT(DISTINCT trx."TrxCode") as order_count
+        FROM "tblTrxHeader" trx
+        WHERE EXTRACT(YEAR FROM trx."TrxDate") = $1
+          AND EXTRACT(MONTH FROM trx."TrxDate") = $2
+          AND trx."TrxType" = 1
+          ${userCode ? `AND trx."UserCode" = $3` : ''}
+          ${customerCode ? `AND trx."ClientCode" = $${userCode ? 4 : 3}` : ''}
+        GROUP BY trx."UserCode", trx."ClientCode"
+      )
       SELECT
-        t.year as "targetYear",
-        t.month as "targetMonth",
-        t.targetperiod as "targetPeriod",
-        t.salesmancode as "userCode",
-        COALESCE(u.username, t.salesmancode) as "userName",
-        NULL as "teamLeaderCode",
-        NULL as "teamLeaderName",
-        NULL as "userRole",
-        NULL as "customerCode",
-        NULL as "customerName",
-        NULL as "customerLevel",
-        NULL as "chainCode",
-        t.amount as "targetAmount",
-        NULL as "targetQuantity",
-        NULL as "targetVolume",
-        'INR' as "currencyCode",
-        NULL as "uom",
-        NULL as "salesOrgCode",
-        NULL as "salesOrgName",
-        NULL as "productCategory",
-        NULL as "productBrand",
-        t.targettype as "targetType",
-        NULL as "targetLevel",
-        t.timeframe as "targetFrequency",
-        CASE WHEN t.isactive THEN 'Active' ELSE 'Inactive' END as "targetStatus",
-        t.isactive as "isActive",
-        NULL as "isApproved",
-        NULL as "remarks",
-        NULL as "createdBy",
-        t.startdate as "createdOn",
-        NULL as "modifiedBy",
-        t.enddate as "modifiedOn",
-        -- Calculate achievement from transactions table
-        COALESCE(
-          SUM(CASE 
-            WHEN EXTRACT(YEAR FROM ${dateExpr}) = t.year 
-              AND EXTRACT(MONTH FROM ${dateExpr}) = t.month
-            THEN ${netAmountExpr} 
-            ELSE 0 
-          END), 
-          0
-        ) as "achievementAmount",
-        -- Calculate achievement percentage
-        CASE 
-          WHEN t.amount = 0 OR t.amount IS NULL THEN 0
-          ELSE ROUND(
-            (COALESCE(
-              SUM(CASE 
-                WHEN EXTRACT(YEAR FROM ${dateExpr}) = t.year 
-                  AND EXTRACT(MONTH FROM ${dateExpr}) = t.month
-                THEN ${netAmountExpr} 
-                ELSE 0 
-              END), 
-              0
-            ) / NULLIF(t.amount, 0)) * 100, 
-            2
-          )
-        END as "achievementPercentage"
-      FROM ${targetsTable} t
-      LEFT JOIN tbluser u ON t.salesmancode = u.empcode
-      LEFT JOIN ${transactionsTable} s
-        ON t.salesmancode = ${userCodeJoin}
-      ${whereClause}
-      GROUP BY 
-        t.year, t.month, t.targetperiod, t.salesmancode, u.username,
-        t.amount, t.targettype, t.timeframe, t.isactive, t.startdate, t.enddate
-      ORDER BY t.year DESC, t.month DESC, u.username ASC
-      LIMIT $${paramIndex}
-    `, [...params, limit])
+        t."TargetYear",
+        t."TargetMonth",
+        t."TargetPeriod",
+        t."UserCode",
+        COALESCE(u."Description", t."UserCode") as "UserName",
+        t."TeamLeaderCode",
+        COALESCE(tl."Description", t."TeamLeaderCode") as "TeamLeaderName",
+        t."CustomerCode",
+        COALESCE(c."Description", t."CustomerCode") as "CustomerName",
+        t."CustomerLevel",
+        t."ChainCode",
+        t."TargetAmount",
+        t."TargetQuantity",
+        t."TargetVolume",
+        COALESCE(a.achievement_amount, 0) as "AchievementAmount",
+        COALESCE(a.order_count, 0) as "OrderCount",
+        t."CurrencyCode",
+        t."UOM",
+        t."SalesOrgCode",
+        NULL as "SalesOrgName",
+        t."ProductCategory",
+        t."ProductBrand",
+        t."TargetType",
+        t."TargetLevel",
+        t."TargetFrequency",
+        t."TargetStatus",
+        t."IsActive",
+        t."IsApproved",
+        t."Remarks",
+        t."CreatedBy",
+        t."CreatedOn",
+        t."ModifiedBy",
+        t."ModifiedOn",
+        c."RegionCode",
+        c."CityCode",
+        CASE
+          WHEN t."TargetAmount" = 0 OR t."TargetAmount" IS NULL THEN
+            CASE WHEN COALESCE(a.achievement_amount, 0) > 0 THEN 100.0 ELSE 0.0 END
+          ELSE
+            ROUND(CAST((COALESCE(a.achievement_amount, 0) / NULLIF(t."TargetAmount", 0)) * 100 AS NUMERIC), 2)
+        END as "AchievementPercentage"
+      FROM targets t
+      LEFT JOIN achievements a
+        ON t."UserCode" = a."UserCode"
+        AND (t."CustomerCode" IS NULL OR t."CustomerCode" = a."CustomerCode")
+      LEFT JOIN "tblUser" u ON t."UserCode" = u."Code"
+      LEFT JOIN "tblUser" tl ON t."TeamLeaderCode" = tl."Code"
+      LEFT JOIN "tblCustomer" c ON t."CustomerCode" = c."Code"
+      ORDER BY "AchievementAmount" DESC
+      LIMIT 5000
+    `, params)
 
     const targets = result.rows.map(row => ({
-      targetYear: row.targetYear,
-      targetMonth: row.targetMonth,
-      targetPeriod: row.targetPeriod,
-      userCode: row.userCode,
-      userName: row.userName,
-      teamLeaderCode: row.teamLeaderCode,
-      teamLeaderName: row.teamLeaderName,
-      userRole: row.userRole,
-      customerCode: row.customerCode,
-      customerName: row.customerName,
-      customerLevel: row.customerLevel,
-      chainCode: row.chainCode,
-      targetAmount: parseFloat(row.targetAmount || '0'),
-      targetQuantity: parseFloat(row.targetQuantity || '0'),
-      targetVolume: parseFloat(row.targetVolume || '0'),
-      achievementAmount: parseFloat(row.achievementAmount || '0'),
-      achievementPercentage: parseFloat(row.achievementPercentage || '0'),
-      currencyCode: row.currencyCode,
-      uom: row.uom,
-      salesOrgCode: row.salesOrgCode,
-      salesOrgName: row.salesOrgName,
-      productCategory: row.productCategory,
-      productBrand: row.productBrand,
-      targetType: row.targetType,
-      targetLevel: row.targetLevel,
-      targetFrequency: row.targetFrequency,
-      targetStatus: row.targetStatus,
-      isActive: row.isActive,
-      isApproved: row.isApproved,
-      remarks: row.remarks,
-      createdBy: row.createdBy,
-      createdOn: row.createdOn,
-      modifiedBy: row.modifiedBy,
-      modifiedOn: row.modifiedOn
+      targetYear: row.TargetYear,
+      targetMonth: row.TargetMonth,
+      targetPeriod: row.TargetPeriod || `${row.TargetYear}-${String(row.TargetMonth).padStart(2, '0')}`,
+      userCode: row.UserCode || '',
+      userName: row.UserName || 'Unknown User',
+      teamLeaderCode: row.TeamLeaderCode || null,
+      teamLeaderName: row.TeamLeaderName || null,
+      userRole: null,
+      customerCode: row.CustomerCode || null,
+      customerName: row.CustomerName || null,
+      customerLevel: row.CustomerLevel || null,
+      chainCode: row.ChainCode || null,
+      targetAmount: parseFloat(row.TargetAmount || '0'),
+      targetQuantity: parseFloat(row.TargetQuantity || '0'),
+      targetVolume: parseFloat(row.TargetVolume || '0'),
+      achievementAmount: parseFloat(row.AchievementAmount || '0'),
+      achievementPercentage: parseFloat(row.AchievementPercentage || '0'),
+      currencyCode: row.CurrencyCode || 'AED',
+      uom: row.UOM || null,
+      salesOrgCode: row.SalesOrgCode || null,
+      salesOrgName: row.SalesOrgName || null,
+      productCategory: row.ProductCategory || null,
+      productBrand: row.ProductBrand || null,
+      targetType: row.TargetType || 'Sales',
+      targetLevel: row.TargetLevel || 'User-Customer',
+      targetFrequency: row.TargetFrequency || 'Monthly',
+      targetStatus: row.TargetStatus || 'Active',
+      isActive: row.IsActive !== false,
+      isApproved: row.IsApproved || false,
+      remarks: row.Remarks || null,
+      createdBy: row.CreatedBy || null,
+      createdOn: row.CreatedOn || null,
+      modifiedBy: row.ModifiedBy || null,
+      modifiedOn: row.ModifiedOn || null
     }))
 
     // Calculate summary statistics
@@ -284,45 +248,43 @@ export async function GET(request: NextRequest) {
       )
     }
 
+    console.log('✅ Targets API Response:', {
+      count: targets.length,
+      totalTarget: summary.totalTargetAmount,
+      totalAchievement: summary.totalAchievement,
+      achievementPct: summary.overallAchievementPercentage
+    })
+
     return NextResponse.json({
       success: true,
       data: targets,
       summary,
       count: targets.length,
       timestamp: new Date().toISOString(),
-      source: 'postgresql-flat-tables (flat_targets + flat_sales_transactions)'
+      source: 'tblCommonTarget (targets) + tblTrxHeader (achievements)',
+      note: `Targets from tblCommonTarget, Achievements from tblTrxHeader for ${year}-${String(month).padStart(2, '0')}`
     }, {
       headers: {
         'Cache-Control': 'public, s-maxage=60, stale-while-revalidate=120'
       }
     })
   } catch (error) {
-    console.error('Targets API error:', error)
-    // If error is about missing table, return empty data instead of 500
+    console.error('❌ Targets API error:', error)
     const errorMessage = error instanceof Error ? error.message : 'Unknown error'
-    if (errorMessage.includes('does not exist') || errorMessage.includes('No targets table')) {
-      console.warn('⚠️ Targets table issue detected. Returning empty data.')
-      return NextResponse.json({
-        success: true,
-        data: [],
-        summary: {
-          totalTargets: 0,
-          totalTargetAmount: 0,
-          totalAchievement: 0,
-          overallAchievementPercentage: 0,
-          targetsAchieved: 0,
-          targetsNotAchieved: 0
-        },
-        count: 0,
-        timestamp: new Date().toISOString(),
-        source: 'postgresql - no targets table found',
-        message: 'No targets table found in database. Please check if tblcommontarget or flat_targets table exists.'
-      })
-    }
+
     return NextResponse.json({
       success: false,
-      error: 'Failed to fetch targets',
-      message: errorMessage
+      error: 'Failed to fetch target vs achievement data',
+      message: errorMessage,
+      data: [],
+      summary: {
+        totalTargets: 0,
+        totalTargetAmount: 0,
+        totalAchievement: 0,
+        overallAchievementPercentage: 0,
+        targetsAchieved: 0,
+        targetsNotAchieved: 0
+      }
     }, { status: 500 })
   }
 }

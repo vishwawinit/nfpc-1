@@ -1,290 +1,201 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { query } from '@/lib/database'
-import { unstable_cache } from 'next/cache'
-import { FILTERS_CACHE_DURATION, generateFilterCacheKey, getCacheControlHeader } from '@/lib/cache-utils'
+import { query, db } from '@/lib/database'
 
 // Force dynamic rendering for routes that use searchParams
 export const dynamic = 'force-dynamic'
 
-// Internal function to fetch filters (will be cached)
-async function fetchTargetsFiltersInternal(
-  targetsTable: string,
-  year: string | null,
-  month: string | null,
-  userCode: string | null
-) {
-  const { query } = await import('@/lib/database')
-    
-    const conditions: string[] = []
-    const params: any[] = []
-    let paramIndex = 1
-    
-  if (year) {
-    conditions.push(`t.year = $${paramIndex}`)
-    params.push(parseInt(year))
-      paramIndex++
-    }
-
-  if (month) {
-    conditions.push(`t.month = $${paramIndex}`)
-    params.push(parseInt(month))
-      paramIndex++
-    }
-
-  if (userCode) {
-    conditions.push(`t.salesmancode = $${paramIndex}`)
-    params.push(userCode)
-      paramIndex++
-    }
-
-  const filterConditions = [...conditions]
-  const filterParams = [...params]
-  const filterWhereClause = filterConditions.length > 0 
-    ? `WHERE ${filterConditions.join(' AND ')}` 
-    : ''
-
-    const [
-      usersResult, 
-      teamLeadersResult,
-      customersResult, 
-      yearsResult, 
-      monthsResult, 
-      chainsResult, 
-      brandsResult, 
-      categoriesResult,
-      targetTypesResult,
-      targetStatusResult,
-      targetLevelResult,
-      salesOrgResult,
-      userRolesResult
-    ] = await Promise.all([
-    query(`
-      SELECT DISTINCT 
-        t.salesmancode::text as "value", 
-        COALESCE(u.username, t.salesmancode, 'Unknown') || ' (' || t.salesmancode || ')' as "label"
-      FROM ${targetsTable} t
-      LEFT JOIN tbluser u ON t.salesmancode = u.empcode
-      ${filterWhereClause ? `${filterWhereClause} AND` : 'WHERE'} t.salesmancode IS NOT NULL AND t.isactive = true
-      ORDER BY COALESCE(u.username, t.salesmancode)
-    `, filterParams).catch((e) => {
-      console.error('Error fetching users filter:', e)
-      return { rows: [] }
-    }),
-    Promise.resolve({ rows: [] }),
-    Promise.resolve({ rows: [] }),
-    query(`SELECT DISTINCT t.year::text as "value", t.year::text as "label" FROM ${targetsTable} t WHERE t.isactive = true ORDER BY t.year DESC`, []).catch((e) => {
-      console.error('Error fetching years filter:', e)
-      return { rows: [] }
-    }),
-    query(`SELECT DISTINCT t.month::text as "value", t.month::text as "label" FROM ${targetsTable} t WHERE t.isactive = true ORDER BY t.month`, []).catch((e) => {
-      console.error('Error fetching months filter:', e)
-      return { rows: [] }
-    }),
-    Promise.resolve({ rows: [] }),
-    Promise.resolve({ rows: [] }),
-    Promise.resolve({ rows: [] }),
-    query(`
-      SELECT DISTINCT 
-        t.targettype::text as "value", 
-        t.targettype::text as "label" 
-      FROM ${targetsTable} t 
-      ${filterWhereClause ? `${filterWhereClause} AND` : 'WHERE'} t.targettype IS NOT NULL AND t.isactive = true
-      ORDER BY t.targettype
-    `, filterParams).catch((e) => {
-      console.error('Error fetching target types filter:', e)
-      return { rows: [] }
-    }),
-    query(`
-      SELECT DISTINCT 
-        CASE WHEN t.isactive THEN 'Active' ELSE 'Inactive' END::text as "value", 
-        CASE WHEN t.isactive THEN 'Active' ELSE 'Inactive' END::text as "label" 
-      FROM ${targetsTable} t 
-      ${filterWhereClause ? `${filterWhereClause} AND` : 'WHERE'} t.isactive IS NOT NULL
-      ORDER BY "value"
-    `, filterParams).catch((e) => {
-      console.error('Error fetching target status filter:', e)
-      return { rows: [] }
-    }),
-    Promise.resolve({ rows: [] }),
-    Promise.resolve({ rows: [] }),
-    Promise.resolve({ rows: [] })
-  ])
-
-  return {
-        users: usersResult.rows,
-        teamLeaders: teamLeadersResult.rows,
-        customers: customersResult.rows,
-        years: yearsResult.rows,
-        months: monthsResult.rows,
-        chains: chainsResult.rows,
-        brands: brandsResult.rows,
-        categories: categoriesResult.rows,
-        targetTypes: targetTypesResult.rows,
-        targetStatus: targetStatusResult.rows,
-        targetLevels: targetLevelResult.rows,
-        salesOrgs: salesOrgResult.rows,
-        userRoles: userRolesResult.rows
-  }
-}
-
+/**
+ * Target Filters API - Using tblCommonTarget for filter options
+ * Returns filter options for the Target vs Achievement Report
+ */
 export async function GET(request: NextRequest) {
   try {
     const searchParams = request.nextUrl.searchParams
-    // Authentication removed - no user validation needed
-    
-    const { query, db } = await import('@/lib/database')
+
     await db.initialize()
-    
-    // Detect which targets table exists - with better error handling
-    let targetsTable: string | null = null
-    
-    // Try to directly query each potential table - simplest approach
-    const potentialTables = ['tblcommontarget', 'flat_targets']
-    
-    for (const tableName of potentialTables) {
-      try {
-        // Try a simple SELECT 1 query to see if table exists
-        await query(`SELECT 1 FROM ${tableName} LIMIT 1`)
-        targetsTable = tableName
-        console.log(`✅ Found targets table: ${tableName}`)
-        break
-      } catch (e: any) {
-        // Table doesn't exist or query failed - continue to next
-        if (e?.message?.includes('does not exist')) {
-          // Expected - table doesn't exist
-          continue
-        }
-        // Other error - log but continue
-        console.warn(`Could not access table ${tableName}:`, e?.message)
+
+    // Check if tblCommonTarget table exists
+    let hasTargetTable = false
+    try {
+      await query(`SELECT 1 FROM "tblCommonTarget" LIMIT 1`)
+      hasTargetTable = true
+      console.log('✅ tblCommonTarget table found for filters')
+    } catch (e: any) {
+      if (e?.message?.includes('does not exist')) {
+        console.warn('⚠️ tblCommonTarget table does not exist. Returning empty filters.')
+        return NextResponse.json({
+          success: true,
+          data: {
+            users: [],
+            teamLeaders: [],
+            customers: [],
+            years: [],
+            months: [],
+            chains: [],
+            brands: [],
+            categories: [],
+            targetTypes: [],
+            targetStatus: [],
+            targetLevels: [],
+            salesOrgs: [],
+            userRoles: []
+          },
+          timestamp: new Date().toISOString(),
+          message: 'tblCommonTarget table not found. Please create it using create_targets_table.sql'
+        })
       }
+      throw e
     }
-    
-    // If still not found, search information_schema
-    if (!targetsTable) {
-      try {
-        const tablesCheck = await query(`
-          SELECT table_name 
-          FROM information_schema.tables 
-          WHERE table_schema = 'public' 
-          AND (table_name LIKE '%target%' OR table_name LIKE '%common%')
-          ORDER BY table_name
-        `)
-        if (tablesCheck.rows.length > 0) {
-          const foundTable = tablesCheck.rows[0].table_name
-          // Verify we can actually query it
-          try {
-            await query(`SELECT 1 FROM ${foundTable} LIMIT 1`)
-            targetsTable = foundTable
-            console.log(`⚠️ Using detected targets table: ${targetsTable}`)
-          } catch (e) {
-            console.warn(`Detected table ${foundTable} but cannot query it:`, e)
-          }
-        }
-      } catch (e) {
-        console.warn('Could not search for target tables:', e)
-      }
-    }
-    
-    // If no targets table found, return empty filter options gracefully
-    if (!targetsTable) {
-      console.warn('⚠️ No targets table found. Returning empty filter options.')
-      return NextResponse.json({
-        success: true,
-        data: {
-          users: [],
-          teamLeaders: [],
-          customers: [],
-          years: [],
-          months: [],
-          chains: [],
-          brands: [],
-          categories: [],
-          targetTypes: [],
-          targetStatus: [],
-          targetLevels: [],
-          salesOrgs: [],
-          userRoles: []
-        },
-        timestamp: new Date().toISOString(),
-        message: 'No targets table found in database. Please check if tblcommontarget or flat_targets table exists.'
-      })
-    }
-    
-    // Get filter parameters
+
+    // Get filter parameters for cascading filters
     const year = searchParams.get('year')
     const month = searchParams.get('month')
-    const userCode = searchParams.get('userCode')
+    const teamLeaderCode = searchParams.get('teamLeaderCode')
 
-    // Warn about unsupported filters
-    if (searchParams.has('teamLeaderCode')) {
-      console.warn('⚠️ teamLeaderCode filter not supported by tblcommontarget table')
-    }
-    if (searchParams.has('chainCode')) {
-      console.warn('⚠️ chainCode filter not supported by tblcommontarget table')
-    }
-    if (searchParams.has('productBrand')) {
-      console.warn('⚠️ productBrand filter not supported by tblcommontarget table')
+    console.log('🔍 Targets Filters API - Params:', { year, month, teamLeaderCode })
+
+    // Build base conditions (using actual database column names)
+    const baseConditions: string[] = [`t."IsActive" = TRUE`]
+    const params: any[] = []
+    let paramIndex = 1
+
+    if (year) {
+      baseConditions.push(`t."Year" = $${paramIndex}`)
+      params.push(parseInt(year))
+      paramIndex++
     }
 
-    // Create cache key
-    const cacheKey = generateFilterCacheKey('targets', { year, month, userCode, table: targetsTable })
-    
-    // Fetch filters with caching (targets filters don't have date ranges, so always cache)
-    const cachedFetchFilters = unstable_cache(
-      async () => fetchTargetsFiltersInternal(targetsTable, year, month, userCode),
-      [cacheKey],
-      {
-        revalidate: FILTERS_CACHE_DURATION,
-        tags: ['targets-filters', `targets-filters-${targetsTable}`]
-      }
-    )
+    if (month) {
+      baseConditions.push(`t."Month" = $${paramIndex}`)
+      params.push(parseInt(month))
+      paramIndex++
+    }
 
-    const filterData = await cachedFetchFilters()
+    // Note: TeamLeaderCode doesn't exist in the actual table schema
+    // if (teamLeaderCode) {
+    //   baseConditions.push(`t."TeamLeaderCode" = $${paramIndex}`)
+    //   params.push(teamLeaderCode)
+    //   paramIndex++
+    // }
+
+    const whereClause = baseConditions.length > 0 ? `WHERE ${baseConditions.join(' AND ')}` : ''
+
+    // Fetch all filter options in parallel (using actual database column names)
+    const [usersResult, customersResult, yearsResult, monthsResult] = await Promise.all([
+      // Users (field salesmen) - using SalesmanCode
+      query(`
+        SELECT
+          t."SalesmanCode" as "value",
+          MAX(COALESCE(u."Description", t."SalesmanCode")) || ' (' || t."SalesmanCode" || ')' as "label"
+        FROM "tblCommonTarget" t
+        LEFT JOIN "tblUser" u ON t."SalesmanCode" = u."Code"
+        ${whereClause}
+        AND t."SalesmanCode" IS NOT NULL
+        GROUP BY t."SalesmanCode"
+        ORDER BY 2
+        LIMIT 500
+      `, params),
+
+      // Customers - using CustomerKey
+      query(`
+        SELECT
+          t."CustomerKey" as "value",
+          MAX(COALESCE(c."Description", t."CustomerKey")) || ' (' || t."CustomerKey" || ')' as "label"
+        FROM "tblCommonTarget" t
+        LEFT JOIN "tblCustomer" c ON t."CustomerKey" = c."Code"
+        ${whereClause}
+        AND t."CustomerKey" IS NOT NULL
+        GROUP BY t."CustomerKey"
+        ORDER BY 2
+        LIMIT 500
+      `, params),
+
+      // Years - using Year column
+      query(`
+        SELECT DISTINCT
+          t."Year"::text as "value",
+          t."Year"::text as "label"
+        FROM "tblCommonTarget" t
+        WHERE t."IsActive" = TRUE
+        ORDER BY t."Year"::text DESC
+      `, []),
+
+      // Months (static 1-12)
+      Promise.resolve({
+        rows: [
+          { value: '1', label: '1' }, { value: '2', label: '2' },
+          { value: '3', label: '3' }, { value: '4', label: '4' },
+          { value: '5', label: '5' }, { value: '6', label: '6' },
+          { value: '7', label: '7' }, { value: '8', label: '8' },
+          { value: '9', label: '9' }, { value: '10', label: '10' },
+          { value: '11', label: '11' }, { value: '12', label: '12' }
+        ]
+      })
+    ])
+
+    const filterData = {
+      users: usersResult.rows || [],
+      teamLeaders: [], // Not available in current schema
+      customers: customersResult.rows || [],
+      years: yearsResult.rows || [],
+      months: monthsResult.rows || [],
+      chains: [],
+      brands: [],
+      categories: [],
+      targetTypes: [], // Not available in current schema
+      targetStatus: [ // Derived from IsActive
+        { value: 'Active', label: 'Active' },
+        { value: 'Inactive', label: 'Inactive' }
+      ],
+      targetLevels: [
+        { value: 'User', label: 'User Level' },
+        { value: 'User-Customer', label: 'User-Customer Level' },
+        { value: 'Team', label: 'Team Level' }
+      ],
+      salesOrgs: [],
+      userRoles: []
+    }
+
+    console.log('✅ Targets Filters Response:', {
+      users: filterData.users.length,
+      teamLeaders: filterData.teamLeaders.length,
+      customers: filterData.customers.length,
+      years: filterData.years.length
+    })
 
     return NextResponse.json({
       success: true,
       data: filterData,
       timestamp: new Date().toISOString(),
-      cached: true,
-      cacheInfo: {
-        duration: FILTERS_CACHE_DURATION
-      }
+      source: 'tblCommonTarget'
     }, {
       headers: {
-        'Cache-Control': getCacheControlHeader(FILTERS_CACHE_DURATION)
+        'Cache-Control': 'public, s-maxage=300, stale-while-revalidate=600'
       }
     })
   } catch (error) {
-    console.error('Targets Filters API error:', error)
-    // If error is about missing table, return empty data instead of 500
+    console.error('❌ Targets Filters API error:', error)
     const errorMessage = error instanceof Error ? error.message : 'Unknown error'
-    if (errorMessage.includes('does not exist') || errorMessage.includes('No targets table')) {
-      console.warn('⚠️ Targets table issue detected. Returning empty filter options.')
-      return NextResponse.json({
-        success: true,
-        data: {
-          users: [],
-          teamLeaders: [],
-          customers: [],
-          years: [],
-          months: [],
-          chains: [],
-          brands: [],
-          categories: [],
-          targetTypes: [],
-          targetStatus: [],
-          targetLevels: [],
-          salesOrgs: [],
-          userRoles: []
-        },
-        timestamp: new Date().toISOString(),
-        message: 'No targets table found in database. Please check if tblcommontarget or flat_targets table exists.'
-      })
-    }
+
     return NextResponse.json({
       success: false,
       error: 'Failed to fetch filter options',
-      message: errorMessage
+      message: errorMessage,
+      data: {
+        users: [],
+        teamLeaders: [],
+        customers: [],
+        years: [],
+        months: [],
+        chains: [],
+        brands: [],
+        categories: [],
+        targetTypes: [],
+        targetStatus: [],
+        targetLevels: [],
+        salesOrgs: [],
+        userRoles: []
+      }
     }, { status: 500 })
   }
 }

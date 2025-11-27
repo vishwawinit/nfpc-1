@@ -64,14 +64,23 @@ const getDefaultDateRange = () => {
   const currentDate = new Date()
   const startDate = new Date(currentDate.getFullYear(), currentDate.getMonth(), 1)
   const endDate = currentDate
+
+  // Format date without timezone conversion to avoid off-by-one errors
+  const formatDate = (date: Date) => {
+    const year = date.getFullYear()
+    const month = String(date.getMonth() + 1).padStart(2, '0')
+    const day = String(date.getDate()).padStart(2, '0')
+    return `${year}-${month}-${day}`
+  }
+
   return {
-    startDate: startDate.toISOString().split('T')[0],
-    endDate: endDate.toISOString().split('T')[0]
+    startDate: formatDate(startDate),
+    endDate: formatDate(endDate)
   }
 }
 
 export const useDashboardFilters = () => {
-  // Initialize with default values - set default date range to this month for faster initial load
+  // Initialize with default values - set default date range to this month
   const defaultDates = getDefaultDateRange()
   const [filters, setFilters] = useState<DashboardFilters>({
     startDate: defaultDates.startDate,
@@ -144,7 +153,26 @@ export const useDashboardFilters = () => {
       const result = await response.json()
 
       if (result.success) {
-        setFilterOptions(result.data)
+        // Map API response to expected structure
+        const mappedData: FilterOptions = {
+          regions: result.data.regions || [],
+          cities: result.data.cities || result.data.routes || [], // Use routes as fallback for cities
+          fieldUserRoles: result.data.fieldUserRoles || [],
+          teamLeaders: result.data.teamLeaders || result.data.users || [], // Use users as fallback
+          fieldUsers: result.data.fieldUsers || result.data.salesmen || result.data.users || [],
+          chains: result.data.chains || result.data.channels || [],
+          stores: result.data.stores || result.data.customers || [],
+          summary: result.data.summary || {
+            totalRegions: result.data.regions?.length || 0,
+            totalRoutes: result.data.routes?.length || 0,
+            totalUsers: result.data.users?.length || 0,
+            totalTeamLeaders: result.data.teamLeaders?.length || result.data.users?.length || 0,
+            totalChains: result.data.chains?.length || result.data.channels?.length || 0,
+            totalStores: result.data.stores?.length || result.data.customers?.length || 0,
+            dateRange: result.data.summary?.dateRange || { min: '', max: '', daysWithData: 0 }
+          }
+        }
+        setFilterOptions(mappedData)
         // Store hierarchy info from response
         if (result.hierarchy) {
           setHierarchyInfo(result.hierarchy)

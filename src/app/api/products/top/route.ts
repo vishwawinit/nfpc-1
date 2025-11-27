@@ -224,44 +224,47 @@ export async function GET(request: NextRequest) {
     
     // Add date conditions if they exist
     if (startDate && endDate) {
-      finalConditions.push(`DATE(t.transaction_date) >= $${currentParamIndex}`)
+      finalConditions.push(`h."TrxDate" >= $${currentParamIndex}::timestamp`)
       queryParams.push(startDate)
       currentParamIndex++
-      
-      finalConditions.push(`DATE(t.transaction_date) <= $${currentParamIndex}`)
+
+      finalConditions.push(`h."TrxDate" < ($${currentParamIndex}::timestamp + INTERVAL '1 day')`)
       queryParams.push(endDate)
       currentParamIndex++
     }
-    
+
+    // Only include invoices/sales (TrxType = 1)
+    finalConditions.push(`h."TrxType" = 1`)
+
     // Add other filters
     if (regionCode) {
-      finalConditions.push(`c.region_code = $${currentParamIndex}`)
+      finalConditions.push(`c."RegionCode" = $${currentParamIndex}`)
       queryParams.push(regionCode)
       currentParamIndex++
     }
-    
-    if (cityCode) {
-      finalConditions.push(`c.city_code = $${currentParamIndex}`)
-      queryParams.push(cityCode)
-      currentParamIndex++
-    }
-    
+
+    // City filter - disabled as City column may not exist
+    // if (cityCode) {
+    //   finalConditions.push(`c."City" = $${currentParamIndex}`)
+    //   queryParams.push(cityCode)
+    //   currentParamIndex++
+    // }
+
     if (userCode) {
-      finalConditions.push(`t.user_code = $${currentParamIndex}`)
+      finalConditions.push(`h."UserCode" = $${currentParamIndex}`)
       queryParams.push(userCode)
       currentParamIndex++
     }
-    
+
     if (storeCode) {
-      finalConditions.push(`t.customer_code = $${currentParamIndex}`)
+      finalConditions.push(`h."ClientCode" = $${currentParamIndex}`)
       queryParams.push(storeCode)
       currentParamIndex++
     }
-    
+
     // Always include these base conditions
-    finalConditions.push('t.product_code IS NOT NULL')
-    finalConditions.push('t.order_total IS NOT NULL')
-    finalConditions.push('COALESCE(t.quantity_bu, 0) != 0')
+    finalConditions.push('d."ItemCode" IS NOT NULL')
+    finalConditions.push('COALESCE(d."QuantityBU", 0) != 0')
     
     const finalWhere = finalConditions.length > 0 ? `WHERE ${finalConditions.join(' AND ')}` : ''
     
@@ -274,25 +277,27 @@ export async function GET(request: NextRequest) {
     })
     
     const result = await query(`
-      SELECT 
-        t.product_code as "productCode",
-        COALESCE(MAX(t.product_name), 'Unknown Product') as "productName",
-        SUM(ABS(COALESCE(t.quantity_bu, 0))) as "quantitySold",
-        COUNT(*) as "totalOrders",
-        COUNT(DISTINCT t.customer_code) as "uniqueCustomers",
-        MAX(t.transaction_date) as "lastSoldDate",
-        COALESCE(MAX(t.currency_code), 'AED') as "currency",
-        'Unknown' as "categoryName",
-        'PCS' as "baseUom",
-        COALESCE(SUM(CASE WHEN t.order_total > 0 THEN t.order_total ELSE 0 END), 0) as "salesAmount",
-        CASE WHEN SUM(ABS(COALESCE(t.quantity_bu, 0))) > 0 
-             THEN COALESCE(SUM(CASE WHEN t.order_total > 0 THEN t.order_total ELSE 0 END), 0) / SUM(ABS(COALESCE(t.quantity_bu, 0)))
+      SELECT
+        d."ItemCode" as "productCode",
+        COALESCE(MAX(d."ItemDescription"), 'Unknown Product') as "productName",
+        SUM(ABS(COALESCE(d."QuantityBU", 0))) as "quantitySold",
+        COUNT(DISTINCT d."TrxCode") as "totalOrders",
+        COUNT(DISTINCT h."ClientCode") as "uniqueCustomers",
+        MAX(h."TrxDate") as "lastSoldDate",
+        COALESCE(MAX(h."CurrencyCode"), 'AED') as "currency",
+        COALESCE(MAX(i."GroupLevel1"), 'Unknown') as "categoryName",
+        COALESCE(MAX(d."UOM"), 'PCS') as "baseUom",
+        COALESCE(SUM(CASE WHEN (d."BasePrice" * d."QuantityBU") > 0 THEN (d."BasePrice" * d."QuantityBU") ELSE 0 END), 0) as "salesAmount",
+        CASE WHEN SUM(ABS(COALESCE(d."QuantityBU", 0))) > 0
+             THEN COALESCE(SUM(CASE WHEN (d."BasePrice" * d."QuantityBU") > 0 THEN (d."BasePrice" * d."QuantityBU") ELSE 0 END), 0) / SUM(ABS(COALESCE(d."QuantityBU", 0)))
              ELSE 0 END as "averagePrice"
-      FROM flat_transactions t
-      LEFT JOIN flat_customers_master c ON t.customer_code = c.customer_code
+      FROM "tblTrxDetail" d
+      INNER JOIN "tblTrxHeader" h ON d."TrxCode" = h."TrxCode"
+      LEFT JOIN "tblItem" i ON d."ItemCode" = i."Code"
+      LEFT JOIN "tblCustomer" c ON h."ClientCode" = c."Code"
       ${finalWhere}
-      GROUP BY t.product_code
-      ORDER BY SUM(CASE WHEN t.order_total > 0 THEN t.order_total ELSE 0 END) DESC 
+      GROUP BY d."ItemCode"
+      ORDER BY SUM(CASE WHEN (d."BasePrice" * d."QuantityBU") > 0 THEN (d."BasePrice" * d."QuantityBU") ELSE 0 END) DESC
       LIMIT $${currentParamIndex}
     `, queryParams)
 

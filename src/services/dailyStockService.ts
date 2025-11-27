@@ -1,247 +1,55 @@
-// Daily Stock Service - Database version
-// Provides data access functions for flat_stock_checks table
+// Daily Stock Service - Using real database tables
+// Queries data from tblStock, tblItem, tblWarehouse
 
 import { query } from '../lib/database'
 
-// Helper function to parse date range string
-const getDateRangeFromString = (dateRange: string, currentDate: string = new Date().toISOString().split('T')[0]) => {
-  const current = new Date(currentDate)
-  let startDate: Date
-  let endDate: Date = new Date(current)
-
-  switch(dateRange) {
-    case 'today':
-      startDate = new Date(current)
-      endDate = new Date(current)
-      break
-    case 'yesterday':
-      startDate = new Date(current)
-      startDate.setDate(startDate.getDate() - 1)
-      endDate = new Date(startDate)
-      break
-    case 'last7days':
-      startDate = new Date(current)
-      startDate.setDate(startDate.getDate() - 6)
-      break
-    case 'last30days':
-      startDate = new Date(current)
-      startDate.setDate(startDate.getDate() - 29)
-      break
-    case 'thisWeek':
-      startDate = new Date(current)
-      startDate.setDate(startDate.getDate() - current.getDay())
-      break
-    case 'lastWeek':
-      startDate = new Date(current)
-      startDate.setDate(startDate.getDate() - current.getDay() - 7)
-      endDate = new Date(startDate)
-      endDate.setDate(endDate.getDate() + 6)
-      break
-    case 'thisMonth':
-      startDate = new Date(current.getFullYear(), current.getMonth(), 1)
-      break
-    case 'lastMonth':
-      startDate = new Date(current.getFullYear(), current.getMonth() - 1, 1)
-      endDate = new Date(current.getFullYear(), current.getMonth(), 0)
-      break
-    case 'thisYear':
-      startDate = new Date(current.getFullYear(), 0, 1)
-      break
-    default:
-      startDate = new Date(current)
-      startDate.setDate(startDate.getDate() - 6)
-  }
-
-  return { startDate, endDate }
-}
-
 /**
- * Get stock check summary with filters using 35-day coverage calculation
+ * Get stock summary from tblStock
  */
 export const getStockCheckSummary = async (filters: any = {}) => {
-  const { startDate, endDate } = filters.startDate && filters.endDate
-    ? { startDate: new Date(filters.startDate), endDate: new Date(filters.endDate) }
-    : filters.dateRange
-    ? getDateRangeFromString(filters.dateRange)
-    : getDateRangeFromString('last7days')
+  const conditions: string[] = []
+  const params: any[] = []
+  let paramCount = 1
 
-  const startDateStr = startDate.toISOString().split('T')[0]
-  const endDateStr = endDate.toISOString().split('T')[0]
-
-  let sql = `
-    WITH daily_stock AS (
-      SELECT DISTINCT ON (check_date, store_code, product_code)
-        check_date,
-        store_code,
-        product_code,
-        store_quantity,
-        warehouse_quantity,
-        field_user_code,
-        region_code,
-        tl_code,
-        user_role,
-        chain_name,
-        city_code,
-        product_group,
-        product_category
-      FROM flat_stock_checks
-      WHERE check_date >= $1::date - INTERVAL '7 days'
-        AND check_date <= $2::date
-        {{FILTER_PLACEHOLDER}}
-      ORDER BY check_date DESC, store_code, product_code, check_datetime DESC
-    ),
-    sales_calc AS (
-      SELECT
-        store_code,
-        product_code,
-        check_date,
-        store_quantity as current_qty,
-        LAG(store_quantity) OVER (PARTITION BY store_code, product_code ORDER BY check_date) as prev_qty,
-        CASE 
-          WHEN LAG(store_quantity) OVER (PARTITION BY store_code, product_code ORDER BY check_date) > store_quantity
-          THEN LAG(store_quantity) OVER (PARTITION BY store_code, product_code ORDER BY check_date) - store_quantity
-          ELSE 0
-        END as daily_sales
-      FROM daily_stock
-      WHERE check_date >= $1::date - INTERVAL '7 days'
-        AND check_date < $2::date
-    ),
-    avg_sales AS (
-      SELECT
-        store_code,
-        product_code,
-        AVG(daily_sales) as avg_daily_sales
-      FROM sales_calc
-      WHERE prev_qty IS NOT NULL
-      GROUP BY store_code, product_code
-      HAVING COUNT(DISTINCT check_date) >= 2
-    ),
-    current_stock AS (
-      SELECT DISTINCT ON (store_code, product_code)
-        store_code,
-        product_code,
-        store_quantity,
-        warehouse_quantity,
-        field_user_code,
-        check_date,
-        region_code,
-        tl_code,
-        user_role,
-        chain_name,
-        city_code,
-        product_group,
-        product_category
-      FROM flat_stock_checks
-      WHERE check_date = $2::date
-        {{FILTER_PLACEHOLDER}}
-      ORDER BY store_code, product_code, check_datetime DESC
-    ),
-    coverage_analysis AS (
-      SELECT
-        cs.*,
-        COALESCE(av.avg_daily_sales, 0) as avg_daily_sales,
-        CASE
-          WHEN COALESCE(av.avg_daily_sales, 0) = 0 THEN 'No Sales Data'
-          WHEN COALESCE(av.avg_daily_sales * 35, 0) <= COALESCE(cs.store_quantity, 0) THEN 'Healthy Stock'
-          ELSE 'Low Stock'
-        END as stock_status
-      FROM current_stock cs
-      LEFT JOIN avg_sales av ON cs.store_code = av.store_code AND cs.product_code = av.product_code
-    )
-    SELECT
-      COUNT(DISTINCT CONCAT(check_date::text, store_code, product_code)) as total_checks,
-      COUNT(DISTINCT store_code) as total_stores_checked,
-      COUNT(DISTINCT product_code) as total_products_checked,
-      COUNT(DISTINCT field_user_code) as total_users,
-      COALESCE(SUM(store_quantity), 0) as total_stock_on_hand,
-      COALESCE(SUM(warehouse_quantity), 0) as total_warehouse_stock,
-      COALESCE(AVG(store_quantity), 0) as avg_stock_per_store,
-      COUNT(*) FILTER (WHERE store_quantity = 0) as out_of_stock_count,
-      COUNT(*) FILTER (WHERE stock_status = 'Low Stock') as low_stock_count,
-      COUNT(*) FILTER (WHERE stock_status = 'Healthy Stock') as healthy_stock_count
-    FROM coverage_analysis
-  `
-
-  const params: any[] = [startDateStr, endDateStr]
-  let paramCount = 3
-  const filterConditions: string[] = []
-
-  // Build filter conditions
-  if (filters.regionCode) {
-    filterConditions.push(`region_code = $${paramCount}`)
-    params.push(filters.regionCode)
-    paramCount++
-  }
-
-  // Team leader filter - if fieldUserCodes array is provided (from API route),
-  // use those instead of tl_code
-  if (filters.fieldUserCodes && Array.isArray(filters.fieldUserCodes) && filters.fieldUserCodes.length > 0) {
-    filterConditions.push(`field_user_code = ANY($${paramCount}::text[])`)
-    params.push(filters.fieldUserCodes)
-    paramCount++
-  } else if (filters.teamLeaderCode) {
-    filterConditions.push(`tl_code = $${paramCount}`)
-    params.push(filters.teamLeaderCode)
-    paramCount++
-  }
-
-  if (filters.fieldUserRole) {
-    filterConditions.push(`COALESCE(user_role, 'Promoter') = $${paramCount}`)
-    params.push(filters.fieldUserRole)
-    paramCount++
-  }
-
-  if (filters.userCode) {
-    filterConditions.push(`field_user_code = $${paramCount}`)
-    params.push(filters.userCode)
-    paramCount++
-  }
-
-  if (filters.chainName) {
-    filterConditions.push(`chain_name = $${paramCount}`)
-    params.push(filters.chainName)
-    paramCount++
-  }
-
-  if (filters.storeCode) {
-    filterConditions.push(`store_code = $${paramCount}`)
-    params.push(filters.storeCode)
+  if (filters.warehouseCode) {
+    conditions.push(`s."WHCode" = $${paramCount}`)
+    params.push(filters.warehouseCode)
     paramCount++
   }
 
   if (filters.productCode) {
-    filterConditions.push(`product_code = $${paramCount}`)
+    conditions.push(`s."ItemCode" = $${paramCount}`)
     params.push(filters.productCode)
     paramCount++
   }
 
-  if (filters.productCategory) {
-    filterConditions.push(`product_category = $${paramCount}`)
-    params.push(filters.productCategory)
-    paramCount++
-  }
+  const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : ''
 
-  if (filters.productGroup) {
-    filterConditions.push(`product_group = $${paramCount}`)
-    params.push(filters.productGroup)
-    paramCount++
-  }
-
-  // Apply filters to the CTEs
-  const filterSQL = filterConditions.length > 0 ? `AND ${filterConditions.join(' AND ')}` : ''
-  sql = sql.replace(/\{\{FILTER_PLACEHOLDER\}\}/g, filterSQL)
+  const sql = `
+    SELECT
+      COUNT(DISTINCT s."ItemCode") as total_products,
+      COUNT(DISTINCT s."WHCode") as total_warehouses,
+      COALESCE(SUM(s."QtyBU"), 0) as total_stock_on_hand,
+      COALESCE(SUM(s."StockReservedQty"), 0) as total_reserved_stock,
+      COALESCE(SUM(s."StockReturnsQty"), 0) as total_returns_stock,
+      COALESCE(AVG(s."QtyBU"), 0) as avg_stock_per_item,
+      COUNT(*) FILTER (WHERE s."QtyBU" = 0) as out_of_stock_count,
+      COUNT(*) FILTER (WHERE s."QtyBU" > 0 AND s."QtyBU" < 10) as low_stock_count,
+      COUNT(*) FILTER (WHERE s."QtyBU" >= 10) as healthy_stock_count
+    FROM "tblStock" s
+    ${whereClause}
+  `
 
   const result = await query(sql, params)
   const stats = result.rows[0]
 
   return {
-    totalChecks: parseInt(stats.total_checks) || 0,
-    totalStoresChecked: parseInt(stats.total_stores_checked) || 0,
-    totalProductsChecked: parseInt(stats.total_products_checked) || 0,
-    totalUsers: parseInt(stats.total_users) || 0,
+    totalProducts: parseInt(stats.total_products) || 0,
+    totalWarehouses: parseInt(stats.total_warehouses) || 0,
     totalStockOnHand: parseFloat(stats.total_stock_on_hand) || 0,
-    totalWarehouseStock: parseFloat(stats.total_warehouse_stock) || 0,
-    avgStockPerStore: parseFloat(stats.avg_stock_per_store) || 0,
+    totalReservedStock: parseFloat(stats.total_reserved_stock) || 0,
+    totalReturnsStock: parseFloat(stats.total_returns_stock) || 0,
+    avgStockPerItem: parseFloat(stats.avg_stock_per_item) || 0,
     outOfStockCount: parseInt(stats.out_of_stock_count) || 0,
     lowStockCount: parseInt(stats.low_stock_count) || 0,
     healthyStockCount: parseInt(stats.healthy_stock_count) || 0
@@ -249,175 +57,36 @@ export const getStockCheckSummary = async (filters: any = {}) => {
 }
 
 /**
- * Get stock check trend by date
- */
-export const getStockCheckTrend = async (filters: any = {}) => {
-  const { startDate, endDate } = filters.startDate && filters.endDate
-    ? { startDate: new Date(filters.startDate), endDate: new Date(filters.endDate) }
-    : filters.dateRange
-    ? getDateRangeFromString(filters.dateRange)
-    : getDateRangeFromString('last7days')
-
-  const startDateStr = startDate.toISOString().split('T')[0]
-  const endDateStr = endDate.toISOString().split('T')[0]
-
-  let sql = `
-    SELECT
-      check_date::date as date,
-      COUNT(DISTINCT CONCAT(check_date::text, store_code, product_code)) as checks,
-      COUNT(DISTINCT store_code) as stores,
-      COALESCE(SUM(store_quantity), 0) as total_stock,
-      COALESCE(AVG(store_quantity), 0) as avg_stock,
-      COUNT(*) FILTER (WHERE store_quantity = 0) as out_of_stock,
-      COUNT(*) FILTER (WHERE store_quantity > 0 AND store_quantity < 5) as low_stock,
-      COUNT(*) FILTER (WHERE store_quantity >= 5) as healthy_stock
-    FROM flat_stock_checks
-    WHERE check_date >= $1 AND check_date <= $2
-  `
-
-  const params: any[] = [startDateStr, endDateStr]
-  let paramCount = 3
-
-  if (filters.regionCode) {
-    sql += ` AND region_code = $${paramCount}`
-    params.push(filters.regionCode)
-    paramCount++
-  }
-
-  if (filters.teamLeaderCode) {
-    sql += ` AND tl_code = $${paramCount}`
-    params.push(filters.teamLeaderCode)
-    paramCount++
-  }
-
-  if (filters.fieldUserRole) {
-    sql += ` AND COALESCE(user_role, 'Promoter') = $${paramCount}`
-    params.push(filters.fieldUserRole)
-    paramCount++
-  }
-
-  if (filters.userCode) {
-    sql += ` AND field_user_code = $${paramCount}`
-    params.push(filters.userCode)
-    paramCount++
-  }
-
-  if (filters.chainName) {
-    sql += ` AND chain_name = $${paramCount}`
-    params.push(filters.chainName)
-    paramCount++
-  }
-
-  if (filters.storeCode) {
-    sql += ` AND store_code = $${paramCount}`
-    params.push(filters.storeCode)
-    paramCount++
-  }
-
-  if (filters.productCode) {
-    sql += ` AND product_code = $${paramCount}`
-    params.push(filters.productCode)
-    paramCount++
-  }
-
-  if (filters.productCategory) {
-    sql += ` AND product_category = $${paramCount}`
-    params.push(filters.productCategory)
-    paramCount++
-  }
-
-  sql += ` GROUP BY check_date::date ORDER BY check_date::date`
-
-  const result = await query(sql, params)
-
-  return result.rows.map((row: any) => ({
-    date: row.date,
-    checks: parseInt(row.checks),
-    stores: parseInt(row.stores),
-    totalStock: parseFloat(row.total_stock),
-    avgStock: parseFloat(row.avg_stock),
-    outOfStock: parseInt(row.out_of_stock),
-    lowStock: parseInt(row.low_stock),
-    healthyStock: parseInt(row.healthy_stock)
-  }))
-}
-
-/**
- * Get product stock levels
+ * Get product stock levels from tblStock
  */
 export const getProductStockLevels = async (filters: any = {}) => {
-  const { startDate, endDate } = filters.startDate && filters.endDate
-    ? { startDate: new Date(filters.startDate), endDate: new Date(filters.endDate) }
-    : filters.dateRange
-    ? getDateRangeFromString(filters.dateRange)
-    : getDateRangeFromString('last7days')
+  const conditions: string[] = []
+  const params: any[] = []
+  let paramCount = 1
 
-  const startDateStr = startDate.toISOString().split('T')[0]
-  const endDateStr = endDate.toISOString().split('T')[0]
+  if (filters.warehouseCode) {
+    conditions.push(`s."WHCode" = $${paramCount}`)
+    params.push(filters.warehouseCode)
+    paramCount++
+  }
 
-  let sql = `
+  const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : ''
+
+  const sql = `
     SELECT
-      product_code as "productCode",
-      product_name as "productName",
-      product_category as "productCategory",
-      product_group as "productGroup",
-      COUNT(DISTINCT store_code) as stores_checked,
-      COALESCE(SUM(store_quantity), 0) as total_stock,
-      COALESCE(AVG(store_quantity), 0) as avg_stock,
-      COUNT(*) FILTER (WHERE store_quantity = 0) as out_of_stock_stores,
-      COUNT(*) FILTER (WHERE store_quantity > 0 AND store_quantity < 5) as low_stock_stores,
-      COUNT(*) FILTER (WHERE store_quantity >= 5) as healthy_stock_stores
-    FROM flat_stock_checks
-    WHERE check_date >= $1 AND check_date <= $2
-  `
-
-  const params: any[] = [startDateStr, endDateStr]
-  let paramCount = 3
-
-  if (filters.regionCode) {
-    sql += ` AND region_code = $${paramCount}`
-    params.push(filters.regionCode)
-    paramCount++
-  }
-
-  if (filters.teamLeaderCode) {
-    sql += ` AND tl_code = $${paramCount}`
-    params.push(filters.teamLeaderCode)
-    paramCount++
-  }
-
-  if (filters.fieldUserRole) {
-    sql += ` AND COALESCE(user_role, 'Promoter') = $${paramCount}`
-    params.push(filters.fieldUserRole)
-    paramCount++
-  }
-
-  if (filters.userCode) {
-    sql += ` AND field_user_code = $${paramCount}`
-    params.push(filters.userCode)
-    paramCount++
-  }
-
-  if (filters.chainName) {
-    sql += ` AND chain_name = $${paramCount}`
-    params.push(filters.chainName)
-    paramCount++
-  }
-
-  if (filters.storeCode) {
-    sql += ` AND store_code = $${paramCount}`
-    params.push(filters.storeCode)
-    paramCount++
-  }
-
-  if (filters.productCategory) {
-    sql += ` AND product_category = $${paramCount}`
-    params.push(filters.productCategory)
-    paramCount++
-  }
-
-  sql += `
-    GROUP BY product_code, product_name, product_category, product_group
+      s."ItemCode" as "productCode",
+      COALESCE(MAX(i."Description"), s."ItemCode") as "productName",
+      COALESCE(MAX(i."GroupLevel1"), 'Unknown') as "productCategory",
+      COUNT(DISTINCT s."WHCode") as warehouses_with_stock,
+      COALESCE(SUM(s."QtyBU"), 0) as total_stock,
+      COALESCE(AVG(s."QtyBU"), 0) as avg_stock,
+      COUNT(*) FILTER (WHERE s."QtyBU" = 0) as out_of_stock_locations,
+      COUNT(*) FILTER (WHERE s."QtyBU" > 0 AND s."QtyBU" < 10) as low_stock_locations,
+      COUNT(*) FILTER (WHERE s."QtyBU" >= 10) as healthy_stock_locations
+    FROM "tblStock" s
+    LEFT JOIN "tblItem" i ON s."ItemCode" = i."Code"
+    ${whereClause}
+    GROUP BY s."ItemCode"
     ORDER BY total_stock DESC
     LIMIT 100
   `
@@ -428,93 +97,45 @@ export const getProductStockLevels = async (filters: any = {}) => {
     productCode: row.productCode,
     productName: row.productName,
     productCategory: row.productCategory,
-    productGroup: row.productGroup,
-    storesChecked: parseInt(row.stores_checked),
-    totalStock: parseFloat(row.total_stock),
-    avgStock: parseFloat(row.avg_stock),
-    outOfStockStores: parseInt(row.out_of_stock_stores),
-    lowStockStores: parseInt(row.low_stock_stores),
-    healthyStockStores: parseInt(row.healthy_stock_stores)
+    warehousesWithStock: parseInt(row.warehouses_with_stock) || 0,
+    totalStock: parseFloat(row.total_stock) || 0,
+    avgStock: parseFloat(row.avg_stock) || 0,
+    outOfStockLocations: parseInt(row.out_of_stock_locations) || 0,
+    lowStockLocations: parseInt(row.low_stock_locations) || 0,
+    healthyStockLocations: parseInt(row.healthy_stock_locations) || 0
   }))
 }
 
 /**
- * Get store stock levels
+ * Get stock by warehouse from tblStock
  */
 export const getStoreStockLevels = async (filters: any = {}) => {
-  const { startDate, endDate } = filters.startDate && filters.endDate
-    ? { startDate: new Date(filters.startDate), endDate: new Date(filters.endDate) }
-    : filters.dateRange
-    ? getDateRangeFromString(filters.dateRange)
-    : getDateRangeFromString('last7days')
-
-  const startDateStr = startDate.toISOString().split('T')[0]
-  const endDateStr = endDate.toISOString().split('T')[0]
-
-  let sql = `
-    SELECT
-      store_code as "storeCode",
-      store_name as "storeName",
-      chain_name as "storeClass",
-      city_code as "cityCode",
-      region_code as "regionCode",
-      COUNT(DISTINCT product_code) as products_checked,
-      COALESCE(SUM(store_quantity), 0) as total_stock,
-      COALESCE(AVG(store_quantity), 0) as avg_stock,
-      COUNT(*) FILTER (WHERE store_quantity = 0) as out_of_stock_items,
-      COUNT(*) FILTER (WHERE store_quantity > 0 AND store_quantity < 5) as low_stock_items,
-      COUNT(*) FILTER (WHERE store_quantity >= 5) as healthy_stock_items
-    FROM flat_stock_checks
-    WHERE check_date >= $1 AND check_date <= $2
-  `
-
-  const params: any[] = [startDateStr, endDateStr]
-  let paramCount = 3
-
-  if (filters.regionCode) {
-    sql += ` AND region_code = $${paramCount}`
-    params.push(filters.regionCode)
-    paramCount++
-  }
-
-  if (filters.teamLeaderCode) {
-    sql += ` AND tl_code = $${paramCount}`
-    params.push(filters.teamLeaderCode)
-    paramCount++
-  }
-
-  if (filters.fieldUserRole) {
-    sql += ` AND COALESCE(user_role, 'Promoter') = $${paramCount}`
-    params.push(filters.fieldUserRole)
-    paramCount++
-  }
-
-  if (filters.userCode) {
-    sql += ` AND field_user_code = $${paramCount}`
-    params.push(filters.userCode)
-    paramCount++
-  }
-
-  if (filters.chainName) {
-    sql += ` AND chain_name = $${paramCount}`
-    params.push(filters.chainName)
-    paramCount++
-  }
+  const conditions: string[] = []
+  const params: any[] = []
+  let paramCount = 1
 
   if (filters.productCode) {
-    sql += ` AND product_code = $${paramCount}`
+    conditions.push(`s."ItemCode" = $${paramCount}`)
     params.push(filters.productCode)
     paramCount++
   }
 
-  if (filters.productCategory) {
-    sql += ` AND product_category = $${paramCount}`
-    params.push(filters.productCategory)
-    paramCount++
-  }
+  const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : ''
 
-  sql += `
-    GROUP BY store_code, store_name, chain_name, city_code, region_code
+  const sql = `
+    SELECT
+      s."WHCode" as "warehouseCode",
+      COALESCE(MAX(w."Description"), s."WHCode") as "warehouseName",
+      COUNT(DISTINCT s."ItemCode") as products_in_stock,
+      COALESCE(SUM(s."QtyBU"), 0) as total_stock,
+      COALESCE(AVG(s."QtyBU"), 0) as avg_stock,
+      COUNT(*) FILTER (WHERE s."QtyBU" = 0) as out_of_stock_items,
+      COUNT(*) FILTER (WHERE s."QtyBU" > 0 AND s."QtyBU" < 10) as low_stock_items,
+      COUNT(*) FILTER (WHERE s."QtyBU" >= 10) as healthy_stock_items
+    FROM "tblStock" s
+    LEFT JOIN "tblWarehouse" w ON s."WHCode" = w."Code"
+    ${whereClause}
+    GROUP BY s."WHCode"
     ORDER BY total_stock DESC
     LIMIT 100
   `
@@ -522,18 +143,35 @@ export const getStoreStockLevels = async (filters: any = {}) => {
   const result = await query(sql, params)
 
   return result.rows.map((row: any) => ({
-    storeCode: row.storeCode,
-    storeName: row.storeName,
-    storeClass: row.storeClass,
-    cityCode: row.cityCode,
-    regionCode: row.regionCode,
-    productsChecked: parseInt(row.products_checked),
-    totalStock: parseFloat(row.total_stock),
-    avgStock: parseFloat(row.avg_stock),
-    outOfStockItems: parseInt(row.out_of_stock_items),
-    lowStockItems: parseInt(row.low_stock_items),
-    healthyStockItems: parseInt(row.healthy_stock_items)
+    warehouseCode: row.warehouseCode,
+    warehouseName: row.warehouseName,
+    storeCode: row.warehouseCode,
+    storeName: row.warehouseName,
+    productsInStock: parseInt(row.products_in_stock) || 0,
+    totalStock: parseFloat(row.total_stock) || 0,
+    avgStock: parseFloat(row.avg_stock) || 0,
+    outOfStockItems: parseInt(row.out_of_stock_items) || 0,
+    lowStockItems: parseInt(row.low_stock_items) || 0,
+    healthyStockItems: parseInt(row.healthy_stock_items) || 0
   }))
+}
+
+/**
+ * Get stock trend (placeholder - stock doesn't have date tracking in tblStock)
+ * Returns current stock levels as a single data point
+ */
+export const getStockCheckTrend = async (filters: any = {}) => {
+  const summary = await getStockCheckSummary(filters)
+  const today = new Date().toISOString().split('T')[0]
+
+  return [{
+    date: today,
+    totalStock: summary.totalStockOnHand,
+    avgStock: summary.avgStockPerItem,
+    outOfStock: summary.outOfStockCount,
+    lowStock: summary.lowStockCount,
+    healthyStock: summary.healthyStockCount
+  }]
 }
 
 export const dailyStockService = {

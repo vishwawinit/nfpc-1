@@ -11,6 +11,34 @@ export const dynamic = 'force-dynamic'
 function getFilterColumnExpressions(columns: Set<string>) {
   const has = (column: string) => columns.has(column)
 
+  // Detect if this is tblTrxHeader (has PascalCase columns)
+  const isTblTrxHeader = has('TrxCode') || has('ClientCode') || has('TrxDate')
+
+  if (isTblTrxHeader) {
+    // Return quoted PascalCase columns for tblTrxHeader
+    return {
+      storeCode: '"ClientCode"',
+      storeName: 'NULL',
+      regionCode: 'NULL',
+      regionName: 'NULL',
+      cityCode: 'NULL',
+      cityName: 'NULL',
+      chainCode: 'NULL',
+      chainName: 'NULL',
+      tlCode: 'NULL',
+      tlName: 'NULL',
+      fieldUserCode: has('SalesRepCode') ? '"SalesRepCode"' : 'NULL',
+      fieldUserName: 'NULL',
+      trxCode: '"TrxCode"',
+      trxDateOnly: 'DATE("TrxDate")',
+      trxType: has('TrxType') ? '"TrxType"' : '5',
+      productGroup: 'NULL',
+      productCode: has('ProductCode') ? '"ProductCode"' : 'NULL',
+      isTblTrxHeader: true
+    }
+  }
+
+  // Return snake_case columns for flat_* tables
   return {
     storeCode: has('store_code') ? 'store_code' : 'customer_code',
     storeName: has('store_name') ? 'store_name' : 'NULL',
@@ -32,7 +60,31 @@ function getFilterColumnExpressions(columns: Set<string>) {
     trxDateOnly: has('trx_date_only') ? 'trx_date_only' : 'DATE(transaction_date)',
     trxType: has('trx_type') ? 'trx_type' : has('transaction_type') ? 'transaction_type' : '5',
     productGroup: has('product_group_level1') ? 'product_group_level1' : has('product_group') ? 'product_group' : 'NULL',
-    productCode: has('product_code') ? 'product_code' : 'NULL'
+    productCode: has('product_code') ? 'product_code' : 'NULL',
+    isTblTrxHeader: false
+  }
+}
+
+// Helper to get customer table info based on transactions table
+function getCustomerTableInfo(transactionsTable: string) {
+  const isTblTrxHeader = transactionsTable === '"tblTrxHeader"'
+  if (isTblTrxHeader) {
+    return {
+      table: '"tblCustomer"',
+      joinColumn: '"Code"',
+      nameColumn: '"Description"',
+      stateColumn: '"RegionCode"',  // tblCustomer uses RegionCode not State
+      cityColumn: '"CityCode"',     // tblCustomer uses CityCode not City
+      customerTypeColumn: '"JDECustomerType"'  // tblCustomer uses JDECustomerType
+    }
+  }
+  return {
+    table: 'flat_customers_master',
+    joinColumn: 'customer_code',
+    nameColumn: 'customer_name',
+    stateColumn: 'state',
+    cityColumn: 'city',
+    customerTypeColumn: 'customer_type'
   }
 }
 
@@ -47,6 +99,8 @@ export async function GET(request: NextRequest) {
     const tableInfo = await resolveTransactionsTable()
     const transactionsTable = tableInfo.name
     const col = getFilterColumnExpressions(tableInfo.columns)
+    const custTable = getCustomerTableInfo(transactionsTable)
+    const isTblTrxHeader = col.isTblTrxHeader
         
     // Authentication removed - no hierarchy filtering
     
@@ -105,32 +159,30 @@ export async function GET(request: NextRequest) {
     
     // Build WHERE clause - Authentication removed
     let whereClause = ''
-    
-    // Only add trx_type filter if the column exists
-    if (col.trxType !== '5') {
-      whereClause = `WHERE t.${col.trxType} = 5`
-    }
-    
+
     // Date range filters
-    const dateExpr = col.trxDateOnly.startsWith('DATE(') 
-      ? col.trxDateOnly 
+    const dateExpr = col.trxDateOnly.startsWith('DATE(')
+      ? col.trxDateOnly
       : `t.${col.trxDateOnly}`
-    
-    if (whereClause) {
-      whereClause += ` AND ${dateExpr} >= '${startStr}' AND ${dateExpr} <= '${endStr}'`
-    } else {
-      whereClause = `WHERE ${dateExpr} >= '${startStr}' AND ${dateExpr} <= '${endStr}'`
+
+    whereClause = `WHERE ${dateExpr} >= '${startStr}' AND ${dateExpr} <= '${endStr}'`
+
+    // Only add trx_type filter for sales transactions (type = 1) if column exists
+    if (col.trxType !== '5' && isTblTrxHeader) {
+      whereClause += ` AND t.${col.trxType} = 1`
     }
 
     // Get distinct customers
-    const customerNameExpr = col.storeName === 'NULL' ? 'COALESCE(c.customer_name, \'Unknown\')' : `COALESCE(t.${col.storeName}, c.customer_name, 'Unknown')`
+    const customerNameExpr = isTblTrxHeader
+      ? `COALESCE(c.${custTable.nameColumn}, 'Unknown')`
+      : (col.storeName === 'NULL' ? `COALESCE(c.${custTable.nameColumn}, 'Unknown')` : `COALESCE(t.${col.storeName}, c.${custTable.nameColumn}, 'Unknown')`)
     const customersQuery = `
       SELECT
         t.${col.storeCode} as value,
         t.${col.storeCode} || ' - ' || ${customerNameExpr} as label,
         COUNT(DISTINCT t.${col.trxCode}) as count
       FROM ${transactionsTable} t
-      LEFT JOIN flat_customers_master c ON t.${col.storeCode} = c.customer_code
+      LEFT JOIN ${custTable.table} c ON t.${col.storeCode} = c.${custTable.joinColumn}
       ${whereClause}
       AND t.${col.storeCode} IS NOT NULL
       GROUP BY t.${col.storeCode}, ${customerNameExpr}
@@ -138,51 +190,109 @@ export async function GET(request: NextRequest) {
       LIMIT 100
     `
 
-    // Get distinct regions - Note: flat_customers_master has 'state' column, not 'region_name'
-    const regionExpr = col.regionCode === 'NULL' ? 'c.state' : `COALESCE(c.state, t.${col.regionCode}, 'Unknown')`
-    const regionNameExpr = col.regionCode === 'NULL' ? 'COALESCE(c.state, \'Unknown\')' : `COALESCE(c.state, t.${col.regionCode}, 'Unknown')`
-    const regionsQuery = `
-      SELECT
-        ${regionExpr} as value,
-        ${regionExpr} as label,
-        COUNT(DISTINCT t.${col.storeCode}) as count
-      FROM ${transactionsTable} t
-      LEFT JOIN flat_customers_master c ON t.${col.storeCode} = c.customer_code
-      ${whereClause}
-      AND ${col.regionCode === 'NULL' ? 'c.state' : `COALESCE(c.state, t.${col.regionCode})`} IS NOT NULL
-      GROUP BY ${regionExpr}
-      ORDER BY value
-    `
+    // Get distinct regions
+    let regionsQuery: string
+    if (isTblTrxHeader) {
+      // For tblTrxHeader, get region codes and optionally join names
+      regionsQuery = `
+        SELECT
+          c.${custTable.stateColumn} as value,
+          MAX(COALESCE(reg."Description", c.${custTable.stateColumn})) as label,
+          COUNT(DISTINCT t.${col.storeCode}) as count
+        FROM ${transactionsTable} t
+        LEFT JOIN ${custTable.table} c ON t.${col.storeCode} = c.${custTable.joinColumn}
+        LEFT JOIN "tblRegion" reg ON c.${custTable.stateColumn} = reg."Code"
+        ${whereClause}
+        AND c.${custTable.stateColumn} IS NOT NULL
+        AND c.${custTable.stateColumn} != ''
+        GROUP BY c.${custTable.stateColumn}
+        ORDER BY label
+      `
+    } else {
+      const regionCol = col.regionCode === 'NULL' ? `c.${custTable.stateColumn}` : `COALESCE(c.${custTable.stateColumn}, t.${col.regionCode})`
+      regionsQuery = `
+        SELECT DISTINCT
+          ${regionCol} as value,
+          ${regionCol} as label,
+          COUNT(DISTINCT t.${col.storeCode}) as count
+        FROM ${transactionsTable} t
+        LEFT JOIN ${custTable.table} c ON t.${col.storeCode} = c.${custTable.joinColumn}
+        ${whereClause}
+        AND ${regionCol} IS NOT NULL
+        AND ${regionCol} != ''
+        GROUP BY ${regionCol}
+        ORDER BY value
+      `
+    }
 
-    // Get distinct cities - Note: flat_customers_master has 'city' column, not 'city_name'
-    const cityExpr = col.cityCode === 'NULL' ? 'c.city' : `COALESCE(c.city, t.${col.cityCode}, 'Unknown')`
-    const cityNameExpr = col.cityCode === 'NULL' ? 'COALESCE(c.city, \'Unknown\')' : `COALESCE(c.city, t.${col.cityCode}, 'Unknown')`
-    const citiesQuery = `
-      SELECT
-        ${cityExpr} as value,
-        ${cityExpr} as label,
-        COUNT(DISTINCT t.${col.storeCode}) as count
-      FROM ${transactionsTable} t
-      LEFT JOIN flat_customers_master c ON t.${col.storeCode} = c.customer_code
-      ${whereClause}
-      AND ${col.cityCode === 'NULL' ? 'c.city' : `COALESCE(c.city, t.${col.cityCode})`} IS NOT NULL
-      GROUP BY ${cityExpr}
-      ORDER BY value
-    `
+    // Get distinct cities
+    let citiesQuery: string
+    if (isTblTrxHeader) {
+      // For tblTrxHeader, get city codes and optionally join names
+      citiesQuery = `
+        SELECT
+          c.${custTable.cityColumn} as value,
+          MAX(COALESCE(city."Description", c.${custTable.cityColumn})) as label,
+          COUNT(DISTINCT t.${col.storeCode}) as count
+        FROM ${transactionsTable} t
+        LEFT JOIN ${custTable.table} c ON t.${col.storeCode} = c.${custTable.joinColumn}
+        LEFT JOIN "tblCity" city ON c.${custTable.cityColumn} = city."Code"
+        ${whereClause}
+        AND c.${custTable.cityColumn} IS NOT NULL
+        AND c.${custTable.cityColumn} != ''
+        GROUP BY c.${custTable.cityColumn}
+        ORDER BY label
+      `
+    } else {
+      const cityCol = col.cityCode === 'NULL' ? `c.${custTable.cityColumn}` : `COALESCE(c.${custTable.cityColumn}, t.${col.cityCode})`
+      citiesQuery = `
+        SELECT DISTINCT
+          ${cityCol} as value,
+          ${cityCol} as label,
+          COUNT(DISTINCT t.${col.storeCode}) as count
+        FROM ${transactionsTable} t
+        LEFT JOIN ${custTable.table} c ON t.${col.storeCode} = c.${custTable.joinColumn}
+        ${whereClause}
+        AND ${cityCol} IS NOT NULL
+        AND ${cityCol} != ''
+        GROUP BY ${cityCol}
+        ORDER BY value
+      `
+    }
 
-    // Get distinct chains - Note: flat_customers_master has 'customer_type' column, not 'chain_name'
-    const chainsQuery = `
-      SELECT
-        COALESCE(c.customer_type, 'Unknown') as value,
-        COALESCE(c.customer_type, 'Unknown Chain') as label,
-        COUNT(DISTINCT t.${col.storeCode}) as count
-      FROM ${transactionsTable} t
-      LEFT JOIN flat_customers_master c ON t.${col.storeCode} = c.customer_code
-      ${whereClause}
-      AND c.customer_type IS NOT NULL
-      GROUP BY c.customer_type
-      ORDER BY c.customer_type
-    `
+    // Get distinct chains/customer types
+    let chainsQuery: string
+    if (isTblTrxHeader) {
+      // For tblTrxHeader, get chain codes and optionally join names
+      chainsQuery = `
+        SELECT
+          c.${custTable.customerTypeColumn} as value,
+          MAX(COALESCE(chn."Description", c.${custTable.customerTypeColumn})) as label,
+          COUNT(DISTINCT t.${col.storeCode}) as count
+        FROM ${transactionsTable} t
+        LEFT JOIN ${custTable.table} c ON t.${col.storeCode} = c.${custTable.joinColumn}
+        LEFT JOIN "tblChannel" chn ON c.${custTable.customerTypeColumn} = chn."Code"
+        ${whereClause}
+        AND c.${custTable.customerTypeColumn} IS NOT NULL
+        AND c.${custTable.customerTypeColumn} != ''
+        GROUP BY c.${custTable.customerTypeColumn}
+        ORDER BY label
+      `
+    } else {
+      chainsQuery = `
+        SELECT DISTINCT
+          c.${custTable.customerTypeColumn} as value,
+          c.${custTable.customerTypeColumn} as label,
+          COUNT(DISTINCT t.${col.storeCode}) as count
+        FROM ${transactionsTable} t
+        LEFT JOIN ${custTable.table} c ON t.${col.storeCode} = c.${custTable.joinColumn}
+        ${whereClause}
+        AND c.${custTable.customerTypeColumn} IS NOT NULL
+        AND c.${custTable.customerTypeColumn} != ''
+        GROUP BY c.${custTable.customerTypeColumn}
+        ORDER BY value
+      `
+    }
 
     // Get distinct salesmen - Handle NULL columns properly
     let salesmenQuery = ''
@@ -190,53 +300,100 @@ export async function GET(request: NextRequest) {
       // If fieldUserCode doesn't exist, return empty result
       salesmenQuery = `SELECT 'N/A' as value, 'No Salesman Column' as label, 0 as count WHERE false`
     } else {
-      const userNameExpr = col.fieldUserName === 'NULL' 
-        ? `COALESCE(t.${col.fieldUserCode}::text, 'Unknown User')` 
-        : `COALESCE(t.${col.fieldUserName}, t.${col.fieldUserCode}::text, 'Unknown User')`
-      salesmenQuery = `
-      SELECT
+      if (isTblTrxHeader) {
+        // For tblTrxHeader, join with tblUser to get user names
+        salesmenQuery = `
+        SELECT
+          t.${col.fieldUserCode} as value,
+          MAX(COALESCE(t.${col.fieldUserCode} || ' - ' || sales_user."Description", t.${col.fieldUserCode}::text)) as label,
+          COUNT(DISTINCT t.${col.storeCode}) as count
+        FROM ${transactionsTable} t
+        LEFT JOIN "tblUser" sales_user ON t.${col.fieldUserCode} = sales_user."Code"
+        ${whereClause}
+        AND t.${col.fieldUserCode} IS NOT NULL
+        AND t.${col.fieldUserCode} != ''
+        GROUP BY t.${col.fieldUserCode}
+        ORDER BY value
+        `
+      } else {
+        const userNameExpr = col.fieldUserName === 'NULL'
+          ? `t.${col.fieldUserCode}::text`
+          : `COALESCE(t.${col.fieldUserName}, t.${col.fieldUserCode}::text)`
+        salesmenQuery = `
+        SELECT DISTINCT
           t.${col.fieldUserCode} as value,
           t.${col.fieldUserCode} || ' - ' || ${userNameExpr} as label,
           COUNT(DISTINCT t.${col.storeCode}) as count
         FROM ${transactionsTable} t
-      ${whereClause}
+        ${whereClause}
         AND t.${col.fieldUserCode} IS NOT NULL
-        GROUP BY t.${col.fieldUserCode}
-        ORDER BY t.${col.fieldUserCode}
-      `
+        AND t.${col.fieldUserCode} != ''
+        GROUP BY t.${col.fieldUserCode}, ${userNameExpr}
+        ORDER BY value
+        `
+      }
     }
 
     // Get distinct team leaders - Handle NULL columns properly
     let teamLeadersQuery = ''
-    if (col.tlCode === 'NULL') {
+    if (isTblTrxHeader) {
+      // For tblTrxHeader, TL is in tblCustomer.SalesmanCode
+      teamLeadersQuery = `
+      SELECT
+        c."SalesmanCode" as value,
+        MAX(COALESCE(c."SalesmanCode" || ' - ' || tl_user."Description", c."SalesmanCode")) as label,
+        COUNT(DISTINCT t.${col.storeCode}) as salesman_count
+      FROM ${transactionsTable} t
+      LEFT JOIN ${custTable.table} c ON t.${col.storeCode} = c.${custTable.joinColumn}
+      LEFT JOIN "tblUser" tl_user ON c."SalesmanCode" = tl_user."Code"
+      ${whereClause}
+      AND c."SalesmanCode" IS NOT NULL
+      AND c."SalesmanCode" != ''
+      GROUP BY c."SalesmanCode"
+      ORDER BY value
+      `
+    } else if (col.tlCode === 'NULL') {
       // If tlCode doesn't exist, return empty result
       teamLeadersQuery = `SELECT 'N/A' as value, 'No TL Column' as label, 0 as salesman_count WHERE false`
     } else {
-      const tlNameExpr = col.tlName === 'NULL' 
-        ? `COALESCE(t.${col.tlCode}::text, 'Unknown')` 
-        : `COALESCE(t.${col.tlName}, t.${col.tlCode}::text, 'Unknown')`
+      const tlNameExpr = col.tlName === 'NULL'
+        ? `t.${col.tlCode}::text`
+        : `COALESCE(t.${col.tlName}, t.${col.tlCode}::text)`
       teamLeadersQuery = `
-      SELECT
-          t.${col.tlCode} as value,
-          t.${col.tlCode} || ' - ' || ${tlNameExpr} as label,
-          COUNT(DISTINCT ${col.fieldUserCode === 'NULL' ? 't.user_code' : `t.${col.fieldUserCode}`}) as salesman_count
-        FROM ${transactionsTable} t
+      SELECT DISTINCT
+        t.${col.tlCode} as value,
+        t.${col.tlCode} || ' - ' || ${tlNameExpr} as label,
+        COUNT(DISTINCT ${col.fieldUserCode === 'NULL' ? 't.user_code' : `t.${col.fieldUserCode}`}) as salesman_count
+      FROM ${transactionsTable} t
       ${whereClause}
-        AND t.${col.tlCode} IS NOT NULL
-        GROUP BY t.${col.tlCode}
-        ORDER BY t.${col.tlCode}
+      AND t.${col.tlCode} IS NOT NULL
+      AND t.${col.tlCode} != ''
+      GROUP BY t.${col.tlCode}, ${tlNameExpr}
+      ORDER BY value
       `
     }
 
     // Get distinct product categories - Handle NULL columns properly
+    // For tblTrxHeader, product details are in tblTrxDetail, not the header
     let categoriesQuery = ''
-    if (col.productGroup === 'NULL') {
+    if (isTblTrxHeader) {
+      // tblTrxHeader doesn't have product info - return a single aggregate
+      categoriesQuery = `
+        SELECT
+          'All Products' as value,
+          'All Products' as label,
+          0 as product_count,
+          COUNT(DISTINCT t.${col.storeCode}) as customer_count
+        FROM ${transactionsTable} t
+        ${whereClause}
+      `
+    } else if (col.productGroup === 'NULL') {
       // If productGroup doesn't exist, return a single "Others" category
       categoriesQuery = `
         SELECT
           'Others' as value,
           'Others' as label,
-          COUNT(DISTINCT t.product_code) as product_count,
+          COUNT(DISTINCT ${col.productCode !== 'NULL' ? `t.${col.productCode}` : '1'}) as product_count,
           COUNT(DISTINCT t.${col.storeCode}) as customer_count
         FROM ${transactionsTable} t
         ${whereClause}
@@ -249,7 +406,7 @@ export async function GET(request: NextRequest) {
       SELECT
           ${productGroupExpr} as value,
           ${productGroupExpr} as label,
-          COUNT(DISTINCT t.product_code) as product_count,
+          COUNT(DISTINCT ${col.productCode !== 'NULL' ? `t.${col.productCode}` : '1'}) as product_count,
           COUNT(DISTINCT t.${col.storeCode}) as customer_count
         FROM ${transactionsTable} t
       ${whereClause}
@@ -274,132 +431,8 @@ export async function GET(request: NextRequest) {
     // Internal function to fetch filters (extracted for caching)
     const fetchFiltersInternal = async () => {
       const { query } = await import('@/lib/database')
-      
-      // Rebuild queries (they depend on startStr, endStr, col, transactionsTable, whereClause)
-      const customerNameExpr = col.storeName === 'NULL' ? 'COALESCE(c.customer_name, \'Unknown\')' : `COALESCE(t.${col.storeName}, c.customer_name, 'Unknown')`
-      const customersQuery = `
-        SELECT
-          t.${col.storeCode} as value,
-          t.${col.storeCode} || ' - ' || ${customerNameExpr} as label,
-          COUNT(DISTINCT t.${col.trxCode}) as count
-        FROM ${transactionsTable} t
-        LEFT JOIN flat_customers_master c ON t.${col.storeCode} = c.customer_code
-        ${whereClause}
-        AND t.${col.storeCode} IS NOT NULL
-        GROUP BY t.${col.storeCode}, ${customerNameExpr}
-        ORDER BY count DESC
-        LIMIT 100
-      `
 
-      const regionExpr = col.regionCode === 'NULL' ? 'c.state' : `COALESCE(c.state, t.${col.regionCode}, 'Unknown')`
-      const regionsQuery = `
-        SELECT
-          ${regionExpr} as value,
-          ${regionExpr} as label,
-          COUNT(DISTINCT t.${col.storeCode}) as count
-        FROM ${transactionsTable} t
-        LEFT JOIN flat_customers_master c ON t.${col.storeCode} = c.customer_code
-        ${whereClause}
-        AND ${col.regionCode === 'NULL' ? 'c.state' : `COALESCE(c.state, t.${col.regionCode})`} IS NOT NULL
-        GROUP BY ${regionExpr}
-        ORDER BY value
-      `
-
-      const cityExpr = col.cityCode === 'NULL' ? 'c.city' : `COALESCE(c.city, t.${col.cityCode}, 'Unknown')`
-      const citiesQuery = `
-        SELECT
-          ${cityExpr} as value,
-          ${cityExpr} as label,
-          COUNT(DISTINCT t.${col.storeCode}) as count
-        FROM ${transactionsTable} t
-        LEFT JOIN flat_customers_master c ON t.${col.storeCode} = c.customer_code
-        ${whereClause}
-        AND ${col.cityCode === 'NULL' ? 'c.city' : `COALESCE(c.city, t.${col.cityCode})`} IS NOT NULL
-        GROUP BY ${cityExpr}
-        ORDER BY value
-      `
-
-      const chainsQuery = `
-        SELECT
-          COALESCE(c.customer_type, 'Unknown') as value,
-          COALESCE(c.customer_type, 'Unknown Chain') as label,
-          COUNT(DISTINCT t.${col.storeCode}) as count
-        FROM ${transactionsTable} t
-        LEFT JOIN flat_customers_master c ON t.${col.storeCode} = c.customer_code
-        ${whereClause}
-        AND c.customer_type IS NOT NULL
-        GROUP BY c.customer_type
-        ORDER BY c.customer_type
-      `
-
-      let salesmenQuery = ''
-      if (col.fieldUserCode === 'NULL') {
-        salesmenQuery = `SELECT 'N/A' as value, 'No Salesman Column' as label, 0 as count WHERE false`
-      } else {
-        const userNameExpr = col.fieldUserName === 'NULL' 
-          ? `COALESCE(t.${col.fieldUserCode}::text, 'Unknown User')` 
-          : `COALESCE(t.${col.fieldUserName}, t.${col.fieldUserCode}::text, 'Unknown User')`
-        salesmenQuery = `
-          SELECT
-            t.${col.fieldUserCode} as value,
-            t.${col.fieldUserCode} || ' - ' || ${userNameExpr} as label,
-            COUNT(DISTINCT t.${col.storeCode}) as count
-          FROM ${transactionsTable} t
-          ${whereClause}
-          AND t.${col.fieldUserCode} IS NOT NULL
-          GROUP BY t.${col.fieldUserCode}
-          ORDER BY t.${col.fieldUserCode}
-        `
-      }
-
-      let teamLeadersQuery = ''
-      if (col.tlCode === 'NULL') {
-        teamLeadersQuery = `SELECT 'N/A' as value, 'No TL Column' as label, 0 as salesman_count WHERE false`
-      } else {
-        const tlNameExpr = col.tlName === 'NULL' 
-          ? `COALESCE(t.${col.tlCode}::text, 'Unknown')` 
-          : `COALESCE(t.${col.tlName}, t.${col.tlCode}::text, 'Unknown')`
-        teamLeadersQuery = `
-          SELECT
-            t.${col.tlCode} as value,
-            t.${col.tlCode} || ' - ' || ${tlNameExpr} as label,
-            COUNT(DISTINCT ${col.fieldUserCode === 'NULL' ? 't.user_code' : `t.${col.fieldUserCode}`}) as salesman_count
-          FROM ${transactionsTable} t
-          ${whereClause}
-          AND t.${col.tlCode} IS NOT NULL
-          GROUP BY t.${col.tlCode}
-          ORDER BY t.${col.tlCode}
-        `
-      }
-
-      let categoriesQuery = ''
-      if (col.productGroup === 'NULL') {
-        categoriesQuery = `
-          SELECT
-            'Others' as value,
-            'Others' as label,
-            COUNT(DISTINCT t.product_code) as product_count,
-            COUNT(DISTINCT t.${col.storeCode}) as customer_count
-          FROM ${transactionsTable} t
-          ${whereClause}
-          GROUP BY 1
-          ORDER BY product_count DESC
-        `
-      } else {
-        const productGroupExpr = `COALESCE(t.${col.productGroup}, 'Others')`
-        categoriesQuery = `
-          SELECT
-            ${productGroupExpr} as value,
-            ${productGroupExpr} as label,
-            COUNT(DISTINCT t.product_code) as product_count,
-            COUNT(DISTINCT t.${col.storeCode}) as customer_count
-          FROM ${transactionsTable} t
-          ${whereClause}
-          GROUP BY ${productGroupExpr}
-          ORDER BY product_count DESC
-        `
-      }
-
+      // Use the same dynamic queries built above
       const [custRes, regRes, cityRes, chainRes, salesRes, tlRes, catRes] = await Promise.all([
         query(customersQuery, []).catch(e => { console.error('Customers query error:', e); return { rows: [] } }),
         query(regionsQuery, []).catch(e => { console.error('Regions query error:', e); return { rows: [] } }),

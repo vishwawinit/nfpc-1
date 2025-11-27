@@ -1,0 +1,940 @@
+{
+  "flat_daily_sales_report": {
+    "actualName": "flat_daily_sales_report",
+    "columns": [
+      {
+        "column_name": "id",
+        "data_type": "bigint",
+        "character_maximum_length": null,
+        "numeric_precision": 64,
+        "numeric_scale": 0,
+        "is_nullable": "NO",
+        "column_default": "nextval('flat_daily_sales_report_id_seq'::regclass)"
+      },
+      {
+        "column_name": "trx_trxcode",
+        "data_type": "character varying",
+        "character_maximum_length": 50,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "NO",
+        "column_default": null
+      },
+      {
+        "column_name": "trx_orgcode",
+        "data_type": "character varying",
+        "character_maximum_length": 50,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "NO",
+        "column_default": null
+      },
+      {
+        "column_name": "trx_usercode",
+        "data_type": "character varying",
+        "character_maximum_length": 50,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "trx_clientcode",
+        "data_type": "character varying",
+        "character_maximum_length": 50,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "trx_trxdate",
+        "data_type": "timestamp without time zone",
+        "character_maximum_length": null,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "trx_trxtype",
+        "data_type": "integer",
+        "character_maximum_length": null,
+        "numeric_precision": 32,
+        "numeric_scale": 0,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "trx_currencycode",
+        "data_type": "character varying",
+        "character_maximum_length": 50,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "trx_paymenttype",
+        "data_type": "integer",
+        "character_maximum_length": null,
+        "numeric_precision": 32,
+        "numeric_scale": 0,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "trx_totalamount",
+        "data_type": "double precision",
+        "character_maximum_length": null,
+        "numeric_precision": 53,
+        "numeric_scale": null,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "trx_totaldiscountamount",
+        "data_type": "double precision",
+        "character_maximum_length": null,
+        "numeric_precision": 53,
+        "numeric_scale": null,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "trx_totaltaxamount",
+        "data_type": "double precision",
+        "character_maximum_length": null,
+        "numeric_precision": 53,
+        "numeric_scale": null,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "trx_status",
+        "data_type": "integer",
+        "character_maximum_length": null,
+        "numeric_precision": 32,
+        "numeric_scale": 0,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "trx_createdon",
+        "data_type": "timestamp without time zone",
+        "character_maximum_length": null,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "NO",
+        "column_default": null
+      },
+      {
+        "column_name": "trx_trxstatus",
+        "data_type": "integer",
+        "character_maximum_length": null,
+        "numeric_precision": 32,
+        "numeric_scale": 0,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "trx_lpocode",
+        "data_type": "character varying",
+        "character_maximum_length": 50,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "trx_deliverynumber",
+        "data_type": "character varying",
+        "character_maximum_length": 50,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "trx_invoicenumber",
+        "data_type": "character varying",
+        "character_maximum_length": 50,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "trx_routecode",
+        "data_type": "character varying",
+        "character_maximum_length": 50,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "trx_tripdate",
+        "data_type": "timestamp without time zone",
+        "character_maximum_length": null,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "line_lineno",
+        "data_type": "integer",
+        "character_maximum_length": null,
+        "numeric_precision": 32,
+        "numeric_scale": 0,
+        "is_nullable": "NO",
+        "column_default": null
+      },
+      {
+        "column_name": "line_itemcode",
+        "data_type": "character varying",
+        "character_maximum_length": 50,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "NO",
+        "column_default": null
+      },
+      {
+        "column_name": "line_baseprice",
+        "data_type": "double precision",
+        "character_maximum_length": null,
+        "numeric_precision": 53,
+        "numeric_scale": null,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "line_uom",
+        "data_type": "character varying",
+        "character_maximum_length": 20,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "NO",
+        "column_default": null
+      },
+      {
+        "column_name": "line_quantitybu",
+        "data_type": "double precision",
+        "character_maximum_length": null,
+        "numeric_precision": 53,
+        "numeric_scale": null,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "line_quantitysu",
+        "data_type": "double precision",
+        "character_maximum_length": null,
+        "numeric_precision": 53,
+        "numeric_scale": null,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "line_taxpercentage",
+        "data_type": "double precision",
+        "character_maximum_length": null,
+        "numeric_precision": 53,
+        "numeric_scale": null,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "line_totaldiscountpercentage",
+        "data_type": "double precision",
+        "character_maximum_length": null,
+        "numeric_precision": 53,
+        "numeric_scale": null,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "line_totaldiscountamount",
+        "data_type": "double precision",
+        "character_maximum_length": null,
+        "numeric_precision": 53,
+        "numeric_scale": null,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "line_itemdescription",
+        "data_type": "character varying",
+        "character_maximum_length": 100,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "line_itemaltdescription",
+        "data_type": "character varying",
+        "character_maximum_length": 100,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "line_promoid",
+        "data_type": "numeric",
+        "character_maximum_length": null,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "line_promotype",
+        "data_type": "character varying",
+        "character_maximum_length": 50,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "line_expirydate",
+        "data_type": "timestamp without time zone",
+        "character_maximum_length": null,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "line_batchnumber",
+        "data_type": "character varying",
+        "character_maximum_length": 50,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "line_taxamount",
+        "data_type": "double precision",
+        "character_maximum_length": null,
+        "numeric_precision": 53,
+        "numeric_scale": null,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "customer_code",
+        "data_type": "character varying",
+        "character_maximum_length": 50,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "customer_description",
+        "data_type": "character varying",
+        "character_maximum_length": 200,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "customer_parentcode",
+        "data_type": "character varying",
+        "character_maximum_length": 50,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "customer_citycode",
+        "data_type": "character varying",
+        "character_maximum_length": 200,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "customer_regioncode",
+        "data_type": "character varying",
+        "character_maximum_length": 50,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "customer_isactive",
+        "data_type": "boolean",
+        "character_maximum_length": null,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "customer_customerarabicname",
+        "data_type": "character varying",
+        "character_maximum_length": 400,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "customer_divisionname",
+        "data_type": "character varying",
+        "character_maximum_length": 200,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "customer_groupname",
+        "data_type": "character varying",
+        "character_maximum_length": 200,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "customer_subclassification",
+        "data_type": "character varying",
+        "character_maximum_length": 200,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "customer_zone",
+        "data_type": "character varying",
+        "character_maximum_length": 200,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "customer_type",
+        "data_type": "character varying",
+        "character_maximum_length": 10,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "customer_jdecustomertype",
+        "data_type": "character varying",
+        "character_maximum_length": 50,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "customer_contactpersonname",
+        "data_type": "character varying",
+        "character_maximum_length": 200,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "customer_contactno1",
+        "data_type": "character varying",
+        "character_maximum_length": 50,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "customer_contactno2",
+        "data_type": "character varying",
+        "character_maximum_length": 50,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "customer_email",
+        "data_type": "character varying",
+        "character_maximum_length": 150,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "customer_address1",
+        "data_type": "character varying",
+        "character_maximum_length": 200,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "customer_address2",
+        "data_type": "character varying",
+        "character_maximum_length": 200,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "customer_address3",
+        "data_type": "character varying",
+        "character_maximum_length": 200,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "customer_longitude",
+        "data_type": "double precision",
+        "character_maximum_length": null,
+        "numeric_precision": 53,
+        "numeric_scale": null,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "customer_latitude",
+        "data_type": "double precision",
+        "character_maximum_length": null,
+        "numeric_precision": 53,
+        "numeric_scale": null,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "customer_routecode",
+        "data_type": "character varying",
+        "character_maximum_length": 50,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "customer_salesmancode",
+        "data_type": "character varying",
+        "character_maximum_length": 50,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "customer_alternatecode",
+        "data_type": "character varying",
+        "character_maximum_length": 50,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "customer_channelcode",
+        "data_type": "character varying",
+        "character_maximum_length": 50,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "customer_channel_description",
+        "data_type": "character varying",
+        "character_maximum_length": 200,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "customer_subchannelcode",
+        "data_type": "character varying",
+        "character_maximum_length": 50,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "customer_subchannel_description",
+        "data_type": "character varying",
+        "character_maximum_length": 200,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "customer_subsubchannelcode",
+        "data_type": "character varying",
+        "character_maximum_length": 50,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "customer_subsubchannel_description",
+        "data_type": "character varying",
+        "character_maximum_length": 200,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "user_description",
+        "data_type": "character varying",
+        "character_maximum_length": 100,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "user_email",
+        "data_type": "character varying",
+        "character_maximum_length": 150,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "user_mobileno",
+        "data_type": "character varying",
+        "character_maximum_length": 50,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "user_isactive",
+        "data_type": "boolean",
+        "character_maximum_length": null,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "user_usertype",
+        "data_type": "character varying",
+        "character_maximum_length": 50,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "item_description",
+        "data_type": "character varying",
+        "character_maximum_length": 100,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "item_grouplevel1",
+        "data_type": "character varying",
+        "character_maximum_length": 50,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "item_grouplevel2",
+        "data_type": "character varying",
+        "character_maximum_length": 50,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "item_grouplevel3",
+        "data_type": "character varying",
+        "character_maximum_length": 50,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "item_grouplevel4",
+        "data_type": "character varying",
+        "character_maximum_length": 50,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "item_grouplevel5",
+        "data_type": "character varying",
+        "character_maximum_length": 50,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "item_brand_description",
+        "data_type": "character varying",
+        "character_maximum_length": 250,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "item_subbrand_description",
+        "data_type": "character varying",
+        "character_maximum_length": 250,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "item_category_description",
+        "data_type": "character varying",
+        "character_maximum_length": 250,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "route_name",
+        "data_type": "character varying",
+        "character_maximum_length": 200,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "route_salesmancode",
+        "data_type": "character varying",
+        "character_maximum_length": 50,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "route_areacode",
+        "data_type": "character varying",
+        "character_maximum_length": 100,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "route_subareacode",
+        "data_type": "character varying",
+        "character_maximum_length": 100,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "route_isactive",
+        "data_type": "boolean",
+        "character_maximum_length": null,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "city_description",
+        "data_type": "character varying",
+        "character_maximum_length": 200,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "region_description",
+        "data_type": "character varying",
+        "character_maximum_length": 200,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "region_isactive",
+        "data_type": "boolean",
+        "character_maximum_length": null,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "warehouse_description",
+        "data_type": "character varying",
+        "character_maximum_length": 400,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "warehouse_isactive",
+        "data_type": "boolean",
+        "character_maximum_length": null,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "YES",
+        "column_default": null
+      },
+      {
+        "column_name": "sync_created_at",
+        "data_type": "timestamp without time zone",
+        "character_maximum_length": null,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "NO",
+        "column_default": "CURRENT_TIMESTAMP"
+      },
+      {
+        "column_name": "sync_updated_at",
+        "data_type": "timestamp without time zone",
+        "character_maximum_length": null,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "is_nullable": "NO",
+        "column_default": "CURRENT_TIMESTAMP"
+      }
+    ],
+    "rowCount": 14333716,
+    "sampleData": {
+      "id": "10046190",
+      "trx_trxcode": "00020_112078457",
+      "trx_orgcode": "00020",
+      "trx_usercode": "332210",
+      "trx_clientcode": "612053",
+      "trx_trxdate": "2025-07-04T01:09:20.000Z",
+      "trx_trxtype": 1,
+      "trx_currencycode": "AED",
+      "trx_paymenttype": 1,
+      "trx_totalamount": 208.98,
+      "trx_totaldiscountamount": 13.6,
+      "trx_totaltaxamount": 9.78,
+      "trx_status": 2,
+      "trx_createdon": "2025-07-04T01:09:28.503Z",
+      "trx_trxstatus": 200,
+      "trx_lpocode": null,
+      "trx_deliverynumber": null,
+      "trx_invoicenumber": null,
+      "trx_routecode": "H05",
+      "trx_tripdate": "2025-07-03T18:30:00.000Z",
+      "line_lineno": 5,
+      "line_itemcode": "GF3232",
+      "line_baseprice": 34.2,
+      "line_uom": "PC",
+      "line_quantitybu": 12,
+      "line_quantitysu": 0,
+      "line_taxpercentage": 5,
+      "line_totaldiscountpercentage": 0,
+      "line_totaldiscountamount": 1.44,
+      "line_itemdescription": "Safa SL Yog Fresh P 400gm1X1",
+      "line_itemaltdescription": "Safa SL Yog Fresh P 400gm1X1",
+      "line_promoid": "0.0",
+      "line_promotype": "SPECIAL",
+      "line_expirydate": "2025-10-11T18:30:00.000Z",
+      "line_batchnumber": "B1",
+      "line_taxamount": null,
+      "customer_code": "612053",
+      "customer_description": "ZAIN MART SUPERMARKET LLC",
+      "customer_parentcode": null,
+      "customer_citycode": null,
+      "customer_regioncode": "EAD",
+      "customer_isactive": true,
+      "customer_customerarabicname": null,
+      "customer_divisionname": null,
+      "customer_groupname": null,
+      "customer_subclassification": null,
+      "customer_zone": null,
+      "customer_type": null,
+      "customer_jdecustomertype": "CS",
+      "customer_contactpersonname": null,
+      "customer_contactno1": "971    553137474",
+      "customer_contactno2": null,
+      "customer_email": null,
+      "customer_address1": "10510",
+      "customer_address2": null,
+      "customer_address3": null,
+      "customer_longitude": 55.7973022,
+      "customer_latitude": 25.6560947,
+      "customer_routecode": null,
+      "customer_salesmancode": null,
+      "customer_alternatecode": null,
+      "customer_channelcode": "02",
+      "customer_channel_description": "TRADITIONAL TRADE",
+      "customer_subchannelcode": null,
+      "customer_subchannel_description": null,
+      "customer_subsubchannelcode": null,
+      "customer_subsubchannel_description": null,
+      "user_description": "ABHILASH K.M.",
+      "user_email": null,
+      "user_mobileno": "0526746399",
+      "user_isactive": true,
+      "user_usertype": "VanSales",
+      "item_description": "Safa SL Yog Fresh P 400gm1X1",
+      "item_grouplevel1": "NFPC",
+      "item_grouplevel2": "19",
+      "item_grouplevel3": "S07",
+      "item_grouplevel4": "C10",
+      "item_grouplevel5": "F01",
+      "item_brand_description": "SAFA",
+      "item_subbrand_description": "Safa Dairy",
+      "item_category_description": "Yog",
+      "route_name": "H05",
+      "route_salesmancode": "332210",
+      "route_areacode": "N.E",
+      "route_subareacode": "RAK",
+      "route_isactive": true,
+      "city_description": null,
+      "region_description": "EAD",
+      "region_isactive": true,
+      "warehouse_description": null,
+      "warehouse_isactive": null,
+      "sync_created_at": "2025-11-26T18:12:07.501Z",
+      "sync_updated_at": "2025-11-26T18:12:07.501Z"
+    }
+  }
+}

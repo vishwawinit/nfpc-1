@@ -1728,9 +1728,9 @@ export function StoreUserVisitReport() {
                       </td>
                       <td style={{ padding: '12px 16px', fontSize: '13px', color: 'rgb(107, 114, 128)' }}>
                         {(() => {
-                          const reason = visit.remarks || visit.visitPurpose || visit.visitOutcome || ''
-                          return (reason && reason !== '[null]' && reason !== 'null' && reason.trim() !== '') 
-                            ? reason 
+                          const reason = String(visit.remarks || visit.visitPurpose || visit.visitOutcome || '')
+                          return (reason && reason !== '[null]' && reason !== 'null' && reason.trim() !== '')
+                            ? reason
                             : 'N/A'
                         })()}
                       </td>

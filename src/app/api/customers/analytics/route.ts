@@ -1,9 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { query, db } from '@/lib/database'
-import { unstable_cache } from 'next/cache'
-import { mockDataService } from '@/services/mockDataService'
+import { query } from '@/lib/database'
 
-// Force dynamic rendering for routes that use searchParams
+// Force dynamic rendering
 export const dynamic = 'force-dynamic'
 
 // Helper function to parse date range string
@@ -14,24 +12,18 @@ const getDateRangeFromString = (dateRange: string) => {
 
   switch(dateRange) {
     case 'today':
-      startDate = new Date(current)
-      endDate = new Date(current)
       break
     case 'yesterday':
-      startDate = new Date(current)
       startDate.setDate(startDate.getDate() - 1)
       endDate = new Date(startDate)
       break
     case 'thisWeek':
     case 'last7Days':
-      startDate = new Date(current)
       startDate.setDate(startDate.getDate() - 6)
-      endDate = new Date(current)
       break
     case 'last30Days':
     case 'thisMonth':
       startDate = new Date(current.getFullYear(), current.getMonth(), 1)
-      endDate = new Date(current)
       break
     case 'lastMonth':
       startDate = new Date(current.getFullYear(), current.getMonth() - 1, 1)
@@ -40,7 +32,6 @@ const getDateRangeFromString = (dateRange: string) => {
     case 'thisQuarter':
       const quarter = Math.floor(current.getMonth() / 3)
       startDate = new Date(current.getFullYear(), quarter * 3, 1)
-      endDate = new Date(current)
       break
     case 'lastQuarter':
       const lastQuarter = Math.floor(current.getMonth() / 3) - 1
@@ -49,109 +40,86 @@ const getDateRangeFromString = (dateRange: string) => {
       break
     case 'thisYear':
       startDate = new Date(current.getFullYear(), 0, 1)
-      endDate = new Date(current)
       break
     default:
-      startDate = new Date(current)
       startDate.setDate(startDate.getDate() - 29)
-      endDate = new Date(current)
   }
 
-  return {
-    start: startDate,
-    end: endDate
-  }
+  return { start: startDate, end: endDate }
 }
 
-// Cached customer analytics fetcher
-const getCachedCustomerAnalytics = unstable_cache(
-  async (dateRange: string, filters: any) => {
+export async function GET(request: NextRequest) {
+  try {
+    const searchParams = request.nextUrl.searchParams
+    const dateRange = searchParams.get('range') || 'thisMonth'
+
+    // Get filter parameters
+    const routeCode = searchParams.get('routeCode')
+    const userCode = searchParams.get('userCode') || searchParams.get('salesmanCode')
+    const customerCode = searchParams.get('customerCode')
+    const channelCode = searchParams.get('channelCode')
+
     const { start: startDate, end: endDate } = getDateRangeFromString(dateRange)
     const startDateStr = startDate.toISOString().split('T')[0]
     const endDateStr = endDate.toISOString().split('T')[0]
 
-    await db.initialize()
+    // Build filter conditions using real tblTrxHeader table
+    const conditions: string[] = [
+      `t."TrxDate" >= $1::timestamp`,
+      `t."TrxDate" < ($2::timestamp + INTERVAL '1 day')`,
+      `t."TrxType" = 1`
+    ]
+    const params: any[] = [startDateStr, endDateStr]
+    let paramIndex = 3
 
-    // Build filter conditions
-    const conditions: string[] = []
-    const params: any[] = []
-    let paramIndex = 1
-
-    // Always filter by transaction type (invoices only)
-    conditions.push(`trx_type = 1`)
-    
-    // Filter out NULL order_total values
-    conditions.push(`order_total IS NOT NULL`)
-
-    // Date conditions
-    conditions.push(`trx_date_only >= $${paramIndex}`)
-    params.push(startDateStr)
-    paramIndex++
-    conditions.push(`trx_date_only <= $${paramIndex}`)
-    params.push(endDateStr)
-    paramIndex++
-
-    // Region filter
-    if (filters.regionCode) {
-      conditions.push(`region_code = $${paramIndex}`)
-      params.push(filters.regionCode)
+    if (routeCode) {
+      conditions.push(`t."RouteCode" = $${paramIndex}`)
+      params.push(routeCode)
       paramIndex++
     }
 
-    // Salesman filter
-    if (filters.salesmanCode) {
-      conditions.push(`field_user_code = $${paramIndex}`)
-      params.push(filters.salesmanCode)
+    if (userCode) {
+      conditions.push(`t."UserCode" = $${paramIndex}`)
+      params.push(userCode)
       paramIndex++
     }
 
-    // Route filter
-    if (filters.routeCode) {
-      conditions.push(`user_route_code = $${paramIndex}`)
-      params.push(filters.routeCode)
+    if (customerCode) {
+      conditions.push(`t."ClientCode" = $${paramIndex}`)
+      params.push(customerCode)
       paramIndex++
     }
 
-    // Channel Code filter
-    if (filters.channelCode) {
-      conditions.push(`chain_code = $${paramIndex}`)
-      params.push(filters.channelCode)
-      paramIndex++
-    }
-
-    // Customer filter
-    if (filters.customerCode) {
-      conditions.push(`store_code = $${paramIndex}`)
-      params.push(filters.customerCode)
+    if (channelCode) {
+      conditions.push(`c."RegionCode" = $${paramIndex}`)
+      params.push(channelCode)
       paramIndex++
     }
 
     const whereClause = `WHERE ${conditions.join(' AND ')}`
 
-    // Get customer summary data
+    // Get customer summary from real tables
     const customerSummaryQuery = `
       SELECT
-        store_code as customer_code,
-        MAX(store_name) as customer_name,
-        MAX(user_route_code) as territory,
-        MAX(region_code) as region,
-        MAX(region_name) as region_name,
-        MAX(city_code) as city,
-        MAX(chain_code) as channel_code,
-        MAX(chain_name) as chain_name,
+        t."ClientCode" as customer_code,
+        MAX(c."Description") as customer_name,
+        MAX(c."RegionCode") as region,
+        MAX(c."RouteCode") as route_code,
+        MAX(c."RegionCode") as channel_code,
         'Active' as status,
-        SUM(order_total) as total_sales,
-        COUNT(DISTINCT trx_code) as total_orders,
-        CASE 
-          WHEN COUNT(DISTINCT trx_code) > 0 
-          THEN SUM(order_total) / COUNT(DISTINCT trx_code)
-          ELSE 0 
+        SUM(t."TotalAmount") as total_sales,
+        COUNT(DISTINCT t."TrxCode") as total_orders,
+        CASE
+          WHEN COUNT(DISTINCT t."TrxCode") > 0
+          THEN SUM(t."TotalAmount") / COUNT(DISTINCT t."TrxCode")
+          ELSE 0
         END as avg_order_value,
         'AED' as currency_code,
-        MAX(trx_date_only) as last_order_date
-      FROM flat_transactions
+        MAX(DATE(t."TrxDate")) as last_order_date
+      FROM "tblTrxHeader" t
+      LEFT JOIN "tblCustomer" c ON t."ClientCode" = c."Code"
       ${whereClause}
-      GROUP BY store_code
+      GROUP BY t."ClientCode"
       ORDER BY total_sales DESC
     `
 
@@ -165,40 +133,11 @@ const getCachedCustomerAnalytics = unstable_cache(
     const totalOrders = customers.reduce((sum, c) => sum + parseInt(c.total_orders || '0'), 0)
     const avgOrderValue = totalOrders > 0 ? totalSales / totalOrders : 0
 
-    // City analysis
-    const cityData = customers.reduce((acc: any, customer) => {
-      const city = customer.city || 'Unknown'
-      if (!acc[city]) {
-        acc[city] = {
-          customers: 0,
-          sales: 0,
-          orders: 0
-        }
-      }
-      acc[city].customers++
-      acc[city].sales += parseFloat(customer.total_sales || '0')
-      acc[city].orders += parseInt(customer.total_orders || '0')
-      return acc
-    }, {})
-
-    const cityAnalysis = Object.entries(cityData).map(([city, data]: [string, any]) => ({
-      city,
-      customers: data.customers,
-      sales: data.sales,
-      orders: data.orders,
-      contribution: totalSales > 0 ? (data.sales / totalSales * 100) : 0,
-      avgSales: data.customers > 0 ? data.sales / data.customers : 0
-    })).sort((a, b) => b.sales - a.sales)
-
     // Region analysis
     const regionData = customers.reduce((acc: any, customer) => {
-      const region = customer.region_name || customer.region || 'Unknown'
+      const region = customer.region || 'Unknown'
       if (!acc[region]) {
-        acc[region] = {
-          customers: 0,
-          sales: 0,
-          orders: 0
-        }
+        acc[region] = { customers: 0, sales: 0, orders: 0 }
       }
       acc[region].customers++
       acc[region].sales += parseFloat(customer.total_sales || '0')
@@ -215,23 +154,19 @@ const getCachedCustomerAnalytics = unstable_cache(
       avgSales: data.customers > 0 ? data.sales / data.customers : 0
     })).sort((a, b) => b.sales - a.sales)
 
-    // Channel Code analysis (GT/MT)
-    const channelCodeData = customers.reduce((acc: any, customer) => {
-      const channelCode = customer.channel_code || 'Unknown'
-      if (!acc[channelCode]) {
-        acc[channelCode] = {
-          customers: 0,
-          sales: 0,
-          orders: 0
-        }
+    // Channel analysis
+    const channelData = customers.reduce((acc: any, customer) => {
+      const channel = customer.channel_code || 'Unknown'
+      if (!acc[channel]) {
+        acc[channel] = { customers: 0, sales: 0, orders: 0 }
       }
-      acc[channelCode].customers++
-      acc[channelCode].sales += parseFloat(customer.total_sales || '0')
-      acc[channelCode].orders += parseInt(customer.total_orders || '0')
+      acc[channel].customers++
+      acc[channel].sales += parseFloat(customer.total_sales || '0')
+      acc[channel].orders += parseInt(customer.total_orders || '0')
       return acc
     }, {})
 
-    const channelCodeAnalysis = Object.entries(channelCodeData).map(([channelCode, data]: [string, any]) => ({
+    const channelCodeAnalysis = Object.entries(channelData).map(([channelCode, data]: [string, any]) => ({
       channelCode,
       customers: data.customers,
       sales: data.sales,
@@ -239,87 +174,32 @@ const getCachedCustomerAnalytics = unstable_cache(
       contribution: totalSales > 0 ? (data.sales / totalSales * 100) : 0
     })).sort((a, b) => b.sales - a.sales)
 
-    // Chain Name analysis
-    const chainData = customers.reduce((acc: any, customer) => {
-      const chainName = customer.chain_name || 'Unknown'
-      if (!acc[chainName]) {
-        acc[chainName] = {
-          customers: 0,
-          sales: 0,
-          orders: 0
-        }
-      }
-      acc[chainName].customers++
-      acc[chainName].sales += parseFloat(customer.total_sales || '0')
-      acc[chainName].orders += parseInt(customer.total_orders || '0')
-      return acc
-    }, {})
-
-    const chainNameAnalysis = Object.entries(chainData).map(([chainName, data]: [string, any]) => ({
-      chainName,
-      customers: data.customers,
-      sales: data.sales,
-      orders: data.orders,
-      contribution: totalSales > 0 ? (data.sales / totalSales * 100) : 0
-    })).sort((a, b) => b.sales - a.sales)
-
-    return {
-      metrics: {
-        totalCustomers,
-        activeCustomers,
-        totalSales,
-        totalOrders,
-        avgOrderValue,
-        currencyCode: customers[0]?.currency_code || 'AED'
-      },
-      cityAnalysis,
-      regionAnalysis,
-      channelCodeAnalysis,
-      chainNameAnalysis,
-      customers: customers.slice(0, 25) // Top 25 for initial load
-    }
-  },
-  (dateRange: string, filters: any) => ['customer-analytics', dateRange, JSON.stringify(filters)],
-  {
-    revalidate: 300, // Cache for 5 minutes
-    tags: ['customer-analytics']
-  }
-)
-
-export async function GET(request: NextRequest) {
-  try {
-    const searchParams = request.nextUrl.searchParams
-    const dateRange = searchParams.get('range') || 'thisMonth'
-    
-    // Get filter parameters
-    const regionCode = searchParams.get('regionCode')
-    const salesmanCode = searchParams.get('salesmanCode')
-    const routeCode = searchParams.get('routeCode')
-    const customerCode = searchParams.get('customerCode')
-    const territoryCode = searchParams.get('territoryCode')
-    const channelCode = searchParams.get('channelCode')
-
-    const filters = {
-      regionCode,
-      salesmanCode,
-      routeCode,
-      customerCode,
-      territoryCode,
-      channelCode
-    }
-
-    // Check if we should use mock data
-    if (process.env.USE_MOCK_DATA === 'true') {
-      return await getMockCustomerAnalytics(dateRange, filters)
-    }
-
-    const data = await getCachedCustomerAnalytics(dateRange, filters)
-
     return NextResponse.json({
       success: true,
-      data,
+      data: {
+        metrics: {
+          totalCustomers,
+          activeCustomers,
+          totalSales,
+          totalOrders,
+          avgOrderValue,
+          currencyCode: 'AED'
+        },
+        regionAnalysis,
+        channelCodeAnalysis,
+        customers: customers.slice(0, 50).map(c => ({
+          customerCode: c.customer_code,
+          customerName: c.customer_name,
+          region: c.region,
+          channelCode: c.channel_code,
+          totalSales: parseFloat(c.total_sales || '0'),
+          totalOrders: parseInt(c.total_orders || '0'),
+          avgOrderValue: parseFloat(c.avg_order_value || '0'),
+          lastOrderDate: c.last_order_date
+        }))
+      },
       timestamp: new Date().toISOString(),
-      source: 'postgresql-flat-table'
+      source: 'postgresql-real-tables'
     })
 
   } catch (error) {
@@ -330,110 +210,4 @@ export async function GET(request: NextRequest) {
       message: error instanceof Error ? error.message : 'Unknown error'
     }, { status: 500 })
   }
-}
-
-// Mock data implementation
-async function getMockCustomerAnalytics(dateRange: string, filters: any) {
-  const { start: startDate, end: endDate } = getDateRangeFromString(dateRange)
-  
-  // Get customer analytics from mock data
-  const customers = await mockDataService.getCustomerAnalytics({
-    startDate: startDate.toISOString().split('T')[0],
-    endDate: endDate.toISOString().split('T')[0],
-    ...filters
-  })
-
-  // Filter customers based on filters
-  let filteredCustomers = customers
-
-  if (filters.regionCode) {
-    filteredCustomers = filteredCustomers.filter(c => c.regionCode === filters.regionCode)
-  }
-  if (filters.salesmanCode) {
-    filteredCustomers = filteredCustomers.filter(c => c.userCode === filters.salesmanCode)
-  }
-  if (filters.routeCode) {
-    filteredCustomers = filteredCustomers.filter(c => c.routeCode === filters.routeCode)
-  }
-  if (filters.channelCode) {
-    filteredCustomers = filteredCustomers.filter(c => c.chainCode === filters.channelCode)
-  }
-
-  // Calculate metrics
-  const totalCustomers = filteredCustomers.length
-  const activeCustomers = filteredCustomers.filter(c => c.totalOrders > 0).length
-  const totalSales = filteredCustomers.reduce((sum, c) => sum + (c.totalSales || 0), 0)
-  const totalOrders = filteredCustomers.reduce((sum, c) => sum + (c.totalOrders || 0), 0)
-  const avgOrderValue = totalOrders > 0 ? totalSales / totalOrders : 0
-
-  // City Analysis
-  const cityAnalysis = filteredCustomers.reduce((acc: any, customer) => {
-    const city = customer.cityCode || 'Unknown'
-    if (!acc[city]) {
-      acc[city] = { city, sales: 0, customers: 0 }
-    }
-    acc[city].sales += customer.totalSales || 0
-    acc[city].customers += 1
-    return acc
-  }, {})
-
-  // Region Analysis
-  const regionAnalysis = filteredCustomers.reduce((acc: any, customer) => {
-    const region = customer.regionName || customer.regionCode || 'Unknown'
-    if (!acc[region]) {
-      acc[region] = { region, sales: 0, customers: 0 }
-    }
-    acc[region].sales += customer.totalSales || 0
-    acc[region].customers += 1
-    return acc
-  }, {})
-
-  // Channel Code Analysis
-  const channelCodeAnalysis = filteredCustomers.reduce((acc: any, customer) => {
-    const channel = customer.chainCode || 'Unknown'
-    if (!acc[channel]) {
-      acc[channel] = { channelCode: channel, sales: 0, customers: 0 }
-    }
-    acc[channel].sales += customer.totalSales || 0
-    acc[channel].customers += 1
-    return acc
-  }, {})
-
-  // Chain Name Analysis
-  const chainNameAnalysis = filteredCustomers.reduce((acc: any, customer) => {
-    const chain = customer.chainName || 'Unknown'
-    if (!acc[chain]) {
-      acc[chain] = { chainName: chain, sales: 0, customers: 0 }
-    }
-    acc[chain].sales += customer.totalSales || 0
-    acc[chain].customers += 1
-    return acc
-  }, {})
-
-  // Calculate percentages for channel analysis
-  const channelAnalysisWithPercentages = Object.values(channelCodeAnalysis).map((item: any) => ({
-    ...item,
-    contribution: totalSales > 0 ? (item.sales / totalSales) * 100 : 0
-  }))
-
-  return NextResponse.json({
-    success: true,
-    data: {
-      metrics: {
-        totalCustomers,
-        activeCustomers,
-        totalSales,
-        totalOrders,
-        avgOrderValue,
-        currencyCode: 'AED'
-      },
-      cityAnalysis: Object.values(cityAnalysis).sort((a: any, b: any) => b.sales - a.sales),
-      regionAnalysis: Object.values(regionAnalysis).sort((a: any, b: any) => b.sales - a.sales),
-      channelCodeAnalysis: channelAnalysisWithPercentages.sort((a: any, b: any) => b.sales - a.sales),
-      chainNameAnalysis: Object.values(chainNameAnalysis).sort((a: any, b: any) => b.sales - a.sales),
-      customers: filteredCustomers.slice(0, 25) // Top 25 for initial load
-    },
-    timestamp: new Date().toISOString(),
-    source: 'mock-data'
-  })
 }

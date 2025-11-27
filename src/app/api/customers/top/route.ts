@@ -236,38 +236,41 @@ export async function GET(request: NextRequest) {
     
     // Add date conditions if they exist - optimized for index usage
     if (startDate && endDate) {
-      finalConditions.push(`t.transaction_date >= $${currentParamIndex}::date`)
+      finalConditions.push(`t."TrxDate" >= $${currentParamIndex}::timestamp`)
       queryParams.push(startDate)
       currentParamIndex++
-      
-      finalConditions.push(`t.transaction_date < ($${currentParamIndex}::date + INTERVAL '1 day')`)
+
+      finalConditions.push(`t."TrxDate" < ($${currentParamIndex}::timestamp + INTERVAL '1 day')`)
       queryParams.push(endDate)
       currentParamIndex++
     }
-    
+
+    // Only include invoices/sales (TrxType = 1)
+    finalConditions.push(`t."TrxType" = 1`)
+
     // Add other filters
     if (regionCode) {
-      finalConditions.push(`c.region_code = $${currentParamIndex}`)
+      finalConditions.push(`c."RegionCode" = $${currentParamIndex}`)
       queryParams.push(regionCode)
       currentParamIndex++
     }
-    
-    if (cityCode) {
-      finalConditions.push(`c.city_code = $${currentParamIndex}`)
-      queryParams.push(cityCode)
-      currentParamIndex++
-    }
-    
+
+    // City filter - disabled as City column may not exist
+    // if (cityCode) {
+    //   finalConditions.push(`c."City" = $${currentParamIndex}`)
+    //   queryParams.push(cityCode)
+    //   currentParamIndex++
+    // }
+
     if (userCode) {
-      finalConditions.push(`t.user_code = $${currentParamIndex}`)
+      finalConditions.push(`t."UserCode" = $${currentParamIndex}`)
       queryParams.push(userCode)
       currentParamIndex++
     }
-    
+
     // Always include these base conditions
-    finalConditions.push('t.customer_code IS NOT NULL')
-    finalConditions.push('t.order_total IS NOT NULL')
-    finalConditions.push('COALESCE(t.quantity_bu, 0) != 0')
+    finalConditions.push('t."ClientCode" IS NOT NULL')
+    finalConditions.push('t."TotalAmount" IS NOT NULL')
     
     const finalWhere = finalConditions.length > 0 ? `WHERE ${finalConditions.join(' AND ')}` : ''
     
@@ -280,25 +283,23 @@ export async function GET(request: NextRequest) {
     })
     
     const result = await query(`
-      SELECT 
-        t.customer_code as "customerCode",
-        COALESCE(MAX(t.customer_name), 'Unknown Customer') as "customerName",
-        SUM(ABS(COALESCE(t.quantity_bu, 0))) as "totalQuantity",
-        COUNT(*) as "totalOrders",
-        COALESCE(MAX(c.customer_type), 'Unknown') as "customerType",
-        COALESCE(MAX(c.city), 'Unknown') as "city", 
-        COALESCE(MAX(c.state), 'Unknown') as "state",
-        COALESCE(MAX(c.sales_person_code), 'Unknown') as "salesPerson",
-        COUNT(DISTINCT t.product_code) as "uniqueProducts",
-        COALESCE(SUM(CASE WHEN t.order_total > 0 THEN t.order_total ELSE 0 END), 0) as "totalSales",
-        CASE WHEN COUNT(*) > 0 THEN COALESCE(SUM(CASE WHEN t.order_total > 0 THEN t.order_total ELSE 0 END), 0) / COUNT(*) ELSE 0 END as "avgOrderValue",
-        MAX(t.transaction_date) as "lastOrderDate",
-        COALESCE(MAX(t.currency_code), 'AED') as "currency"
-      FROM flat_transactions t
-      LEFT JOIN flat_customers_master c ON t.customer_code = c.customer_code
+      SELECT
+        t."ClientCode" as "customerCode",
+        COALESCE(MAX(c."Description"), 'Unknown Customer') as "customerName",
+        COUNT(DISTINCT t."TrxCode") as "totalOrders",
+        COALESCE(MAX(c."RouteCode"), 'Unknown') as "customerType",
+        'Unknown' as "city",
+        COALESCE(MAX(c."RegionCode"), 'Unknown') as "state",
+        COALESCE(MAX(c."SalesmanCode"), 'Unknown') as "salesPerson",
+        COALESCE(SUM(CASE WHEN t."TotalAmount" > 0 THEN t."TotalAmount" ELSE 0 END), 0) as "totalSales",
+        CASE WHEN COUNT(DISTINCT t."TrxCode") > 0 THEN COALESCE(SUM(CASE WHEN t."TotalAmount" > 0 THEN t."TotalAmount" ELSE 0 END), 0) / COUNT(DISTINCT t."TrxCode") ELSE 0 END as "avgOrderValue",
+        MAX(t."TrxDate") as "lastOrderDate",
+        COALESCE(MAX(t."CurrencyCode"), 'AED') as "currency"
+      FROM "tblTrxHeader" t
+      LEFT JOIN "tblCustomer" c ON t."ClientCode" = c."Code"
       ${finalWhere}
-      GROUP BY t.customer_code
-      ORDER BY SUM(CASE WHEN t.order_total > 0 THEN t.order_total ELSE 0 END) DESC 
+      GROUP BY t."ClientCode"
+      ORDER BY SUM(CASE WHEN t."TotalAmount" > 0 THEN t."TotalAmount" ELSE 0 END) DESC
       LIMIT $${currentParamIndex}
     `, queryParams)
 
@@ -322,9 +323,9 @@ export async function GET(request: NextRequest) {
       state: String(row.state || 'Unknown'),
       salesPerson: String(row.salesPerson || 'Unknown'),
       totalOrders: Number(row.totalOrders) || 0,
-      uniqueProducts: Number(row.uniqueProducts) || 0,
+      uniqueProducts: 0, // Not available without joining tblTrxDetail
       avgOrderValue: Number(row.avgOrderValue) || 0,
-      totalQuantity: Number(row.totalQuantity) || 0,
+      totalQuantity: 0, // Not available without joining tblTrxDetail
       lastOrderDate: row.lastOrderDate || null,
       currency: String(row.currency || 'AED')
     }))

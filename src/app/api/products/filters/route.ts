@@ -1,96 +1,98 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { query, db } from '@/lib/database'
-import { unstable_cache } from 'next/cache'
+import { query } from '@/lib/database'
 
-// Cached product filters fetcher - using flat_transactions (PostgreSQL)
-const getCachedProductFilters = unstable_cache(
-  async (dateRange: string, includeProducts: boolean, regionCode?: string) => {
-    await db.initialize()
+// Force dynamic rendering
+export const dynamic = 'force-dynamic'
 
-    // Get unique categories from product_group_level1 (the actual meaningful category)
+export async function GET(request: NextRequest) {
+  try {
+    const { searchParams } = new URL(request.url)
+    const includeProducts = searchParams.get('includeProducts') === 'true'
+
+    // Get unique categories from tblItem GroupLevel1
     const categoriesQuery = `
       SELECT DISTINCT
-        product_group_level1 as code,
-        product_group_level1 as name,
-        COUNT(DISTINCT product_code) as product_count
-      FROM flat_transactions
-      WHERE product_group_level1 IS NOT NULL 
-        AND product_group_level1 != '' 
-        AND LOWER(product_group_level1) NOT IN ('unknown', 'n/a', 'null', 'na', 'farmley')
-        AND product_group_level1 !~ '^\\s*$'
-      GROUP BY product_group_level1
+        i."GroupLevel1" as code,
+        i."GroupLevel1" as name,
+        COUNT(DISTINCT i."Code") as product_count
+      FROM "tblItem" i
+      WHERE i."GroupLevel1" IS NOT NULL
+        AND i."GroupLevel1" != ''
+        AND LOWER(i."GroupLevel1") NOT IN ('unknown', 'n/a', 'null', 'na')
+        AND i."GroupLevel1" !~ '^\\s*$'
+      GROUP BY i."GroupLevel1"
       ORDER BY product_count DESC
     `
 
-    // Get unique brands (product_group_level2)
+    // Get unique brands (GroupLevel2)
     const brandsQuery = `
       SELECT DISTINCT
-        product_group_level2 as code,
-        product_group_level2 as name,
-        COUNT(DISTINCT product_code) as product_count
-      FROM flat_transactions
-      WHERE product_group_level2 IS NOT NULL 
-        AND product_group_level2 != '' 
-        AND LOWER(product_group_level2) NOT IN ('unknown', 'n/a', 'null', 'na', 'farmley')
-        AND product_group_level2 !~ '^\\s*$'
-      GROUP BY product_group_level2
+        i."GroupLevel2" as code,
+        i."GroupLevel2" as name,
+        COUNT(DISTINCT i."Code") as product_count
+      FROM "tblItem" i
+      WHERE i."GroupLevel2" IS NOT NULL
+        AND i."GroupLevel2" != ''
+        AND LOWER(i."GroupLevel2") NOT IN ('unknown', 'n/a', 'null', 'na')
+        AND i."GroupLevel2" !~ '^\\s*$'
+      GROUP BY i."GroupLevel2"
+      ORDER BY product_count DESC
+    `
+
+    // Get unique subcategories (GroupLevel3)
+    const subcategoriesQuery = `
+      SELECT DISTINCT
+        i."GroupLevel3" as code,
+        i."GroupLevel3" as name,
+        COUNT(DISTINCT i."Code") as product_count
+      FROM "tblItem" i
+      WHERE i."GroupLevel3" IS NOT NULL
+        AND i."GroupLevel3" != ''
+        AND LOWER(i."GroupLevel3") NOT IN ('unknown', 'n/a', 'null', 'na')
+        AND i."GroupLevel3" !~ '^\\s*$'
+      GROUP BY i."GroupLevel3"
       ORDER BY product_count DESC
     `
 
     // Get all products for search dropdown (optional)
     const productsQuery = includeProducts ? `
       SELECT DISTINCT
-        product_code as code,
-        MAX(product_name) as name
-      FROM flat_transactions
-      WHERE product_code IS NOT NULL 
-        AND product_name IS NOT NULL
-        AND product_name != ''
-      GROUP BY product_code
-      ORDER BY MAX(product_name)
+        i."Code" as code,
+        i."Description" as name
+      FROM "tblItem" i
+      WHERE i."Code" IS NOT NULL
+        AND i."Description" IS NOT NULL
+        AND i."Description" != ''
+      ORDER BY i."Description"
       LIMIT 500
     ` : null
 
     const queries = [
-      db.query(categoriesQuery),
-      db.query(brandsQuery)
+      query(categoriesQuery),
+      query(brandsQuery),
+      query(subcategoriesQuery)
     ]
-    
+
     if (productsQuery) {
-      queries.push(db.query(productsQuery))
+      queries.push(query(productsQuery))
     }
 
     const results = await Promise.all(queries)
-    const [categoriesResult, brandsResult, productsResult] = results
-
-    return {
-      categories: categoriesResult.rows,
-      brands: brandsResult.rows,
-      subcategories: [], // Empty since all subcategories are "Farmley"
-      products: productsResult?.rows || []
-    }
-  },
-  (dateRange: string, includeProducts: boolean, regionCode?: string) => ['product-filters', dateRange, includeProducts.toString(), regionCode || 'all'],
-  {
-    revalidate: 300, // Cache for 5 minutes
-    tags: ['product-filters']
-  }
-)
-
-export async function GET(request: NextRequest) {
-  try {
-    const { searchParams } = new URL(request.url)
-    const dateRange = searchParams.get('range') || 'thisMonth'
-    const includeProducts = searchParams.get('includeProducts') === 'true'
-    const regionCode = searchParams.get('region')
-
-    const data = await getCachedProductFilters(dateRange, includeProducts, regionCode)
+    const [categoriesResult, brandsResult, subcategoriesResult, productsResult] = results
 
     return NextResponse.json({
       success: true,
-      data,
-      timestamp: new Date().toISOString(),
-      source: 'postgresql-flat-transactions'
+      data: {
+        categories: categoriesResult.rows,
+        brands: brandsResult.rows,
+        subcategories: subcategoriesResult.rows,
+        products: productsResult?.rows || []
+      },
+      timestamp: new Date().toISOString()
+    }, {
+      headers: {
+        'Cache-Control': 'public, s-maxage=300, stale-while-revalidate=600'
+      }
     })
 
   } catch (error) {

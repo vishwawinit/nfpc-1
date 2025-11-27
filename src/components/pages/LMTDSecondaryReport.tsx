@@ -58,6 +58,8 @@ const COLORS = ['#3b82f6', '#8b5cf6', '#ec4899', '#f59e0b', '#10b981', '#ef4444'
 export function LMTDSecondaryReport() {
   const [data, setData] = useState<DetailedData[]>([])
   const [summary, setSummary] = useState<Summary | null>(null)
+  const [dailyTrend, setDailyTrend] = useState<{ day: number, mtdRevenue: number, lmtdRevenue: number }[]>([])
+  const [topProducts, setTopProducts] = useState<{ productCode: string, productName: string, mtdRevenue: number, lmtdRevenue: number }[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [periods, setPeriods] = useState<any>(null)
@@ -178,6 +180,8 @@ export function LMTDSecondaryReport() {
       if (result.success) {
         setData(result.data || [])
         setSummary(result.summary)
+        setDailyTrend(result.dailyTrend || [])
+        setTopProducts(result.topProducts || [])
         setPeriods(result.periods)
         setCurrentPage(1)
         setLoading(false)
@@ -212,7 +216,7 @@ export function LMTDSecondaryReport() {
 
   // Chart data - properly filtered and sorted
   const chartData = useMemo(() => {
-    if (!data.length) return { daily: [], products: [], stores: [], users: [] }
+    if (!data.length || !periods) return { daily: [], products: [], stores: [], users: [] }
 
     // Filter data based on active filters (data is already filtered from API, but ensure consistency)
     const filteredData = data.filter(d => {
@@ -225,62 +229,20 @@ export function LMTDSecondaryReport() {
       return true
     })
 
-    // Daily trend - aggregate by date and sort chronologically
-    // The date field from API is COALESCE(m.sale_date, l.sale_date), which gives us the date to use
-    const dailyMap = new Map<string, { date: string, dateObj: Date, mtdRevenue: number, lmtdRevenue: number }>()
-    
-    filteredData.forEach(d => {
-      // Use the date field from the API response
-      if (!d.date) {
-        // Try to get date from mtdDate or lmtdDate if available
-        const altDate = (d as any).mtdDate || (d as any).lmtdDate
-        if (!altDate) return
-        d.date = altDate
-      }
-      
-      try {
-        const dateObj = new Date(d.date)
-        if (isNaN(dateObj.getTime())) {
-          console.warn('Invalid date in LMTD data:', d.date, d)
-          return
-        }
-        
-        const dateKey = dateObj.toISOString().split('T')[0]
-        const dateLabel = dateObj.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' })
-        
-        if (!dailyMap.has(dateKey)) {
-          dailyMap.set(dateKey, {
-            date: dateLabel,
-            dateObj,
-            mtdRevenue: 0,
-            lmtdRevenue: 0
-          })
-        }
-        
-        const item = dailyMap.get(dateKey)!
-        // Aggregate MTD and LMTD revenue
-        item.mtdRevenue += d.secondarySalesRevenueCurrentMonth || 0
-        item.lmtdRevenue += d.secondarySalesRevenueLastMonth || 0
-      } catch (error) {
-        console.warn('Error processing date in LMTD data:', d.date, error)
-      }
-    })
+    // Daily trend - use the dailyTrend data from API (already properly aggregated by day)
+    const dailyArray = dailyTrend.map(d => ({
+      date: `Day ${d.day}`,
+      dayNumber: d.day,
+      mtdRevenue: d.mtdRevenue,
+      lmtdRevenue: d.lmtdRevenue
+    }))
 
-    // Product data - aggregate by product
-    const productMap = new Map<string, { name: string, mtdRevenue: number, lmtdRevenue: number }>()
-    filteredData.forEach(d => {
-      if (!d.productCode) return
-      if (!productMap.has(d.productCode)) {
-        productMap.set(d.productCode, {
-          name: d.productName || d.productCode,
-          mtdRevenue: 0,
-          lmtdRevenue: 0
-        })
-      }
-      const item = productMap.get(d.productCode)!
-      item.mtdRevenue += d.secondarySalesRevenueCurrentMonth || 0
-      item.lmtdRevenue += d.secondarySalesRevenueLastMonth || 0
-    })
+    // Product data - use topProducts from API (already properly aggregated by product)
+    const productsArray = topProducts.map(p => ({
+      name: p.productName || p.productCode,
+      mtdRevenue: p.mtdRevenue,
+      lmtdRevenue: p.lmtdRevenue
+    }))
 
     // Store data - aggregate by store
     const storeMap = new Map<string, { name: string, mtdRevenue: number, lmtdRevenue: number }>()
@@ -314,15 +276,9 @@ export function LMTDSecondaryReport() {
       item.lmtdRevenue += d.secondarySalesRevenueLastMonth || 0
     })
 
-    // Sort daily data chronologically
-    const dailyArray = Array.from(dailyMap.values()).sort((a, b) => a.dateObj.getTime() - b.dateObj.getTime())
-
     return {
       daily: dailyArray,
-      products: Array.from(productMap.values())
-        .filter(p => p.mtdRevenue > 0 || p.lmtdRevenue > 0)
-        .sort((a, b) => b.mtdRevenue - a.mtdRevenue)
-        .slice(0, 10),
+      products: productsArray,
       stores: Array.from(storeMap.values())
         .filter(s => s.mtdRevenue > 0 || s.lmtdRevenue > 0)
         .sort((a, b) => b.mtdRevenue - a.mtdRevenue)
@@ -332,7 +288,7 @@ export function LMTDSecondaryReport() {
         .sort((a, b) => b.mtdRevenue - a.mtdRevenue)
         .slice(0, 10)
     }
-  }, [data, teamLeaderCode, userCode, storeCode, chainName, productCode])
+  }, [data, dailyTrend, topProducts, teamLeaderCode, userCode, storeCode, chainName, productCode])
 
   const formatCurrency = (amount: number) => {
     return new Intl.NumberFormat('en-IN', {
@@ -722,10 +678,19 @@ export function LMTDSecondaryReport() {
         <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
           {/* Daily Trend Chart */}
           <div className="bg-white p-6 rounded-lg border border-gray-200 shadow-sm xl:col-span-2">
-            <div className="flex items-center gap-2 mb-4">
-              <BarChart3 className="w-5 h-5 text-blue-600" />
-              <h3 className="text-lg font-semibold text-gray-900">Daily Sales Trend</h3>
-              <InfoTooltip content="Comparison of daily sales between current month (MTD) and last month (LMTD)" />
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-2">
+                <BarChart3 className="w-5 h-5 text-blue-600" />
+                <h3 className="text-lg font-semibold text-gray-900">Daily Sales Trend Comparison</h3>
+                <InfoTooltip content="Compares daily revenue by day of month: MTD (current period) vs LMTD (same days in previous month)" />
+              </div>
+              {periods && (
+                <div className="text-xs text-gray-500">
+                  <span className="text-blue-600 font-medium">MTD:</span> {new Date(periods.mtd.start).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' })} - {new Date(periods.mtd.end).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' })}
+                  <span className="mx-2">|</span>
+                  <span className="text-purple-600 font-medium">LMTD:</span> {new Date(periods.lmtd.start).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' })} - {new Date(periods.lmtd.end).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' })}
+                </div>
+              )}
             </div>
             {chartData.daily.length === 0 ? (
               <div className="flex items-center justify-center h-[350px] text-gray-500">

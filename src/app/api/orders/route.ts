@@ -29,7 +29,7 @@ function getCacheDuration(dateRange: string, hasCustomDates: boolean): number {
 function getDateRange(rangeStr: string) {
   const now = new Date()
   let startDate: Date, endDate: Date
-  
+
   switch (rangeStr) {
     case 'today':
       startDate = new Date(now.setHours(0, 0, 0, 0))
@@ -69,7 +69,7 @@ function getDateRange(rangeStr: string) {
       startDate = new Date(now.getFullYear(), now.getMonth(), 1)
       endDate = new Date(now)
   }
-  
+
   return {
     startStr: startDate.toISOString().split('T')[0],
     endStr: endDate.toISOString().split('T')[0]
@@ -79,7 +79,7 @@ function getDateRange(rangeStr: string) {
 export async function GET(request: NextRequest) {
   try {
     await db.initialize()
-    
+
     const searchParams = request.nextUrl.searchParams
     const range = searchParams.get('range') || 'thisMonth'
     const startDateParam = searchParams.get('startDate')
@@ -87,7 +87,7 @@ export async function GET(request: NextRequest) {
     const page = parseInt(searchParams.get('page') || '1')
     const limit = parseInt(searchParams.get('limit') || '50')
     const offset = (page - 1) * limit
-    
+
     // Filters
     const regionFilter = searchParams.get('region')
     const cityFilter = searchParams.get('city')
@@ -98,15 +98,15 @@ export async function GET(request: NextRequest) {
     const categoryFilter = searchParams.get('category')
     const searchQuery = searchParams.get('search')
     const loginUserCode = searchParams.get('loginUserCode')
-    
+
     // Get hierarchy-based allowed users
     let allowedUserCodes: string[] = []
     if (loginUserCode && !isAdmin(loginUserCode)) {
       allowedUserCodes = await getChildUsers(loginUserCode)
     }
-    
+
     let startDate: string, endDate: string
-    
+
     if (startDateParam && endDateParam) {
       startDate = startDateParam
       endDate = endDateParam
@@ -115,205 +115,255 @@ export async function GET(request: NextRequest) {
       startDate = dateResult.startStr
       endDate = dateResult.endStr
     }
-    
+
     // Build WHERE clause
-    let whereConditions = [`trx_type = 5`, `trx_date_only >= '${startDate}'`, `trx_date_only <= '${endDate}'`]
-    
+    let whereConditions = [
+      `t."TrxType" = 1`,
+      `DATE(t."TrxDate") >= '${startDate}'`,
+      `DATE(t."TrxDate") <= '${endDate}'`
+    ]
+
     // Add hierarchy filter if not admin
     if (allowedUserCodes.length > 0) {
       const userCodesStr = allowedUserCodes.map(code => `'${code}'`).join(', ')
-      whereConditions.push(`field_user_code IN (${userCodesStr})`)
+      whereConditions.push(`t."UserCode" IN (${userCodesStr})`)
     }
-    
+
     if (regionFilter && regionFilter !== 'all') {
-      whereConditions.push(`region_code = '${regionFilter}'`)
+      whereConditions.push(`c."RegionCode" = '${regionFilter}'`)
     }
     if (cityFilter && cityFilter !== 'all') {
-      whereConditions.push(`city_code = '${cityFilter}'`)
+      whereConditions.push(`c."CityCode" = '${cityFilter}'`)
     }
     if (chainFilter && chainFilter !== 'all') {
-      whereConditions.push(`chain_code = '${chainFilter}'`)
+      whereConditions.push(`c."JDECustomerType" = '${chainFilter}'`)
     }
     if (customerFilter && customerFilter !== 'all') {
-      whereConditions.push(`store_code = '${customerFilter}'`)
+      whereConditions.push(`t."ClientCode" = '${customerFilter}'`)
     }
     if (salesmanFilter && salesmanFilter !== 'all') {
-      whereConditions.push(`field_user_code = '${salesmanFilter}'`)
+      whereConditions.push(`t."UserCode" = '${salesmanFilter}'`)
     }
     if (teamLeaderFilter && teamLeaderFilter !== 'all') {
-      whereConditions.push(`tl_code = '${teamLeaderFilter}'`)
-    }
-    if (categoryFilter && categoryFilter !== 'all') {
-      whereConditions.push(`product_group = '${categoryFilter}'`)
+      whereConditions.push(`c."SalesmanCode" = '${teamLeaderFilter}'`)
     }
     if (searchQuery) {
       whereConditions.push(`(
-        store_code ILIKE '%${searchQuery}%' OR 
-        store_name ILIKE '%${searchQuery}%' OR 
-        trx_code ILIKE '%${searchQuery}%' OR
-        product_name ILIKE '%${searchQuery}%'
+        t."ClientCode" ILIKE '%${searchQuery}%' OR
+        c."Description" ILIKE '%${searchQuery}%' OR
+        t."TrxCode" ILIKE '%${searchQuery}%'
       )`)
     }
-    
+
     const whereClause = whereConditions.length > 0 ? `WHERE ${whereConditions.join(' AND ')}` : ''
-    
-    // Get summary metrics
+
+    // Get summary metrics with proper joins
     const metricsQuery = `
-      SELECT 
-        COUNT(DISTINCT trx_code) as "totalOrders",
-        COUNT(DISTINCT store_code) as "totalCustomers",
-        COUNT(DISTINCT product_code) as "totalProducts",
-        SUM(net_amount) as "totalSales",
-        AVG(net_amount) as "avgOrderValue",
-        SUM(quantity) as "totalQuantity"
-      FROM flat_sales_transactions
-      ${whereClause}
+      WITH transaction_totals AS (
+        SELECT
+          t."TrxCode",
+          SUM(ABS(COALESCE(d."QuantityBU", 0))) as trx_quantity
+        FROM "tblTrxHeader" t
+        LEFT JOIN "tblTrxDetail" d ON t."TrxCode" = d."TrxCode"
+        LEFT JOIN "tblCustomer" c ON t."ClientCode" = c."Code"
+        ${whereClause}
+        GROUP BY t."TrxCode"
+      )
+      SELECT
+        (SELECT COUNT(DISTINCT t."TrxCode")
+         FROM "tblTrxHeader" t
+         LEFT JOIN "tblCustomer" c ON t."ClientCode" = c."Code"
+         ${whereClause}) as "totalOrders",
+        (SELECT COUNT(DISTINCT t."ClientCode")
+         FROM "tblTrxHeader" t
+         LEFT JOIN "tblCustomer" c ON t."ClientCode" = c."Code"
+         ${whereClause}) as "totalCustomers",
+        (SELECT COUNT(DISTINCT d."ItemCode")
+         FROM "tblTrxHeader" t
+         LEFT JOIN "tblTrxDetail" d ON t."TrxCode" = d."TrxCode"
+         LEFT JOIN "tblCustomer" c ON t."ClientCode" = c."Code"
+         ${whereClause}) as "totalProducts",
+        (SELECT SUM(COALESCE(t."TotalAmount", 0))
+         FROM "tblTrxHeader" t
+         LEFT JOIN "tblCustomer" c ON t."ClientCode" = c."Code"
+         ${whereClause}) as "totalSales",
+        (SELECT AVG(COALESCE(t."TotalAmount", 0))
+         FROM "tblTrxHeader" t
+         LEFT JOIN "tblCustomer" c ON t."ClientCode" = c."Code"
+         ${whereClause}) as "avgOrderValue",
+        (SELECT SUM(COALESCE(trx_quantity, 0))
+         FROM transaction_totals) as "totalQuantity"
     `
-    
+
     const metricsResult = await query(metricsQuery, [])
     const metrics = metricsResult.rows[0]
-    
-    // Get orders grouped by transaction
+
+    // Get orders with proper joins for descriptive names
     const ordersQuery = `
-      SELECT 
-        trx_code as "orderCode",
-        trx_date_only as "orderDate",
-        store_code as "customerCode",
-        store_name as "customerName",
-        COALESCE(region_name, 'Unknown') as "region",
-        COALESCE(city_name, 'Unknown') as "city",
-        COALESCE(chain_name, 'Unknown') as "chain",
-        COALESCE(field_user_name, 'Unknown') as "salesman",
-        field_user_code as "salesmanCode",
-        COALESCE(tl_name, 'Unknown') as "teamLeader",
-        tl_code as "teamLeaderCode",
-        COUNT(DISTINCT product_code) as "itemCount",
-        SUM(quantity) as "totalQuantity",
-        SUM(net_amount) as "orderTotal"
-      FROM flat_sales_transactions
+      WITH transaction_quantities AS (
+        SELECT
+          "TrxCode",
+          SUM(ABS(COALESCE("QuantityBU", 0))) as total_quantity,
+          COUNT(DISTINCT "ItemCode") as item_count
+        FROM "tblTrxDetail"
+        GROUP BY "TrxCode"
+      )
+      SELECT
+        t."TrxCode" as "orderCode",
+        DATE(t."TrxDate") as "orderDate",
+        t."ClientCode" as "customerCode",
+        COALESCE(c."Description", 'Unknown') as "customerName",
+        COALESCE(reg."Description", c."RegionCode", 'Unknown') as "region",
+        COALESCE(city."Description", c."CityCode", 'Unknown') as "city",
+        COALESCE(chn."Description", c."JDECustomerType", 'Unknown') as "chain",
+        COALESCE(sales_user."Description", t."UserCode", 'Unknown') as "salesman",
+        t."UserCode" as "salesmanCode",
+        COALESCE(tl_user."Description", c."SalesmanCode", 'Unknown') as "teamLeader",
+        c."SalesmanCode" as "teamLeaderCode",
+        COALESCE(tq.item_count, 0) as "itemCount",
+        COALESCE(tq.total_quantity, 0) as "totalQuantity",
+        COALESCE(t."TotalAmount", 0) as "orderTotal"
+      FROM "tblTrxHeader" t
+      LEFT JOIN "tblCustomer" c ON t."ClientCode" = c."Code"
+      LEFT JOIN "tblRegion" reg ON c."RegionCode" = reg."Code"
+      LEFT JOIN "tblCity" city ON c."CityCode" = city."Code"
+      LEFT JOIN "tblChannel" chn ON c."JDECustomerType" = chn."Code"
+      LEFT JOIN "tblUser" sales_user ON t."UserCode" = sales_user."Code"
+      LEFT JOIN "tblUser" tl_user ON c."SalesmanCode" = tl_user."Code"
+      LEFT JOIN transaction_quantities tq ON t."TrxCode" = tq."TrxCode"
       ${whereClause}
-      GROUP BY 
-        trx_code, trx_date_only, store_code, store_name, 
-        region_name, city_name, chain_name, 
-        field_user_name, field_user_code, tl_name, tl_code
-      ORDER BY trx_date_only DESC, trx_code DESC
+      ORDER BY DATE(t."TrxDate") DESC, t."TrxCode" DESC
       LIMIT ${limit} OFFSET ${offset}
     `
-    
+
     const ordersResult = await query(ordersQuery, [])
-    
+
     // Get total count for pagination
     const countQuery = `
-      SELECT COUNT(DISTINCT trx_code) as total
-      FROM flat_sales_transactions
+      SELECT COUNT(DISTINCT t."TrxCode") as total
+      FROM "tblTrxHeader" t
+      LEFT JOIN "tblCustomer" c ON t."ClientCode" = c."Code"
       ${whereClause}
     `
-    
+
     const countResult = await query(countQuery, [])
     const totalOrders = parseInt(countResult.rows[0].total)
-    
+
+    // Category filter for products
+    const categoryWhereClause = categoryFilter && categoryFilter !== 'all'
+      ? whereClause + ` AND p."ProductGroup" = '${categoryFilter}'`
+      : whereClause
+
     // Get region-wise data for chart
     const regionWiseQuery = `
-      SELECT 
-        COALESCE(region_name, 'Unknown') as "region",
-        COUNT(DISTINCT trx_code) as "orderCount",
-        SUM(net_amount) as "totalSales"
-      FROM flat_sales_transactions
+      SELECT
+        COALESCE(reg."Description", c."RegionCode", 'Unknown') as "region",
+        COUNT(DISTINCT t."TrxCode") as "orderCount",
+        SUM(COALESCE(t."TotalAmount", 0)) as "totalSales"
+      FROM "tblTrxHeader" t
+      LEFT JOIN "tblCustomer" c ON t."ClientCode" = c."Code"
+      LEFT JOIN "tblRegion" reg ON c."RegionCode" = reg."Code"
       ${whereClause}
-      GROUP BY region_name
+      GROUP BY reg."Description", c."RegionCode"
       ORDER BY "totalSales" DESC
       LIMIT 10
     `
-    
+
     const regionWiseResult = await query(regionWiseQuery, [])
-    
+
     // Get city-wise data for chart
     const cityWiseQuery = `
-      SELECT 
-        COALESCE(city_name, 'Unknown') as "city",
-        COUNT(DISTINCT trx_code) as "orderCount",
-        SUM(net_amount) as "totalSales"
-      FROM flat_sales_transactions
+      SELECT
+        COALESCE(city."Description", c."CityCode", 'Unknown') as "city",
+        COUNT(DISTINCT t."TrxCode") as "orderCount",
+        SUM(COALESCE(t."TotalAmount", 0)) as "totalSales"
+      FROM "tblTrxHeader" t
+      LEFT JOIN "tblCustomer" c ON t."ClientCode" = c."Code"
+      LEFT JOIN "tblCity" city ON c."CityCode" = city."Code"
       ${whereClause}
-      GROUP BY city_name
+      GROUP BY city."Description", c."CityCode"
       ORDER BY "totalSales" DESC
       LIMIT 10
     `
-    
+
     const cityWiseResult = await query(cityWiseQuery, [])
-    
+
     // Get chain-wise data for chart
     const chainWiseQuery = `
-      SELECT 
-        COALESCE(chain_name, 'Unknown') as "chain",
-        COUNT(DISTINCT trx_code) as "orderCount",
-        SUM(net_amount) as "totalSales"
-      FROM flat_sales_transactions
+      SELECT
+        COALESCE(chn."Description", c."JDECustomerType", 'Unknown') as "chain",
+        COUNT(DISTINCT t."TrxCode") as "orderCount",
+        SUM(COALESCE(t."TotalAmount", 0)) as "totalSales"
+      FROM "tblTrxHeader" t
+      LEFT JOIN "tblCustomer" c ON t."ClientCode" = c."Code"
+      LEFT JOIN "tblChannel" chn ON c."JDECustomerType" = chn."Code"
       ${whereClause}
-      GROUP BY chain_name
+      GROUP BY chn."Description", c."JDECustomerType"
       ORDER BY "totalSales" DESC
       LIMIT 10
     `
-    
+
     const chainWiseResult = await query(chainWiseQuery, [])
-    
+
     // Get top customers by orders
     const topCustomersQuery = `
-      SELECT 
-        store_code as "customerCode",
-        store_name as "customerName",
-        COUNT(DISTINCT trx_code) as "orderCount",
-        SUM(net_amount) as "totalSales"
-      FROM flat_sales_transactions
+      SELECT
+        t."ClientCode" as "customerCode",
+        MAX(COALESCE(c."Description", 'Unknown')) as "customerName",
+        COUNT(DISTINCT t."TrxCode") as "orderCount",
+        SUM(COALESCE(t."TotalAmount", 0)) as "totalSales"
+      FROM "tblTrxHeader" t
+      LEFT JOIN "tblCustomer" c ON t."ClientCode" = c."Code"
       ${whereClause}
-      GROUP BY store_code, store_name
+      GROUP BY t."ClientCode"
       ORDER BY "orderCount" DESC
       LIMIT 10
     `
-    
+
     const topCustomersResult = await query(topCustomersQuery, [])
-    
-    // Get top products by sales
+
+    // Get top products by sales (without tblProduct since it doesn't exist)
     const topProductsQuery = `
-      SELECT 
-        product_code as "productCode",
-        product_name as "productName",
-        COALESCE(product_group, 'Others') as "category",
-        COUNT(DISTINCT trx_code) as "orderCount",
-        SUM(quantity) as "totalQuantity",
-        SUM(net_amount) as "totalSales"
-      FROM flat_sales_transactions
+      SELECT
+        d."ItemCode" as "productCode",
+        MAX(d."ItemDescription") as "productName",
+        COALESCE(MAX(i."GroupLevel1"), 'N/A') as "category",
+        COUNT(DISTINCT t."TrxCode") as "orderCount",
+        SUM(ABS(COALESCE(d."QuantityBU", 0))) as "totalQuantity",
+        SUM(CASE WHEN (d."BasePrice" * d."QuantityBU") > 0 THEN (d."BasePrice" * d."QuantityBU") ELSE 0 END) as "totalSales"
+      FROM "tblTrxHeader" t
+      LEFT JOIN "tblTrxDetail" d ON t."TrxCode" = d."TrxCode"
+      LEFT JOIN "tblCustomer" c ON t."ClientCode" = c."Code"
+      LEFT JOIN "tblItem" i ON d."ItemCode" = i."Code"
       ${whereClause}
-      GROUP BY product_code, product_name, product_group
+      GROUP BY d."ItemCode"
       ORDER BY "totalSales" DESC
       LIMIT 10
     `
-    
+
     const topProductsResult = await query(topProductsQuery, [])
-    
-    // Get category-wise data
+
+    // Get category-wise sales data from tblItem
     const categoryWiseQuery = `
-      SELECT 
-        COALESCE(product_group, 'Others') as "category",
-        COUNT(DISTINCT trx_code) as "orderCount",
-        SUM(net_amount) as "totalSales"
-      FROM flat_sales_transactions
+      SELECT
+        COALESCE(i."GroupLevel1", 'Uncategorized') as "category",
+        COUNT(DISTINCT t."TrxCode") as "orderCount",
+        SUM(ABS(COALESCE(d."QuantityBU", 0))) as "totalQuantity",
+        SUM(CASE WHEN (d."BasePrice" * d."QuantityBU") > 0 THEN (d."BasePrice" * d."QuantityBU") ELSE 0 END) as "totalSales"
+      FROM "tblTrxHeader" t
+      LEFT JOIN "tblTrxDetail" d ON t."TrxCode" = d."TrxCode"
+      LEFT JOIN "tblCustomer" c ON t."ClientCode" = c."Code"
+      LEFT JOIN "tblItem" i ON d."ItemCode" = i."Code"
       ${whereClause}
-      GROUP BY product_group
-      HAVING SUM(net_amount) > 0
+      GROUP BY i."GroupLevel1"
+      HAVING SUM(CASE WHEN (d."BasePrice" * d."QuantityBU") > 0 THEN (d."BasePrice" * d."QuantityBU") ELSE 0 END) > 0
       ORDER BY "totalSales" DESC
+      LIMIT 10
     `
-    
+
     const categoryWiseResult = await query(categoryWiseQuery, [])
-    console.log('Category-wise data:', categoryWiseResult.rows)
-    
-    // Ensure numeric values are properly parsed for chart data
-    const categoryWiseData = categoryWiseResult.rows.map((row: any) => ({
-      category: row.category || 'Others',
-      orderCount: parseInt(row.orderCount || '0'),
-      totalSales: parseFloat(row.totalSales || '0')
-    }))
-    
+    const categoryWiseData = categoryWiseResult.rows
+
     return NextResponse.json({
       success: true,
       data: {
@@ -359,7 +409,7 @@ export async function GET(request: NextRequest) {
         'Cache-Control': `public, s-maxage=${getCacheDuration(range, !!(searchParams.get('startDate') && searchParams.get('endDate')))}, stale-while-revalidate=${getCacheDuration(range, !!(searchParams.get('startDate') && searchParams.get('endDate'))) * 2}`
       }
     })
-    
+
   } catch (error) {
     console.error('Orders API error:', error)
     return NextResponse.json({

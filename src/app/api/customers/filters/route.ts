@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { db } from '@/lib/database'
-import { unstable_cache } from 'next/cache'
-import { mockDataService } from '@/services/mockDataService'
+import { query } from '@/lib/database'
+
+// Force dynamic rendering
+export const dynamic = 'force-dynamic'
 
 // Date range helper
 function getDateRange(range: string) {
@@ -59,156 +60,105 @@ function getDateRange(range: string) {
   }
 }
 
-// Cached filter data fetcher
-const getCachedFilters = unstable_cache(
-  async (dateRange: string, regionCode?: string) => {
-    const { start: startDate, end: endDate } = getDateRange(dateRange)
-    const startDateStr = `${startDate.getFullYear()}-${String(startDate.getMonth() + 1).padStart(2, '0')}-${String(startDate.getDate()).padStart(2, '0')}`
-    const endDateStr = `${endDate.getFullYear()}-${String(endDate.getMonth() + 1).padStart(2, '0')}-${String(endDate.getDate()).padStart(2, '0')}`
-
-    await db.initialize()
-
-    // Build region filter for routes
-    const regionFilter = regionCode && regionCode !== 'all' ? `
-      AND t.region_code = '${regionCode}'
-    ` : ''
-
-    // Get unique regions from customer data
-    const regionsQuery = `
-      SELECT DISTINCT
-        COALESCE(region_code, 'UNKNOWN') as code,
-        COALESCE(region_name, 'UNKNOWN') as name,
-        COUNT(DISTINCT store_code) as route_count
-      FROM flat_sales_transactions
-      WHERE trx_type = 1
-        AND trx_date_only BETWEEN $1 AND $2
-        AND region_code IS NOT NULL
-      GROUP BY region_code, region_name
-      ORDER BY route_count DESC
-    `
-
-    // Get unique salesmen who actually have customer transactions in the date range
-    // Filter by region if selected
-    const salesmenQuery = `
-      SELECT DISTINCT
-        t.field_user_code as code,
-        MAX(t.field_user_name) as name
-      FROM flat_sales_transactions t
-      WHERE t.trx_type = 1
-        AND t.field_user_code IS NOT NULL
-        AND t.trx_date_only BETWEEN $1 AND $2
-        ${regionFilter}
-      GROUP BY t.field_user_code
-      ORDER BY code
-    `
-
-    // Get unique routes that have customer data in the date range
-    // Filter by region if selected
-    const routesQuery = `
-      SELECT DISTINCT
-        t.user_route_code as code,
-        COALESCE(t.route_name, t.user_route_code) as name
-      FROM flat_sales_transactions t
-      WHERE t.trx_type = 1
-        AND t.user_route_code IS NOT NULL
-        AND t.trx_date_only BETWEEN $1 AND $2
-        ${regionFilter}
-      ORDER BY code
-    `
-
-    const [regionsResult, salesmenResult, routesResult] = await Promise.all([
-      db.query(regionsQuery, [startDateStr, endDateStr]),
-      db.query(salesmenQuery, [startDateStr, endDateStr]),
-      db.query(routesQuery, [startDateStr, endDateStr])
-    ])
-
-    return {
-      regions: regionsResult.rows,
-      salesmen: salesmenResult.rows,
-      routes: routesResult.rows
-    }
-  },
-  (dateRange: string, regionCode?: string) => ['customer-filters', dateRange, regionCode || 'all'],
-  {
-    revalidate: 300, // Cache for 5 minutes
-    tags: ['customer-filters']
-  }
-)
-
-// Route segment config for optimal caching
-export const dynamic = 'force-dynamic'
-export const revalidate = 300 // Revalidate every 5 minutes
-
 export async function GET(request: NextRequest) {
   try {
     const searchParams = request.nextUrl.searchParams
     const dateRange = searchParams.get('range') || 'lastMonth'
-    const regionCode = searchParams.get('region') || 'all'
+    const regionCode = searchParams.get('region') || searchParams.get('regionCode')
 
-    // Check if we should use mock data
-    if (process.env.USE_MOCK_DATA === 'true') {
-      return await getMockFilters(dateRange, regionCode)
+    const { start: startDate, end: endDate } = getDateRange(dateRange)
+    const startDateStr = startDate.toISOString().split('T')[0]
+    const endDateStr = endDate.toISOString().split('T')[0]
+
+    // Build region filter condition
+    const regionConditions: string[] = []
+    const regionParams: any[] = [startDateStr, endDateStr]
+    let paramIndex = 3
+
+    if (regionCode && regionCode !== 'all') {
+      regionConditions.push(`c."RegionCode" = $${paramIndex}`)
+      regionParams.push(regionCode)
+      paramIndex++
     }
 
-    const data = await getCachedFilters(dateRange, regionCode)
+    const regionWhereClause = regionConditions.length > 0
+      ? `AND ${regionConditions.join(' AND ')}`
+      : ''
 
-    const response = NextResponse.json({
+    // Fetch all filter options in parallel using real tables
+    const [regionsResult, salesmenResult, routesResult, channelsResult] = await Promise.all([
+      // Get regions from tblRegion with customer counts
+      query(`
+        SELECT DISTINCT
+          r."Code" as code,
+          r."Description" as name,
+          COUNT(DISTINCT c."Code") as route_count
+        FROM "tblRegion" r
+        LEFT JOIN "tblCustomer" c ON r."Code" = c."RegionCode" AND c."IsActive" = true
+        WHERE r."IsActive" = true
+        GROUP BY r."Code", r."Description"
+        ORDER BY r."Description"
+      `),
+
+      // Get salesmen/users who have transactions in the date range
+      query(`
+        SELECT DISTINCT
+          u."Code" as code,
+          u."Description" as name
+        FROM "tblUser" u
+        INNER JOIN "tblTrxHeader" t ON u."Code" = t."UserCode"
+        WHERE t."TrxType" = 1
+          AND t."TrxDate" >= $1::timestamp
+          AND t."TrxDate" < ($2::timestamp + INTERVAL '1 day')
+          AND u."IsActive" = true
+        ORDER BY u."Description"
+      `, [startDateStr, endDateStr]),
+
+      // Get routes with transactions in the date range
+      query(`
+        SELECT DISTINCT
+          rt."Code" as code,
+          rt."Name" as name
+        FROM "tblRoute" rt
+        INNER JOIN "tblTrxHeader" t ON rt."Code" = t."RouteCode"
+        WHERE t."TrxType" = 1
+          AND t."TrxDate" >= $1::timestamp
+          AND t."TrxDate" < ($2::timestamp + INTERVAL '1 day')
+          AND rt."IsActive" = true
+        ORDER BY rt."Name"
+      `, [startDateStr, endDateStr]),
+
+      // Get channels from tblChannel
+      query(`
+        SELECT DISTINCT
+          ch."Code" as code,
+          ch."Description" as name
+        FROM "tblChannel" ch
+        WHERE ch."IsActive" = true
+        ORDER BY ch."Description"
+      `)
+    ])
+
+    return NextResponse.json({
       success: true,
-      ...data,
-      timestamp: new Date().toISOString()
+      regions: regionsResult.rows || [],
+      salesmen: salesmenResult.rows || [],
+      routes: routesResult.rows || [],
+      channels: channelsResult.rows || [],
+      timestamp: new Date().toISOString(),
+      source: 'postgresql-real-tables'
     })
-
-    // Add cache headers
-    response.headers.set('Cache-Control', 'public, s-maxage=300, stale-while-revalidate=600')
-
-    return response
 
   } catch (error) {
     console.error('Customer filters API error:', error)
     return NextResponse.json({
       success: false,
       error: 'Failed to fetch filter options',
-      message: error instanceof Error ? error.message : 'Unknown error'
+      message: error instanceof Error ? error.message : 'Unknown error',
+      regions: [],
+      salesmen: [],
+      routes: [],
+      channels: []
     }, { status: 500 })
   }
-}
-
-// Mock data implementation
-async function getMockFilters(dateRange: string, regionCode: string) {
-  // Get mock data
-  const salesmen = await mockDataService.getSalesmen()
-  const routes = await mockDataService.getRoutes()
-  
-  // Create regions from mock data
-  const regions = [
-    { code: 'REG001', name: 'Dubai Region', route_count: 15 },
-    { code: 'REG002', name: 'Abu Dhabi Region', route_count: 12 },
-    { code: 'REG003', name: 'Sharjah Region', route_count: 8 },
-    { code: 'REG004', name: 'Northern Emirates', route_count: 10 }
-  ]
-
-  // Filter by region if specified
-  let filteredSalesmen = salesmen
-  let filteredRoutes = routes
-
-  if (regionCode && regionCode !== 'all') {
-    // Mock filtering by region
-    filteredSalesmen = salesmen.filter(s => s.regionCode === regionCode)
-    filteredRoutes = routes.filter(r => r.regionCode === regionCode)
-  }
-
-  return NextResponse.json({
-    success: true,
-    regions,
-    salesmen: filteredSalesmen.map(s => ({
-      code: s.userCode,
-      name: s.userName
-    })),
-    routes: filteredRoutes.map(r => ({
-      code: r.routeCode,
-      name: r.routeName
-    })),
-    timestamp: new Date().toISOString(),
-    source: 'mock-data'
-  })
 }

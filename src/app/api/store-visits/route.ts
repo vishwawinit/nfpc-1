@@ -117,7 +117,7 @@ export async function GET(request: NextRequest) {
     // Get limit - default to large number to get all data
     const limit = parseInt(searchParams.get('limit') || '100000')
 
-    // Fetch store visits with sales data
+    // Fetch store visits with sales data from tblTrxHeader
     const result = await query(`
       SELECT
         v.visit_date as "visitDate",
@@ -136,10 +136,10 @@ export async function GET(request: NextRequest) {
         v.out_time as "departureTime",
         -- Prioritize pre-calculated total_time_mins over TIME arithmetic
         -- TIME subtraction doesn't handle day boundaries correctly
-        CASE 
+        CASE
           WHEN v.total_time_mins IS NOT NULL AND v.total_time_mins > 0
           THEN v.total_time_mins
-          WHEN v.out_time IS NOT NULL AND v.arrival_time IS NOT NULL 
+          WHEN v.out_time IS NOT NULL AND v.arrival_time IS NOT NULL
           THEN EXTRACT(EPOCH FROM (v.out_time - v.arrival_time)) / 60
           ELSE 0
         END as "durationMinutes",
@@ -153,15 +153,17 @@ export async function GET(request: NextRequest) {
       FROM flat_store_visits v
       LEFT JOIN (
         SELECT
-          field_user_code,
-          store_code,
-          trx_date_only,
-          SUM(net_amount) as total_sales,
-          COUNT(DISTINCT product_code) as product_count
-        FROM flat_sales_transactions
-        GROUP BY field_user_code, store_code, trx_date_only
-      ) s ON v.field_user_code = s.field_user_code 
-         AND v.store_code = s.store_code 
+          h."UserCode" as field_user_code,
+          h."ClientCode" as store_code,
+          DATE(h."TrxDate") as trx_date_only,
+          SUM(COALESCE(h."TotalAmount", 0)) as total_sales,
+          COUNT(DISTINCT d."ItemCode") as product_count
+        FROM "tblTrxHeader" h
+        LEFT JOIN "tblTrxDetail" d ON h."TrxCode" = d."TrxCode"
+        WHERE h."TrxType" = 1
+        GROUP BY h."UserCode", h."ClientCode", DATE(h."TrxDate")
+      ) s ON v.field_user_code = s.field_user_code
+         AND v.store_code = s.store_code
          AND v.visit_date = s.trx_date_only
       ${whereClause}
       ORDER BY v.visit_date DESC, v.arrival_time DESC

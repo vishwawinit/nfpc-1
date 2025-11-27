@@ -1,149 +1,10 @@
-// Daily Sales Service - Database version
-// Provides data access functions for flat_transactions table
+// Daily Sales Service - Using flat_daily_sales_report table
+// This table contains denormalized transaction data with all related information
 
 import { query } from '../lib/database'
 
-type TransactionsTableInfo = {
-  name: string
-  columns: Set<string>
-}
-
-let transactionsTableInfo: TransactionsTableInfo | null = null
-
-export async function resolveTransactionsTable(): Promise<TransactionsTableInfo> {
-  if (transactionsTableInfo) {
-    return transactionsTableInfo
-  }
-
-  let tableName = 'flat_sales_transactions'
-
-  try {
-    const result = await query(`SELECT to_regclass('public.flat_sales_transactions') as sales_table`)
-    if (!result.rows[0]?.sales_table) {
-      tableName = 'flat_transactions'
-    }
-  } catch (error) {
-    console.warn('[dailySalesService] Table detection failed, defaulting to flat_transactions:', error)
-    tableName = 'flat_transactions'
-  }
-
-  const columnsResult = await query(
-    `
-      SELECT column_name 
-      FROM information_schema.columns 
-      WHERE table_schema = 'public' AND table_name = $1
-    `,
-    [tableName]
-  )
-
-  const columnSet = new Set(columnsResult.rows.map((row: any) => row.column_name))
-
-  transactionsTableInfo = {
-    name: tableName,
-    columns: columnSet
-  }
-
-  console.log(`[dailySalesService] Using ${tableName} as transactions table`)
-  return transactionsTableInfo
-}
-
-export function getTransactionColumnExpressions(columns: Set<string>) {
-  const has = (column: string) => columns.has(column)
-
-  return {
-    storeCode: has('store_code') ? 't.store_code' : 't.customer_code',
-    storeName: has('store_name') ? 't.store_name' : 'NULL',
-    storeRegion: has('store_region_code') ? 't.store_region_code' : 'NULL',
-    storeCity: has('store_city_code') ? 't.store_city_code' : 'NULL',
-    storeClass: has('store_classification') ? 't.store_classification' : 'NULL',
-    tlCode: has('tl_code') ? 't.tl_code' : 'NULL',
-    tlName: has('tl_name') ? 't.tl_name' : 'NULL',
-    fieldUserCode: has('field_user_code')
-      ? 't.field_user_code'
-      : has('user_code')
-        ? 't.user_code'
-        : 'NULL',
-    fieldUserName: has('field_user_name') ? 't.field_user_name' : 'NULL',
-    fieldUserType: has('field_user_type') ? 't.field_user_type' : 'NULL',
-    trxCode: has('trx_code') ? 't.trx_code' : 't.transaction_code',
-    trxDate: has('trx_date') ? 't.trx_date' : 't.transaction_date',
-    trxDateOnly: has('trx_date_only') ? 't.trx_date_only' : 'DATE(t.transaction_date)',
-    quantityValue: has('quantity_bu')
-      ? 'COALESCE(t.quantity_bu, 0)'
-      : has('quantity')
-        ? 'COALESCE(t.quantity, 0)'
-        : '0',
-    lineAmountValue: has('line_amount')
-      ? 'COALESCE(t.line_amount, 0)'
-      : has('net_amount')
-        ? 'COALESCE(t.net_amount, 0)'
-        : '0',
-    unitPriceValue: has('unit_price')
-      ? 'COALESCE(t.unit_price, 0)'
-      : has('net_amount')
-        ? 'COALESCE(t.net_amount, 0)'
-        : '0',
-    discountValue: has('total_discount_amount') ? 'COALESCE(t.total_discount_amount, 0)' : '0',
-    netAmountValue: has('order_total')
-      ? 'COALESCE(t.order_total, 0)'
-      : has('net_amount')
-        ? 'COALESCE(t.net_amount, t.line_amount, 0)'
-        : has('line_amount')
-          ? 'COALESCE(t.line_amount, 0)'
-          : '0',
-    productGroup1: has('product_group_level1') ? 't.product_group_level1' : 'NULL',
-    productGroup2: has('product_group_level2') ? 't.product_group_level2' : 'NULL',
-    productGroup3: has('product_group_level3') ? 't.product_group_level3' : 'NULL',
-    productBaseUom: has('product_base_uom') ? 't.product_base_uom' : 'NULL'
-  }
-}
-
-// Cache for daily sales data to improve performance
-const salesCache = new Map<string, { data: any, timestamp: number, ttl: number }>()
-const SALES_CACHE_TTL_MINUTES: Record<string, number> = {
-  'today': 5,         // 5 minutes for today
-  'yesterday': 60,    // 1 hour for yesterday  
-  'thisWeek': 30,     // 30 minutes for this week
-  'thisMonth': 60,    // 1 hour for this month
-  'lastMonth': 360,   // 6 hours for last month (stable data)
-  'thisQuarter': 120, // 2 hours for this quarter
-  'lastQuarter': 720, // 12 hours for last quarter (stable data)
-  'thisYear': 180,    // 3 hours for this year
-  'custom': 15        // 15 minutes for custom dates
-}
-
-function getSalesCacheKey(params: any): string {
-  const sortedParams = Object.entries(params)
-    .filter(([key, value]) => value !== undefined && value !== null && value !== '')
-    .sort()
-    .map(([key, value]) => `${key}=${value}`)
-    .join('&')
-  return sortedParams
-}
-
-function getCachedSalesData(cacheKey: string): any | null {
-  const cached = salesCache.get(cacheKey)
-  if (cached && Date.now() - cached.timestamp < cached.ttl) {
-    console.log('Sales Cache HIT for key:', cacheKey)
-    return cached.data
-  }
-  if (cached) {
-    salesCache.delete(cacheKey)
-    console.log('Sales Cache EXPIRED for key:', cacheKey)
-  }
-  return null
-}
-
-function setCachedSalesData(cacheKey: string, data: any, dateRange: string): void {
-  const ttlMinutes = SALES_CACHE_TTL_MINUTES[dateRange] || SALES_CACHE_TTL_MINUTES['custom']
-  const ttl = ttlMinutes * 60 * 1000 // Convert to milliseconds
-  salesCache.set(cacheKey, {
-    data,
-    timestamp: Date.now(),
-    ttl
-  })
-  console.log(`Sales Cache SET for key: ${cacheKey}, TTL: ${ttlMinutes}min`)
-}
+// Table name constant
+const SALES_TABLE = 'flat_daily_sales_report'
 
 // Helper function to parse date range string
 const getDateRangeFromString = (dateRange: string, currentDate: string = new Date().toISOString().split('T')[0]) => {
@@ -162,22 +23,13 @@ const getDateRangeFromString = (dateRange: string, currentDate: string = new Dat
       endDate = new Date(startDate)
       break
     case 'last7days':
+    case 'thisWeek':
       startDate = new Date(current)
       startDate.setDate(startDate.getDate() - 6)
       break
     case 'last30days':
       startDate = new Date(current)
       startDate.setDate(startDate.getDate() - 29)
-      break
-    case 'thisWeek':
-      startDate = new Date(current)
-      startDate.setDate(startDate.getDate() - current.getDay())
-      break
-    case 'lastWeek':
-      startDate = new Date(current)
-      startDate.setDate(startDate.getDate() - current.getDay() - 7)
-      endDate = new Date(startDate)
-      endDate.setDate(endDate.getDate() + 6)
       break
     case 'thisMonth':
       startDate = new Date(current.getFullYear(), current.getMonth(), 1)
@@ -198,908 +50,656 @@ const getDateRangeFromString = (dateRange: string, currentDate: string = new Dat
 }
 
 /**
- * Get filter options from database
+ * Build WHERE clause with filters for flat table
  */
-export const getFilterOptions = async () => {
-  const { name: transactionsTable, columns } = await resolveTransactionsTable()
-  const col = getTransactionColumnExpressions(columns)
+const buildWhereClause = (filters: any, params: any[], startParamIndex: number = 3) => {
+  const conditions: string[] = []
+  let paramCount = startParamIndex
 
-  const categoriesPromise = columns.has('product_group_level1')
-    ? query(`
-        SELECT DISTINCT
-          COALESCE(product_group_level1, 'Unknown') as "productCategory",
-          COALESCE(product_group_level2, 'Unknown') as "productSubcategory",
-          COALESCE(product_group_level3, 'Unknown') as "productGroup"
-        FROM ${transactionsTable}
-        WHERE product_group_level1 IS NOT NULL
-        ORDER BY product_group_level1
-        LIMIT 200
-      `)
-    : Promise.resolve({ rows: [] })
+  // Date filters (always include) - optimized to use indexes
+  // Don't wrap column in DATE() function to allow index usage
+  conditions.push(`trx_trxdate >= $1::timestamp`)
+  conditions.push(`trx_trxdate < ($2::timestamp + INTERVAL '1 day')`)
 
-  const [stores, products, users, regions, currencies, categories] = await Promise.all([
-    query(`
-      SELECT DISTINCT
-        ${col.storeCode} as "storeCode",
-        COALESCE(${col.storeName}, c.customer_name, 'Unknown Store') as "storeName"
-      FROM ${transactionsTable} t
-      LEFT JOIN flat_customers_master c ON ${col.storeCode} = c.customer_code
-      WHERE ${col.storeCode} IS NOT NULL
-      ORDER BY COALESCE(${col.storeName}, c.customer_name, ${col.storeCode})
-      LIMIT 200
-    `),
-    query(`
-      SELECT DISTINCT
-        t.product_code as "productCode",
-        COALESCE(t.product_name, t.product_code) as "productName",
-        COALESCE(${col.productGroup1}, 'Unknown') as "productCategory"
-      FROM ${transactionsTable}
-      WHERE t.product_code IS NOT NULL
-      ORDER BY COALESCE(t.product_name, t.product_code)
-      LIMIT 200
-    `),
-    query(`
-      SELECT DISTINCT
-        ${col.fieldUserCode} as "userCode",
-        COALESCE(${col.fieldUserName}, ${col.fieldUserCode}) as "userName",
-        COALESCE(${col.fieldUserType}, 'Field User') as "userType"
-      FROM ${transactionsTable} t
-      WHERE ${col.fieldUserCode} IS NOT NULL
-      ORDER BY ${col.fieldUserCode}
-      LIMIT 200
-    `),
-    query(`
-      SELECT DISTINCT
-        state as "regionCode",
-        city as "cityCode"
-      FROM flat_customers_master
-      WHERE state IS NOT NULL
-      ORDER BY state
-      LIMIT 200
-    `),
-    query(`
-      SELECT DISTINCT COALESCE(currency_code, 'AED') as "currencyCode"
-      FROM ${transactionsTable}
-      WHERE currency_code IS NOT NULL
-      ORDER BY currency_code
-    `),
-    categoriesPromise
-  ])
+  // Transaction type filter (1 = Sales)
+  conditions.push(`trx_trxtype = 1`)
+
+  // Region filter
+  if (filters.regionCode) {
+    conditions.push(`customer_regioncode = $${paramCount}`)
+    params.push(filters.regionCode)
+    paramCount++
+  }
+
+  // City filter
+  if (filters.cityCode) {
+    conditions.push(`(customer_citycode = $${paramCount} OR city_description = $${paramCount})`)
+    params.push(filters.cityCode)
+    paramCount++
+  }
+
+  // Team Leader filter (via route_salesmancode)
+  if (filters.teamLeaderCode) {
+    conditions.push(`route_salesmancode = $${paramCount}`)
+    params.push(filters.teamLeaderCode)
+    paramCount++
+  }
+
+  // Field User Role filter
+  if (filters.fieldUserRole) {
+    conditions.push(`user_usertype = $${paramCount}`)
+    params.push(filters.fieldUserRole)
+    paramCount++
+  }
+
+  // User Code filter
+  if (filters.userCode) {
+    conditions.push(`trx_usercode = $${paramCount}`)
+    params.push(filters.userCode)
+    paramCount++
+  }
+
+  // Chain Name filter
+  if (filters.chainName) {
+    conditions.push(`customer_jdecustomertype = $${paramCount}`)
+    params.push(filters.chainName)
+    paramCount++
+  }
+
+  // Store Code filter
+  if (filters.storeCode) {
+    conditions.push(`customer_code = $${paramCount}`)
+    params.push(filters.storeCode)
+    paramCount++
+  }
+
+  // Product Code filter
+  if (filters.productCode) {
+    conditions.push(`line_itemcode = $${paramCount}`)
+    params.push(filters.productCode)
+    paramCount++
+  }
+
+  // Product Category filter
+  if (filters.productCategory) {
+    conditions.push(`item_grouplevel1 = $${paramCount}`)
+    params.push(filters.productCategory)
+    paramCount++
+  }
+
+  // Route Code filter
+  if (filters.routeCode) {
+    conditions.push(`trx_routecode = $${paramCount}`)
+    params.push(filters.routeCode)
+    paramCount++
+  }
 
   return {
-    stores: stores.rows,
-    products: products.rows,
-    users: users.rows,
-    regions: regions.rows,
-    currencies: currencies.rows,
-    categories: categories.rows
+    whereClause: `WHERE ${conditions.join(' AND ')}`,
+    paramCount
   }
 }
 
 /**
- * Get daily sales summary with filters and caching
+ * Get filter options from flat table
+ */
+export const getFilterOptions = async (filters: any = {}) => {
+  try {
+    // Base date filter
+    const { startDate, endDate } = filters.startDate && filters.endDate
+      ? { startDate: new Date(filters.startDate), endDate: new Date(filters.endDate) }
+      : getDateRangeFromString('thisYear')
+
+    const startDateStr = startDate.toISOString().split('T')[0]
+    const endDateStr = endDate.toISOString().split('T')[0]
+
+    // Get distinct values for filters
+    const [regions, cities, roles, teamLeaders, users, chains, stores] = await Promise.all([
+      // Regions
+      query(`
+        SELECT DISTINCT
+          customer_regioncode as value,
+          COALESCE(region_description, customer_regioncode) as label
+        FROM ${SALES_TABLE}
+        WHERE customer_regioncode IS NOT NULL
+          AND trx_trxdate >= $1::timestamp
+          AND trx_trxdate < ($2::timestamp + INTERVAL '1 day')
+          AND trx_trxtype = 1
+        ORDER BY label
+        LIMIT 100
+      `, [startDateStr, endDateStr]),
+
+      // Cities
+      query(`
+        SELECT DISTINCT
+          COALESCE(customer_citycode, city_description) as value,
+          COALESCE(city_description, customer_citycode) as label
+        FROM ${SALES_TABLE}
+        WHERE (customer_citycode IS NOT NULL OR city_description IS NOT NULL)
+          AND trx_trxdate >= $1::timestamp
+          AND trx_trxdate < ($2::timestamp + INTERVAL '1 day')
+          AND trx_trxtype = 1
+        ORDER BY label
+        LIMIT 100
+      `, [startDateStr, endDateStr]),
+
+      // Field User Roles
+      query(`
+        SELECT DISTINCT
+          user_usertype as value,
+          user_usertype as label
+        FROM ${SALES_TABLE}
+        WHERE user_usertype IS NOT NULL
+          AND trx_trxdate >= $1::timestamp
+          AND trx_trxdate < ($2::timestamp + INTERVAL '1 day')
+          AND trx_trxtype = 1
+        ORDER BY label
+      `, [startDateStr, endDateStr]),
+
+      // Team Leaders
+      query(`
+        SELECT DISTINCT
+          route_salesmancode as value,
+          route_salesmancode as label,
+          COUNT(DISTINCT trx_usercode) as "userCount"
+        FROM ${SALES_TABLE}
+        WHERE route_salesmancode IS NOT NULL
+          AND trx_trxdate >= $1::timestamp
+          AND trx_trxdate < ($2::timestamp + INTERVAL '1 day')
+          AND trx_trxtype = 1
+        GROUP BY route_salesmancode
+        ORDER BY route_salesmancode
+        LIMIT 200
+      `, [startDateStr, endDateStr]),
+
+      // Field Users
+      query(`
+        SELECT DISTINCT
+          trx_usercode as value,
+          COALESCE(user_description, trx_usercode) as label,
+          user_usertype as role
+        FROM ${SALES_TABLE}
+        WHERE trx_usercode IS NOT NULL
+          AND trx_trxdate >= $1::timestamp
+          AND trx_trxdate < ($2::timestamp + INTERVAL '1 day')
+          AND trx_trxtype = 1
+        ORDER BY label
+        LIMIT 500
+      `, [startDateStr, endDateStr]),
+
+      // Chains
+      query(`
+        SELECT DISTINCT
+          customer_jdecustomertype as value,
+          customer_jdecustomertype as label
+        FROM ${SALES_TABLE}
+        WHERE customer_jdecustomertype IS NOT NULL
+          AND trx_trxdate >= $1::timestamp
+          AND trx_trxdate < ($2::timestamp + INTERVAL '1 day')
+          AND trx_trxtype = 1
+        ORDER BY label
+      `, [startDateStr, endDateStr]),
+
+      // Stores
+      query(`
+        SELECT DISTINCT
+          customer_code as value,
+          COALESCE(customer_description, customer_code) as label
+        FROM ${SALES_TABLE}
+        WHERE customer_code IS NOT NULL
+          AND trx_trxdate >= $1::timestamp
+          AND trx_trxdate < ($2::timestamp + INTERVAL '1 day')
+          AND trx_trxtype = 1
+        ORDER BY label
+        LIMIT 500
+      `, [startDateStr, endDateStr])
+    ])
+
+    return {
+      regions: regions.rows,
+      cities: cities.rows,
+      fieldUserRoles: roles.rows,
+      teamLeaders: teamLeaders.rows,
+      fieldUsers: users.rows,
+      chains: chains.rows,
+      stores: stores.rows,
+      summary: {
+        totalRegions: regions.rows.length,
+        totalCities: cities.rows.length,
+        totalUsers: users.rows.length,
+        totalTeamLeaders: teamLeaders.rows.length,
+        totalChains: chains.rows.length,
+        totalStores: stores.rows.length
+      }
+    }
+  } catch (error) {
+    console.error('❌ Error getting filter options:', error)
+    return {
+      regions: [],
+      cities: [],
+      fieldUserRoles: [],
+      teamLeaders: [],
+      fieldUsers: [],
+      chains: [],
+      stores: [],
+      summary: {
+        totalRegions: 0,
+        totalCities: 0,
+        totalUsers: 0,
+        totalTeamLeaders: 0,
+        totalChains: 0,
+        totalStores: 0
+      }
+    }
+  }
+}
+
+/**
+ * Get daily sales summary from flat table
  */
 export const getDailySalesSummary = async (filters: any = {}) => {
-  // Check cache first
-  const cacheKey = getSalesCacheKey({...filters, function: 'getDailySalesSummary'})
-  const cachedData = getCachedSalesData(cacheKey)
-  if (cachedData) {
-    return cachedData
-  }
+  try {
+    const { startDate, endDate } = filters.startDate && filters.endDate
+      ? { startDate: new Date(filters.startDate), endDate: new Date(filters.endDate) }
+      : filters.dateRange
+      ? getDateRangeFromString(filters.dateRange)
+      : getDateRangeFromString('last7days')
 
-  const { name: transactionsTable, columns } = await resolveTransactionsTable()
-  const col = getTransactionColumnExpressions(columns)
+    const startDateStr = startDate.toISOString().split('T')[0]
+    const endDateStr = endDate.toISOString().split('T')[0]
 
-  const { startDate, endDate } = filters.startDate && filters.endDate
-    ? { startDate: new Date(filters.startDate), endDate: new Date(filters.endDate) }
-    : filters.dateRange
-    ? getDateRangeFromString(filters.dateRange)
-    : getDateRangeFromString('last7days')
+    const params: any[] = [startDateStr, endDateStr]
+    const { whereClause } = buildWhereClause(filters, params)
 
-  const startDateStr = startDate.toISOString().split('T')[0]
-  const endDateStr = endDate.toISOString().split('T')[0]
+    const sql = `
+      SELECT
+        COUNT(DISTINCT trx_trxcode) as total_orders,
+        COUNT(DISTINCT customer_code) as total_stores,
+        COUNT(DISTINCT trx_usercode) as total_users,
+        COUNT(DISTINCT line_itemcode) as total_products,
+        COALESCE(SUM(CASE WHEN trx_totalamount > 0 THEN trx_totalamount ELSE 0 END), 0) as gross_sales,
+        COALESCE(SUM(CASE WHEN trx_totalamount < 0 THEN ABS(trx_totalamount) ELSE 0 END), 0) as return_sales,
+        COALESCE(SUM(trx_totaldiscountamount), 0) as total_discount,
+        COALESCE(SUM(trx_totalamount), 0) as total_net_sales,
+        COALESCE(SUM(line_quantitybu), 0) as total_quantity,
+        COALESCE(MAX(trx_currencycode), 'AED') as currency_code
+      FROM ${SALES_TABLE}
+      ${whereClause}
+    `
 
-  console.log('Daily Sales Summary: Fetching data for date range:', { startDateStr, endDateStr, filters })
+    console.log('📊 Summary SQL:', sql)
+    console.log('📊 Summary params:', params)
 
-  // Check if this is default filters (only date range, no other filters)
-  const isDefaultFilters = !filters.regionCode && !filters.cityCode && !filters.teamLeaderCode && 
-                           !filters.fieldUserRole && !filters.userCode && !filters.chainName && 
-                           !filters.storeCode && !filters.productCode && !filters.productCategory
+    const result = await query(sql, params)
+    const stats = result.rows[0]
 
-  // Optimize: Only join when filters require it
-  const needsJoin = !isDefaultFilters && (filters.regionCode || filters.cityCode || filters.teamLeaderCode || filters.chainName)
+    const totalOrders = parseInt(stats.total_orders) || 0
+    const totalNetSales = parseFloat(stats.total_net_sales) || 0
 
-  const params: any[] = [startDateStr, endDateStr]
-  let paramCount = 3
-  const whereConditions: string[] = []
-
-  // Optimized WHERE clause - date filter first for index usage
-  whereConditions.push(`${col.trxDateOnly} >= $1`)
-  whereConditions.push(`${col.trxDateOnly} <= $2`)
-  whereConditions.push(`t.order_total IS NOT NULL`)
-
-  // Apply filters with proper column references
-  if (filters.regionCode) {
-    if (col.storeRegion === 'NULL') {
-      whereConditions.push(`c.state = $${paramCount}`)
-    } else {
-      whereConditions.push(`COALESCE(${col.storeRegion}, c.state) = $${paramCount}`)
+    return {
+      totalOrders,
+      totalStores: parseInt(stats.total_stores) || 0,
+      totalUsers: parseInt(stats.total_users) || 0,
+      totalProducts: parseInt(stats.total_products) || 0,
+      totalSales: parseFloat(stats.gross_sales) || 0,
+      totalReturns: parseFloat(stats.return_sales) || 0,
+      totalDiscount: parseFloat(stats.total_discount) || 0,
+      totalNetSales,
+      avgOrderValue: totalOrders > 0 ? totalNetSales / totalOrders : 0,
+      currencyCode: stats.currency_code || 'AED',
+      totalQuantity: parseFloat(stats.total_quantity) || 0
     }
-    params.push(filters.regionCode)
-    paramCount++
+  } catch (error) {
+    console.error('❌ Error in getDailySalesSummary:', error)
+    throw error
   }
-
-  if (filters.cityCode) {
-    if (col.storeCity === 'NULL') {
-      whereConditions.push(`c.city = $${paramCount}`)
-    } else {
-      whereConditions.push(`COALESCE(${col.storeCity}, c.city) = $${paramCount}`)
-    }
-    params.push(filters.cityCode)
-    paramCount++
-  }
-
-  if (filters.teamLeaderCode) {
-    if (col.tlCode === 'NULL') {
-      whereConditions.push(`c.sales_person_code = $${paramCount}`)
-    } else {
-      whereConditions.push(`COALESCE(${col.tlCode}, c.sales_person_code) = $${paramCount}`)
-    }
-    params.push(filters.teamLeaderCode)
-    paramCount++
-  }
-
-  if (filters.fieldUserRole) {
-    if (col.fieldUserType !== 'NULL') {
-      whereConditions.push(`COALESCE(${col.fieldUserType}, 'Field User') = $${paramCount}`)
-    params.push(filters.fieldUserRole)
-    paramCount++
-    }
-  }
-
-  if (filters.userCode) {
-    whereConditions.push(`${col.fieldUserCode} = $${paramCount}`)
-    params.push(filters.userCode)
-    paramCount++
-  }
-
-  if (filters.chainName) {
-    if (col.storeClass === 'NULL') {
-      whereConditions.push(`COALESCE(c.customer_type, 'Unknown') = $${paramCount}`)
-    } else {
-      whereConditions.push(`COALESCE(c.customer_type, ${col.storeClass}, 'Unknown') = $${paramCount}`)
-    }
-    params.push(filters.chainName)
-    paramCount++
-  }
-
-  if (filters.storeCode) {
-    whereConditions.push(`${col.storeCode} = $${paramCount}`)
-    params.push(filters.storeCode)
-    paramCount++
-  }
-
-  if (filters.productCode) {
-    whereConditions.push(`t.product_code = $${paramCount}`)
-    params.push(filters.productCode)
-    paramCount++
-  }
-
-  if (filters.productCategory) {
-    if (col.productGroup1 !== 'NULL') {
-      whereConditions.push(`${col.productGroup1} = $${paramCount}`)
-    params.push(filters.productCategory)
-    paramCount++
-  }
-  }
-
-  const whereClause = `WHERE ${whereConditions.join(' AND ')}`
-  const joinClause = needsJoin ? `LEFT JOIN flat_customers_master c ON ${col.storeCode} = c.customer_code` : ''
-
-  // Optimized query for default filters - no unnecessary JOIN
-  let sql = `
-    SELECT
-      COUNT(DISTINCT ${col.trxCode}) as total_orders,
-      COUNT(DISTINCT ${col.storeCode}) as total_stores,
-      COUNT(DISTINCT t.product_code) as total_products,
-      COUNT(DISTINCT ${col.fieldUserCode}) as total_users,
-      COALESCE(SUM(ABS(${col.quantityValue})), 0) as total_quantity,
-      COALESCE(SUM(CASE WHEN (${col.netAmountValue}) > 0 THEN (${col.netAmountValue}) ELSE 0 END), 0) as gross_sales,
-      COALESCE(SUM(CASE WHEN (${col.netAmountValue}) < 0 THEN ABS(${col.netAmountValue}) ELSE 0 END), 0) as return_sales,
-      COALESCE(SUM(ABS(${col.discountValue})), 0) as total_discount,
-      COALESCE(SUM(${col.netAmountValue}), 0) as total_net_sales,
-      COALESCE(MAX(t.currency_code), 'AED') as currency_code
-    FROM ${transactionsTable} t
-    ${joinClause}
-    ${whereClause}
-  `
-
-  console.log('Daily Sales Summary: Executing query with params:', params)
-  const result = await query(sql, params)
-  const stats = result.rows[0]
-
-  const totalOrders = parseInt(stats.total_orders) || 0
-  const totalStores = parseInt(stats.total_stores) || 0
-  const totalProducts = parseInt(stats.total_products) || 0
-  const totalUsers = parseInt(stats.total_users) || 0
-  const totalQuantity = parseFloat(stats.total_quantity) || 0
-  const grossSales = parseFloat(stats.gross_sales) || 0
-  const returnSales = parseFloat(stats.return_sales) || 0
-  const totalDiscount = parseFloat(stats.total_discount) || 0
-  const totalNetSales = parseFloat(stats.total_net_sales) || 0
-
-  const summaryData = {
-    totalOrders,
-    totalStores,
-    totalProducts,
-    totalUsers,
-    totalQuantity,
-    totalSales: grossSales,
-    totalReturns: returnSales,
-    totalDiscount,
-    totalNetSales,
-    avgOrderValue: totalOrders > 0 ? totalNetSales / totalOrders : 0,
-    currencyCode: stats.currency_code || 'AED'
-  }
-
-  console.log('Daily Sales Summary: Results:', summaryData)
-
-  // Cache the result
-  const dateRange = filters.dateRange || 'custom'
-  setCachedSalesData(cacheKey, summaryData, dateRange)
-
-  return summaryData
 }
 
 /**
- * Get daily sales trend with caching
+ * Get daily trend from flat table
  */
 export const getDailyTrend = async (filters: any = {}) => {
-  // Check cache first
-  const cacheKey = getSalesCacheKey({...filters, function: 'getDailyTrend'})
-  const cachedData = getCachedSalesData(cacheKey)
-  if (cachedData) {
-    return cachedData
+  try {
+    const { startDate, endDate } = filters.startDate && filters.endDate
+      ? { startDate: new Date(filters.startDate), endDate: new Date(filters.endDate) }
+      : filters.dateRange
+      ? getDateRangeFromString(filters.dateRange)
+      : getDateRangeFromString('last7days')
+
+    const startDateStr = startDate.toISOString().split('T')[0]
+    const endDateStr = endDate.toISOString().split('T')[0]
+
+    const params: any[] = [startDateStr, endDateStr]
+    const { whereClause } = buildWhereClause(filters, params)
+
+    const sql = `
+      SELECT
+        DATE(trx_trxdate)::date as date,
+        COUNT(DISTINCT trx_trxcode) as orders,
+        COUNT(DISTINCT customer_code) as stores,
+        COUNT(DISTINCT customer_code) as customers,
+        COALESCE(SUM(trx_totalamount), 0) as sales
+      FROM ${SALES_TABLE}
+      ${whereClause}
+      GROUP BY DATE(trx_trxdate)
+      ORDER BY DATE(trx_trxdate) ASC
+    `
+
+    console.log('📈 Trend SQL:', sql)
+    console.log('📈 Trend params:', params)
+
+    const result = await query(sql, params)
+
+    return result.rows.map((row: any) => ({
+      date: row.date,
+      orders: parseInt(row.orders) || 0,
+      stores: parseInt(row.stores) || 0,
+      customers: parseInt(row.customers) || 0,
+      sales: parseFloat(row.sales) || 0
+    }))
+  } catch (error) {
+    console.error('❌ Error in getDailyTrend:', error)
+    throw error
   }
-
-  const { name: transactionsTable, columns } = await resolveTransactionsTable()
-  const col = getTransactionColumnExpressions(columns)
-
-  const { startDate, endDate } = filters.startDate && filters.endDate
-    ? { startDate: new Date(filters.startDate), endDate: new Date(filters.endDate) }
-    : filters.dateRange
-    ? getDateRangeFromString(filters.dateRange)
-    : getDateRangeFromString('last7days')
-
-  const startDateStr = startDate.toISOString().split('T')[0]
-  const endDateStr = endDate.toISOString().split('T')[0]
-
-  console.log('Daily Trend: Fetching data for date range:', { startDateStr, endDateStr, filters })
-
-  // Check if this is default filters (only date range, no other filters) - optimize for speed
-  const isDefaultFilters = !filters.regionCode && !filters.cityCode && !filters.teamLeaderCode && 
-                           !filters.fieldUserRole && !filters.userCode && !filters.chainName && 
-                           !filters.storeCode && !filters.productCode && !filters.productCategory
-
-  // Only join when filters require it - skip JOIN for default filters for maximum speed
-  const needsAnyJoin = !isDefaultFilters && !!(filters.regionCode || filters.cityCode || filters.teamLeaderCode || filters.chainName)
-
-  const params: any[] = [startDateStr, endDateStr]
-  let paramCount = 3
-  const whereConditions: string[] = []
-  
-  // Optimized WHERE conditions - date filter first for index usage
-  whereConditions.push(`${col.trxDateOnly} >= $1`)
-  whereConditions.push(`${col.trxDateOnly} <= $2`)
-  whereConditions.push(`t.order_total IS NOT NULL`)
-
-  // Apply filters with proper column references
-  // For flat_transactions, region and city come from flat_customers_master
-  if (filters.regionCode) {
-    if (col.storeRegion === 'NULL') {
-      whereConditions.push(`c.state = $${paramCount}`)
-    } else {
-      whereConditions.push(`COALESCE(${col.storeRegion}, c.state) = $${paramCount}`)
-    }
-    params.push(filters.regionCode)
-    paramCount++
-  }
-
-  if (filters.cityCode) {
-    if (col.storeCity === 'NULL') {
-      whereConditions.push(`c.city = $${paramCount}`)
-    } else {
-      whereConditions.push(`COALESCE(${col.storeCity}, c.city) = $${paramCount}`)
-    }
-    params.push(filters.cityCode)
-    paramCount++
-  }
-
-  if (filters.teamLeaderCode) {
-    if (col.tlCode === 'NULL') {
-      whereConditions.push(`c.sales_person_code = $${paramCount}`)
-    } else {
-      whereConditions.push(`COALESCE(${col.tlCode}, c.sales_person_code) = $${paramCount}`)
-    }
-    params.push(filters.teamLeaderCode)
-    paramCount++
-  }
-
-  if (filters.fieldUserRole) {
-    if (col.fieldUserType === 'NULL') {
-      // Skip this filter if fieldUserType is not available
-    } else {
-      whereConditions.push(`COALESCE(${col.fieldUserType}, 'Field User') = $${paramCount}`)
-    params.push(filters.fieldUserRole)
-    paramCount++
-    }
-  }
-
-  if (filters.userCode) {
-    whereConditions.push(`${col.fieldUserCode} = $${paramCount}`)
-    params.push(filters.userCode)
-    paramCount++
-  }
-
-  if (filters.chainName) {
-    if (col.storeClass === 'NULL') {
-      whereConditions.push(`COALESCE(c.customer_type, 'Unknown') = $${paramCount}`)
-    } else {
-      whereConditions.push(`COALESCE(c.customer_type, ${col.storeClass}, 'Unknown') = $${paramCount}`)
-    }
-    params.push(filters.chainName)
-    paramCount++
-  }
-
-  if (filters.storeCode) {
-    whereConditions.push(`${col.storeCode} = $${paramCount}`)
-    params.push(filters.storeCode)
-    paramCount++
-  }
-
-  if (filters.productCode) {
-    whereConditions.push(`t.product_code = $${paramCount}`)
-    params.push(filters.productCode)
-    paramCount++
-  }
-
-  if (filters.productCategory) {
-    if (col.productGroup1 === 'NULL') {
-      // Join with product master to get category
-      whereConditions.push(`t.product_code IN (SELECT product_code FROM flat_products_master WHERE product_category = $${paramCount})`)
-      params.push(filters.productCategory)
-      paramCount++
-    } else {
-      whereConditions.push(`${col.productGroup1} = $${paramCount}`)
-    params.push(filters.productCategory)
-    paramCount++
-  }
-  }
-  
-  // Build final SQL with proper JOIN
-  const whereClause = `WHERE ${whereConditions.join(' AND ')}`
-  const joinClause = needsAnyJoin ? `LEFT JOIN flat_customers_master c ON t.${col.storeCode} = c.customer_code` : ''
-  
-  // Optimized query - use date expression variable for consistency
-  const dateExpr = col.trxDateOnly.startsWith('DATE(') ? col.trxDateOnly : `t.${col.trxDateOnly}`
-  
-  const sql = `
-    SELECT
-      ${dateExpr}::date as date,
-      COUNT(DISTINCT ${col.trxCode}) as orders,
-      COALESCE(SUM(ABS(${col.quantityValue})), 0) as quantity,
-      COALESCE(SUM(${col.netAmountValue}), 0) as sales,
-      COUNT(DISTINCT ${col.storeCode}) as stores,
-      COUNT(DISTINCT ${col.storeCode}) as customers,
-      COUNT(DISTINCT t.product_code) as products
-    FROM ${transactionsTable} t
-    ${joinClause}
-    ${whereClause}
-    GROUP BY ${dateExpr}::date
-    ORDER BY ${dateExpr}::date ASC
-  `
-
-  console.log('Daily Trend: Executing query with params:', params)
-  const result = await query(sql, params)
-
-  const trendData = result.rows.map((row: any) => ({
-    date: row.date,
-    orders: parseInt(row.orders) || 0,
-    quantity: parseFloat(row.quantity) || 0,
-    sales: parseFloat(row.sales) || 0,
-    stores: parseInt(row.stores) || 0,
-    customers: parseInt(row.customers) || 0,
-    products: parseInt(row.products) || 0
-  }))
-
-  console.log('Daily Trend: Results count:', trendData.length)
-
-  // Cache the result
-  const dateRange = filters.dateRange || 'custom'
-  setCachedSalesData(cacheKey, trendData, dateRange)
-
-  return trendData
 }
 
 /**
- * Get product performance
+ * Get product performance from flat table
  */
 export const getProductPerformance = async (filters: any = {}) => {
-  const { startDate, endDate } = filters.startDate && filters.endDate
-    ? { startDate: new Date(filters.startDate), endDate: new Date(filters.endDate) }
-    : filters.dateRange
-    ? getDateRangeFromString(filters.dateRange)
-    : getDateRangeFromString('last7days')
+  try {
+    const { startDate, endDate } = filters.startDate && filters.endDate
+      ? { startDate: new Date(filters.startDate), endDate: new Date(filters.endDate) }
+      : filters.dateRange
+      ? getDateRangeFromString(filters.dateRange)
+      : getDateRangeFromString('last7days')
 
-  const startDateStr = startDate.toISOString().split('T')[0]
-  const endDateStr = endDate.toISOString().split('T')[0]
+    const startDateStr = startDate.toISOString().split('T')[0]
+    const endDateStr = endDate.toISOString().split('T')[0]
 
-  const { name: transactionsTable, columns } = await resolveTransactionsTable()
-  const col = getTransactionColumnExpressions(columns)
+    const params: any[] = [startDateStr, endDateStr]
+    const { whereClause } = buildWhereClause(filters, params)
 
-  // Optimize: Check if default filters
-  const isDefaultFilters = !filters.userCode && !filters.storeCode && !filters.productCategory
+    const sql = `
+      SELECT
+        line_itemcode as "productCode",
+        MAX(COALESCE(line_itemdescription, item_description, line_itemcode)) as "productName",
+        MAX(COALESCE(item_grouplevel1, 'Unknown')) as "productCategory",
+        MAX(COALESCE(line_uom, 'PCS')) as "productUom",
+        COUNT(DISTINCT trx_trxcode) as orders,
+        COUNT(DISTINCT customer_code) as stores,
+        COALESCE(SUM(line_quantitybu), 0) as quantity,
+        COALESCE(SUM(line_baseprice * line_quantitybu), 0) as sales,
+        COALESCE(SUM(line_totaldiscountamount), 0) as discount,
+        COALESCE(SUM(line_baseprice * line_quantitybu - COALESCE(line_totaldiscountamount, 0)), 0) as net_sales,
+        COALESCE(AVG(NULLIF(line_baseprice, 0)), 0) as avg_price
+      FROM ${SALES_TABLE}
+      ${whereClause}
+      GROUP BY line_itemcode
+      ORDER BY net_sales DESC
+      LIMIT 100
+    `
 
-  const params: any[] = [startDateStr, endDateStr]
-  let paramCount = 3
-  const whereConditions: string[] = []
+    console.log('📦 Product SQL:', sql)
+    console.log('📦 Product params:', params)
 
-  // Optimized WHERE - date filter first for index usage
-  whereConditions.push(`${col.trxDateOnly} >= $1`)
-  whereConditions.push(`${col.trxDateOnly} <= $2`)
-  whereConditions.push(`t.product_code IS NOT NULL`)
-  whereConditions.push(`t.order_total IS NOT NULL`)
+    const result = await query(sql, params)
 
-  if (filters.userCode) {
-    whereConditions.push(`${col.fieldUserCode} = $${paramCount}`)
-    params.push(filters.userCode)
-    paramCount++
+    return result.rows.map((row: any) => ({
+      productCode: row.productCode,
+      productName: row.productName,
+      productCategory: row.productCategory,
+      productUom: row.productUom,
+      orders: parseInt(row.orders) || 0,
+      stores: parseInt(row.stores) || 0,
+      quantity: parseFloat(row.quantity) || 0,
+      sales: parseFloat(row.sales) || 0,
+      discount: parseFloat(row.discount) || 0,
+      netSales: parseFloat(row.net_sales) || 0,
+      avgPrice: parseFloat(row.avg_price) || 0
+    }))
+  } catch (error) {
+    console.error('❌ Error in getProductPerformance:', error)
+    throw error
   }
-
-  if (filters.storeCode) {
-    whereConditions.push(`${col.storeCode} = $${paramCount}`)
-    params.push(filters.storeCode)
-    paramCount++
-  }
-  
-  if (filters.productCategory && col.productGroup1 !== 'NULL') {
-    whereConditions.push(`${col.productGroup1} = $${paramCount}`)
-    params.push(filters.productCategory)
-    paramCount++
-  }
-
-  const whereClause = `WHERE ${whereConditions.join(' AND ')}`
-
-  // Optimized query - no unnecessary columns for default filters
-  const sql = `
-    SELECT
-      t.product_code as "productCode",
-      COALESCE(MAX(t.product_name), t.product_code) as "productName",
-      COALESCE(MAX(${col.productGroup1}), 'Unknown') as "productCategory",
-      COALESCE(MAX(${col.productGroup2}), 'Unknown') as "productSubcategory",
-      COALESCE(MAX(${col.productGroup3}), 'Unknown') as "productGroup",
-      COALESCE(MAX(${col.productBaseUom}), 'PCS') as "productUom",
-      COUNT(DISTINCT ${col.trxCode}) as orders,
-      COUNT(DISTINCT ${col.storeCode}) as stores,
-      COALESCE(SUM(ABS(${col.quantityValue})), 0) as quantity,
-      COALESCE(SUM(ABS(${col.lineAmountValue})), 0) as sales,
-      COALESCE(SUM(ABS(${col.discountValue})), 0) as discount,
-      COALESCE(SUM(ABS(${col.netAmountValue})), 0) as net_sales,
-      COALESCE(AVG(NULLIF(ABS(${col.lineAmountValue}), 0)), 0) as avg_price
-    FROM ${transactionsTable} t
-    ${whereClause}
-    GROUP BY t.product_code
-    ORDER BY net_sales DESC
-    LIMIT 100
-  `
-
-  const result = await query(sql, params)
-
-  return result.rows.map((row: any) => ({
-    productCode: row.productCode,
-    productName: row.productName,
-    productCategory: row.productCategory,
-    productSubcategory: row.productSubcategory,
-    productGroup: row.productGroup,
-    productUom: row.productUom,
-    orders: parseInt(row.orders),
-    stores: parseInt(row.stores),
-    quantity: parseFloat(row.quantity),
-    sales: parseFloat(row.sales),
-    discount: parseFloat(row.discount),
-    netSales: parseFloat(row.net_sales),
-    avgPrice: parseFloat(row.avg_price)
-  }))
 }
 
 /**
- * Get store performance
+ * Get store performance from flat table
  */
 export const getStorePerformance = async (filters: any = {}) => {
-  const { startDate, endDate } = filters.startDate && filters.endDate
-    ? { startDate: new Date(filters.startDate), endDate: new Date(filters.endDate) }
-    : filters.dateRange
-    ? getDateRangeFromString(filters.dateRange)
-    : getDateRangeFromString('last7days')
+  try {
+    const { startDate, endDate } = filters.startDate && filters.endDate
+      ? { startDate: new Date(filters.startDate), endDate: new Date(filters.endDate) }
+      : filters.dateRange
+      ? getDateRangeFromString(filters.dateRange)
+      : getDateRangeFromString('last7days')
 
-  const startDateStr = startDate.toISOString().split('T')[0]
-  const endDateStr = endDate.toISOString().split('T')[0]
+    const startDateStr = startDate.toISOString().split('T')[0]
+    const endDateStr = endDate.toISOString().split('T')[0]
 
-  const { name: transactionsTable, columns } = await resolveTransactionsTable()
-  const col = getTransactionColumnExpressions(columns)
+    const params: any[] = [startDateStr, endDateStr]
+    const { whereClause } = buildWhereClause(filters, params)
 
-  // Optimize: Check if default filters
-  const isDefaultFilters = !filters.regionCode && !filters.userCode && !filters.productCode && !filters.productCategory
-  const needsJoin = !isDefaultFilters && filters.regionCode
+    const sql = `
+      SELECT
+        customer_code as "storeCode",
+        MAX(COALESCE(customer_description, customer_code)) as "storeName",
+        MAX(COALESCE(customer_regioncode, 'Unknown')) as "regionCode",
+        MAX(COALESCE(region_description, customer_regioncode)) as "regionName",
+        MAX(COALESCE(city_description, customer_citycode)) as "cityName",
+        COUNT(DISTINCT trx_trxcode) as orders,
+        COUNT(DISTINCT trx_usercode) as users,
+        COALESCE(SUM(CASE WHEN trx_totalamount > 0 THEN trx_totalamount ELSE 0 END), 0) as sales,
+        COALESCE(SUM(trx_totaldiscountamount), 0) as discount,
+        COALESCE(SUM(trx_totalamount), 0) as net_sales,
+        COALESCE(AVG(NULLIF(trx_totalamount, 0)), 0) as avg_order_value
+      FROM ${SALES_TABLE}
+      ${whereClause}
+      GROUP BY customer_code
+      ORDER BY net_sales DESC
+      LIMIT 100
+    `
 
-  const params: any[] = [startDateStr, endDateStr]
-  let paramCount = 3
-  const whereConditions: string[] = []
+    console.log('🏪 Store SQL:', sql)
+    console.log('🏪 Store params:', params)
 
-  // Optimized WHERE - date filter first for index usage
-  whereConditions.push(`${col.trxDateOnly} >= $1`)
-  whereConditions.push(`${col.trxDateOnly} <= $2`)
-  whereConditions.push(`t.order_total IS NOT NULL`)
-  whereConditions.push(`${col.storeCode} IS NOT NULL`)
+    const result = await query(sql, params)
 
-  if (filters.regionCode) {
-    if (col.storeRegion === 'NULL') {
-      whereConditions.push(`c.state = $${paramCount}`)
-    } else {
-      whereConditions.push(`COALESCE(${col.storeRegion}, c.state) = $${paramCount}`)
-    }
-    params.push(filters.regionCode)
-    paramCount++
+    return result.rows.map((row: any) => ({
+      storeCode: row.storeCode,
+      storeName: row.storeName,
+      regionCode: row.regionCode,
+      regionName: row.regionName,
+      cityName: row.cityName,
+      orders: parseInt(row.orders) || 0,
+      users: parseInt(row.users) || 0,
+      sales: parseFloat(row.sales) || 0,
+      discount: parseFloat(row.discount) || 0,
+      netSales: parseFloat(row.net_sales) || 0,
+      avgOrderValue: parseFloat(row.avg_order_value) || 0
+    }))
+  } catch (error) {
+    console.error('❌ Error in getStorePerformance:', error)
+    throw error
   }
-
-  if (filters.userCode) {
-    whereConditions.push(`${col.fieldUserCode} = $${paramCount}`)
-    params.push(filters.userCode)
-    paramCount++
-  }
-
-  if (filters.productCode) {
-    whereConditions.push(`t.product_code = $${paramCount}`)
-    params.push(filters.productCode)
-    paramCount++
-  }
-  
-  if (filters.productCategory && col.productGroup1 !== 'NULL') {
-    whereConditions.push(`${col.productGroup1} = $${paramCount}`)
-    params.push(filters.productCategory)
-    paramCount++
-  }
-
-  const whereClause = `WHERE ${whereConditions.join(' AND ')}`
-  const joinClause = needsJoin ? `LEFT JOIN flat_customers_master c ON ${col.storeCode} = c.customer_code` : ''
-
-  // Optimized query - conditional JOIN only when needed
-  const sql = `
-    SELECT
-      ${col.storeCode} as "storeCode",
-      ${needsJoin ? `COALESCE(MAX(${col.storeName === 'NULL' ? 'NULL' : `t.${col.storeName}`}), MAX(c.customer_name), 'Unknown Store')` : `COALESCE(MAX(${col.storeName === 'NULL' ? 'NULL' : `t.${col.storeName}`}), 'Unknown Store')`} as "storeName",
-      ${needsJoin ? `COALESCE(MAX(c.customer_type), MAX(${col.storeClass === 'NULL' ? 'NULL' : `t.${col.storeClass}`}), 'Unknown')` : `COALESCE(MAX(${col.storeClass === 'NULL' ? 'NULL' : `t.${col.storeClass}`}), 'Unknown')`} as "storeClass",
-      ${needsJoin ? `COALESCE(MAX(${col.storeCity === 'NULL' ? 'NULL' : `t.${col.storeCity}`}), MAX(c.city), 'Unknown')` : `COALESCE(MAX(${col.storeCity === 'NULL' ? 'NULL' : `t.${col.storeCity}`}), 'Unknown')`} as "cityCode",
-      ${needsJoin ? `COALESCE(MAX(${col.storeRegion === 'NULL' ? 'NULL' : `t.${col.storeRegion}`}), MAX(c.state), 'Unknown')` : `COALESCE(MAX(${col.storeRegion === 'NULL' ? 'NULL' : `t.${col.storeRegion}`}), 'Unknown')`} as "regionCode",
-      'Unknown' as "countryCode",
-      COUNT(DISTINCT ${col.trxCode}) as orders,
-      COUNT(DISTINCT t.product_code) as products,
-      COUNT(DISTINCT ${col.fieldUserCode}) as users,
-      COALESCE(SUM(ABS(${col.quantityValue})), 0) as quantity,
-      COALESCE(SUM(ABS(${col.lineAmountValue})), 0) as sales,
-      COALESCE(SUM(ABS(${col.discountValue})), 0) as discount,
-      COALESCE(SUM(ABS(${col.netAmountValue})), 0) as net_sales,
-      COALESCE(AVG(NULLIF(ABS(${col.netAmountValue}), 0)), 0) as avg_order_value
-    FROM ${transactionsTable} t
-    ${joinClause}
-    ${whereClause}
-    GROUP BY ${col.storeCode}
-    ORDER BY net_sales DESC
-    LIMIT 100
-  `
-
-  const result = await query(sql, params)
-
-  return result.rows.map((row: any) => ({
-    storeCode: row.storeCode,
-    storeName: row.storeName,
-    storeClass: row.storeClass,
-    cityCode: row.cityCode,
-    regionCode: row.regionCode,
-    countryCode: row.countryCode,
-    orders: parseInt(row.orders),
-    products: parseInt(row.products),
-    users: parseInt(row.users),
-    quantity: parseFloat(row.quantity),
-    sales: parseFloat(row.sales),
-    discount: parseFloat(row.discount),
-    netSales: parseFloat(row.net_sales),
-    avgOrderValue: parseFloat(row.avg_order_value)
-  }))
 }
 
 /**
- * Get user/field rep performance
+ * Get user/salesman performance from flat table
  */
 export const getUserPerformance = async (filters: any = {}) => {
-  const { startDate, endDate } = filters.startDate && filters.endDate
-    ? { startDate: new Date(filters.startDate), endDate: new Date(filters.endDate) }
-    : filters.dateRange
-    ? getDateRangeFromString(filters.dateRange)
-    : getDateRangeFromString('last7days')
+  try {
+    const { startDate, endDate } = filters.startDate && filters.endDate
+      ? { startDate: new Date(filters.startDate), endDate: new Date(filters.endDate) }
+      : filters.dateRange
+      ? getDateRangeFromString(filters.dateRange)
+      : getDateRangeFromString('last7days')
 
-  const startDateStr = startDate.toISOString().split('T')[0]
-  const endDateStr = endDate.toISOString().split('T')[0]
+    const startDateStr = startDate.toISOString().split('T')[0]
+    const endDateStr = endDate.toISOString().split('T')[0]
 
-  const { name: transactionsTable, columns } = await resolveTransactionsTable()
-  const col = getTransactionColumnExpressions(columns)
+    const params: any[] = [startDateStr, endDateStr]
+    const { whereClause } = buildWhereClause(filters, params)
 
-  // Optimize: Check if default filters
-  const isDefaultFilters = !filters.storeCode && !filters.productCode && !filters.productCategory
+    const sql = `
+      SELECT
+        trx_usercode as "userCode",
+        MAX(COALESCE(user_description, trx_usercode)) as "userName",
+        MAX(COALESCE(user_usertype, 'Salesman')) as "userType",
+        MAX(route_salesmancode) as "teamLeaderCode",
+        COUNT(DISTINCT trx_trxcode) as orders,
+        COUNT(DISTINCT customer_code) as stores,
+        COALESCE(SUM(CASE WHEN trx_totalamount > 0 THEN trx_totalamount ELSE 0 END), 0) as sales,
+        COALESCE(SUM(trx_totaldiscountamount), 0) as discount,
+        COALESCE(SUM(trx_totalamount), 0) as net_sales,
+        COALESCE(AVG(NULLIF(trx_totalamount, 0)), 0) as avg_order_value
+      FROM ${SALES_TABLE}
+      ${whereClause}
+      GROUP BY trx_usercode
+      ORDER BY net_sales DESC
+      LIMIT 100
+    `
 
-  const params: any[] = [startDateStr, endDateStr]
-  let paramCount = 3
-  const whereConditions: string[] = []
+    console.log('👤 User SQL:', sql)
+    console.log('👤 User params:', params)
 
-  // Optimized WHERE - date filter first for index usage
-  whereConditions.push(`${col.trxDateOnly} >= $1`)
-  whereConditions.push(`${col.trxDateOnly} <= $2`)
-  whereConditions.push(`${col.fieldUserCode} IS NOT NULL`)
-  whereConditions.push(`t.order_total IS NOT NULL`)
+    const result = await query(sql, params)
 
-  if (filters.storeCode) {
-    whereConditions.push(`${col.storeCode} = $${paramCount}`)
-    params.push(filters.storeCode)
-    paramCount++
+    return result.rows.map((row: any) => ({
+      userCode: row.userCode,
+      userName: row.userName,
+      userType: row.userType,
+      teamLeaderCode: row.teamLeaderCode,
+      orders: parseInt(row.orders) || 0,
+      stores: parseInt(row.stores) || 0,
+      sales: parseFloat(row.sales) || 0,
+      discount: parseFloat(row.discount) || 0,
+      netSales: parseFloat(row.net_sales) || 0,
+      avgOrderValue: parseFloat(row.avg_order_value) || 0
+    }))
+  } catch (error) {
+    console.error('❌ Error in getUserPerformance:', error)
+    throw error
   }
-
-  if (filters.productCode) {
-    whereConditions.push(`t.product_code = $${paramCount}`)
-    params.push(filters.productCode)
-    paramCount++
-  }
-  
-  if (filters.productCategory && col.productGroup1 !== 'NULL') {
-    whereConditions.push(`${col.productGroup1} = $${paramCount}`)
-    params.push(filters.productCategory)
-    paramCount++
-  }
-
-  const whereClause = `WHERE ${whereConditions.join(' AND ')}`
-
-  // Optimized query - no unnecessary operations
-  const sql = `
-    SELECT
-      ${col.fieldUserCode} as "userCode",
-      COALESCE(${col.fieldUserName}, ${col.fieldUserCode}) as "userName",
-      COALESCE(${col.fieldUserType}, 'Field User') as "userType",
-      COUNT(DISTINCT ${col.trxCode}) as orders,
-      COUNT(DISTINCT ${col.storeCode}) as stores,
-      COUNT(DISTINCT t.product_code) as products,
-      COALESCE(SUM(ABS(${col.quantityValue})), 0) as quantity,
-      COALESCE(SUM(ABS(${col.lineAmountValue})), 0) as sales,
-      COALESCE(SUM(ABS(${col.discountValue})), 0) as discount,
-      COALESCE(SUM(ABS(${col.netAmountValue})), 0) as net_sales,
-      COALESCE(AVG(NULLIF(ABS(${col.netAmountValue}), 0)), 0) as avg_order_value
-    FROM ${transactionsTable} t
-    ${whereClause}
-    GROUP BY ${col.fieldUserCode}, COALESCE(${col.fieldUserName}, ${col.fieldUserCode}), COALESCE(${col.fieldUserType}, 'Field User')
-    ORDER BY net_sales DESC
-    LIMIT 100
-  `
-
-  const result = await query(sql, params)
-
-  return result.rows.map((row: any) => ({
-    userCode: row.userCode,
-    userName: row.userName,
-    userType: row.userType,
-    orders: parseInt(row.orders),
-    stores: parseInt(row.stores),
-    products: parseInt(row.products),
-    quantity: parseFloat(row.quantity),
-    sales: parseFloat(row.sales),
-    discount: parseFloat(row.discount),
-    netSales: parseFloat(row.net_sales),
-    avgOrderValue: parseFloat(row.avg_order_value)
-  }))
 }
 
 /**
- * Get transaction details with pagination support
+ * Get transaction details with pagination from flat table
  */
 export const getTransactionDetails = async (filters: any = {}) => {
-  const { startDate, endDate } = filters.startDate && filters.endDate
-    ? { startDate: new Date(filters.startDate), endDate: new Date(filters.endDate) }
-    : filters.dateRange
-    ? getDateRangeFromString(filters.dateRange)
-    : getDateRangeFromString('last7days')
+  try {
+    const { startDate, endDate } = filters.startDate && filters.endDate
+      ? { startDate: new Date(filters.startDate), endDate: new Date(filters.endDate) }
+      : filters.dateRange
+      ? getDateRangeFromString(filters.dateRange)
+      : getDateRangeFromString('last7days')
 
-  const startDateStr = startDate.toISOString().split('T')[0]
-  const endDateStr = endDate.toISOString().split('T')[0]
+    const startDateStr = startDate.toISOString().split('T')[0]
+    const endDateStr = endDate.toISOString().split('T')[0]
 
-  // Pagination parameters - default to reasonable page size
-  const page = parseInt(filters.page) || 1
-  const limit = Math.min(parseInt(filters.limit) || 50, 100) // Max 100 per page
-  const offset = (page - 1) * limit
+    const page = parseInt(filters.page) || 1
+    const limit = Math.min(parseInt(filters.limit) || 50, 500)
+    const offset = (page - 1) * limit
 
-  const { name: transactionsTable, columns } = await resolveTransactionsTable()
-  const col = getTransactionColumnExpressions(columns)
+    const params: any[] = [startDateStr, endDateStr]
+    const { whereClause, paramCount } = buildWhereClause(filters, params)
 
-  // Optimize: Check if default filters
-  const isDefaultFilters = !filters.regionCode && !filters.cityCode && !filters.teamLeaderCode && 
-                           !filters.fieldUserRole && !filters.userCode && !filters.chainName && 
-                           !filters.storeCode && !filters.productCode && !filters.productCategory
+    // Count query
+    const countSql = `
+      SELECT COUNT(*) as total
+      FROM ${SALES_TABLE}
+      ${whereClause}
+    `
 
-  // Only join when filters require it
-  const needsJoin = !isDefaultFilters && (filters.regionCode || filters.cityCode || filters.teamLeaderCode || filters.chainName)
+    // Data query with all required fields
+    const countParams = [...params]
+    params.push(limit, offset)
 
-  // Build WHERE conditions - optimized order for index usage
-  const conditions: string[] = []
-  const params: any[] = [startDateStr, endDateStr]
-  let paramCount = 3
+    const dataSql = `
+      SELECT
+        trx_trxcode as "trxCode",
+        trx_trxdate as "trxDate",
+        DATE(trx_trxdate) as "trxDateOnly",
+        trx_usercode as "fieldUserCode",
+        COALESCE(user_description, trx_usercode) as "fieldUserName",
+        COALESCE(user_usertype, 'Field User') as "fieldUserRole",
+        COALESCE(route_salesmancode, '') as "tlCode",
+        COALESCE(route_salesmancode, '') as "tlName",
+        COALESCE(customer_regioncode, '') as "regionCode",
+        COALESCE(region_description, customer_regioncode, '') as "regionName",
+        COALESCE(customer_citycode, '') as "cityCode",
+        COALESCE(city_description, customer_citycode, '') as "cityName",
+        customer_code as "storeCode",
+        COALESCE(customer_description, customer_code) as "storeName",
+        COALESCE(customer_jdecustomertype, '') as "chainType",
+        line_itemcode as "productCode",
+        COALESCE(line_itemdescription, item_description, line_itemcode) as "productName",
+        COALESCE(item_grouplevel1, '') as "productCategory",
+        line_quantitybu as quantity,
+        line_baseprice as "unitPrice",
+        (line_baseprice * line_quantitybu) as "lineAmount",
+        line_totaldiscountamount as "lineDiscount",
+        COALESCE(trx_currencycode, 'AED') as "currencyCode",
+        trx_routecode as "routeCode",
+        route_name as "routeName"
+      FROM ${SALES_TABLE}
+      ${whereClause}
+      ORDER BY trx_trxdate DESC, trx_trxcode
+      LIMIT $${paramCount} OFFSET $${paramCount + 1}
+    `
 
-  // Date filter first for index usage
-  conditions.push(`${col.trxDateOnly} >= $1`)
-  conditions.push(`${col.trxDateOnly} <= $2`)
-  conditions.push(`t.net_amount IS NOT NULL`)
+    console.log('📋 Transaction SQL:', dataSql)
+    console.log('📋 Transaction params:', params)
 
-  // Apply all filters
-  if (filters.regionCode) {
-    if (col.storeRegion === 'NULL') {
-      conditions.push(`c.state = $${paramCount}`)
-    } else {
-      conditions.push(`COALESCE(${col.storeRegion}, c.state) = $${paramCount}`)
+    const [countResult, dataResult] = await Promise.all([
+      query(countSql, countParams),
+      query(dataSql, params)
+    ])
+
+    const total = parseInt(countResult.rows[0]?.total || '0')
+    const totalPages = Math.ceil(total / limit)
+
+    return {
+      transactions: dataResult.rows.map((row: any) => ({
+        trxCode: row.trxCode,
+        trxDate: row.trxDate,
+        trxDateOnly: row.trxDateOnly,
+        fieldUserCode: row.fieldUserCode || '',
+        fieldUserName: row.fieldUserName || '',
+        fieldUserRole: row.fieldUserRole || 'Field User',
+        tlCode: row.tlCode || '',
+        tlName: row.tlName || '',
+        regionCode: row.regionCode || '',
+        regionName: row.regionName || '',
+        cityCode: row.cityCode || '',
+        cityName: row.cityName || '',
+        storeCode: row.storeCode,
+        storeName: row.storeName,
+        chainType: row.chainType,
+        productCode: row.productCode,
+        productName: row.productName,
+        productCategory: row.productCategory,
+        quantity: parseFloat(row.quantity) || 0,
+        unitPrice: parseFloat(row.unitPrice) || 0,
+        lineAmount: parseFloat(row.lineAmount) || 0,
+        lineDiscount: parseFloat(row.lineDiscount) || 0,
+        currencyCode: row.currencyCode,
+        routeCode: row.routeCode || '',
+        routeName: row.routeName || ''
+      })),
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages,
+        hasNextPage: page < totalPages,
+        hasPrevPage: page > 1
+      }
     }
-    params.push(filters.regionCode)
-    paramCount++
-  }
-
-  if (filters.cityCode) {
-    if (col.storeCity === 'NULL') {
-      conditions.push(`c.city = $${paramCount}`)
-    } else {
-      conditions.push(`COALESCE(${col.storeCity}, c.city) = $${paramCount}`)
-    }
-    params.push(filters.cityCode)
-    paramCount++
-  }
-
-  if (filters.teamLeaderCode) {
-    if (col.tlCode === 'NULL') {
-      conditions.push(`c.sales_person_code = $${paramCount}`)
-    } else {
-      conditions.push(`COALESCE(${col.tlCode}, c.sales_person_code) = $${paramCount}`)
-    }
-    params.push(filters.teamLeaderCode)
-    paramCount++
-  }
-
-  if (filters.fieldUserRole) {
-    if (col.fieldUserType !== 'NULL') {
-      conditions.push(`COALESCE(${col.fieldUserType}, 'Field User') = $${paramCount}`)
-      params.push(filters.fieldUserRole)
-      paramCount++
-    }
-  }
-
-  if (filters.userCode) {
-    conditions.push(`${col.fieldUserCode} = $${paramCount}`)
-    params.push(filters.userCode)
-    paramCount++
-  }
-
-  if (filters.chainName) {
-    if (col.storeClass === 'NULL') {
-      conditions.push(`COALESCE(c.customer_type, 'Unknown') = $${paramCount}`)
-    } else {
-      conditions.push(`COALESCE(c.customer_type, ${col.storeClass}, 'Unknown') = $${paramCount}`)
-    }
-    params.push(filters.chainName)
-    paramCount++
-  }
-
-  if (filters.storeCode) {
-    conditions.push(`${col.storeCode} = $${paramCount}`)
-    params.push(filters.storeCode)
-    paramCount++
-  }
-
-  if (filters.productCode) {
-    conditions.push(`t.product_code = $${paramCount}`)
-    params.push(filters.productCode)
-    paramCount++
-  }
-  
-  if (filters.productCategory && col.productGroup1 !== 'NULL') {
-    conditions.push(`${col.productGroup1} = $${paramCount}`)
-    params.push(filters.productCategory)
-    paramCount++
-  }
-  
-  const whereClause = `WHERE ${conditions.join(' AND ')}`
-  const joinClause = needsJoin ? `LEFT JOIN flat_customers_master c ON ${col.storeCode} = c.customer_code` : ''
-
-  // Get total count first (for pagination) - use separate params array without limit/offset
-  const countParams = [...params]
-  const countSql = `
-    SELECT COUNT(*) as total
-    FROM ${transactionsTable} t
-    ${joinClause}
-    ${whereClause}
-  `
-
-  // Main query with pagination - optimized with conditional JOIN
-  params.push(limit, offset)
-  const dataSql = `
-    SELECT
-      ${col.trxCode} as "trxCode",
-      ${col.trxDate} as "trxDate",
-      ${col.trxDateOnly} as "trxDateOnly",
-      ${col.fieldUserCode} as "fieldUserCode",
-      COALESCE(${col.fieldUserName}, ${col.fieldUserCode}) as "fieldUserName",
-      COALESCE(${col.fieldUserType}, 'Field User') as "fieldUserRole",
-      COALESCE(${col.tlCode}, 'Unknown') as "tlCode",
-      COALESCE(${col.tlName}, 'Unknown') as "tlName",
-      ${needsJoin ? `COALESCE(${col.storeRegion === 'NULL' ? 'NULL' : `t.${col.storeRegion}`}, c.state, 'Unknown')` : `COALESCE(${col.storeRegion === 'NULL' ? 'NULL' : `t.${col.storeRegion}`}, 'Unknown')`} as "regionCode",
-      ${needsJoin ? `COALESCE(${col.storeCity === 'NULL' ? 'NULL' : `t.${col.storeCity}`}, c.city, 'Unknown')` : `COALESCE(${col.storeCity === 'NULL' ? 'NULL' : `t.${col.storeCity}`}, 'Unknown')`} as "cityCode",
-      ${col.storeCode} as "storeCode",
-      ${needsJoin ? `COALESCE(${col.storeName === 'NULL' ? 'NULL' : `t.${col.storeName}`}, c.customer_name, 'Unknown Store')` : `COALESCE(${col.storeName === 'NULL' ? 'NULL' : `t.${col.storeName}`}, 'Unknown Store')`} as "storeName",
-      t.product_code as "productCode",
-      t.product_name as "productName",
-      COALESCE(${col.productGroup1}, 'Unknown') as "productCategory",
-      ${col.quantityValue} as quantity,
-      ${col.unitPriceValue} as "unitPrice",
-      ${col.lineAmountValue} as "lineAmount",
-      COALESCE(t.currency_code, 'AED') as "currencyCode",
-      ${needsJoin ? `COALESCE(c.customer_type, ${col.storeClass === 'NULL' ? 'NULL' : `t.${col.storeClass}`}, 'Unknown')` : `COALESCE(${col.storeClass === 'NULL' ? 'NULL' : `t.${col.storeClass}`}, 'Unknown')`} as "storeClass"
-    FROM ${transactionsTable} t
-    ${joinClause}
-    ${whereClause}
-    ORDER BY ${col.trxDate} DESC, ${col.trxCode}
-    LIMIT $${paramCount} OFFSET $${paramCount + 1}
-  `
-
-  // Execute queries in parallel
-  const [countResult, dataResult] = await Promise.all([
-    query(countSql, countParams), // Count query uses params without limit/offset
-    query(dataSql, params) // Data query uses params with limit/offset
-  ])
-
-  const total = parseInt(countResult.rows[0]?.total || '0')
-  const totalPages = Math.ceil(total / limit)
-
-  return {
-    transactions: dataResult.rows.map((row: any) => ({
-    trxCode: row.trxCode,
-    trxDate: row.trxDate,
-    trxDateOnly: row.trxDateOnly,
-    fieldUserCode: row.fieldUserCode,
-    fieldUserName: row.fieldUserName,
-    fieldUserRole: row.fieldUserRole,
-    tlCode: row.tlCode,
-    tlName: row.tlName,
-    regionCode: row.regionCode,
-    cityCode: row.cityCode,
-    storeCode: row.storeCode,
-    storeName: row.storeName,
-    productCode: row.productCode,
-    productName: row.productName,
-    productCategory: row.productCategory,
-    quantity: parseFloat(row.quantity),
-    unitPrice: parseFloat(row.unitPrice),
-    lineAmount: parseFloat(row.lineAmount),
-      paymentType: 'Cash',
-      trxStatus: 'Completed'
-    })),
-    pagination: {
-      page,
-      limit,
-      total,
-      totalPages,
-      hasNextPage: page < totalPages,
-      hasPrevPage: page > 1
-    }
+  } catch (error) {
+    console.error('❌ Error in getTransactionDetails:', error)
+    throw error
   }
 }
 
