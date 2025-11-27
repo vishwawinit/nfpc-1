@@ -4,66 +4,70 @@ import { query } from '@/lib/database'
 // Force dynamic rendering
 export const dynamic = 'force-dynamic'
 
+const SALES_TABLE = 'flat_daily_sales_report'
+
 export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url)
     const includeProducts = searchParams.get('includeProducts') === 'true'
 
-    // Get unique categories from tblItem GroupLevel1
+    // Get unique categories from flat_daily_sales_report
     const categoriesQuery = `
       SELECT DISTINCT
-        i."GroupLevel1" as code,
-        i."GroupLevel1" as name,
-        COUNT(DISTINCT i."Code") as product_count
-      FROM "tblItem" i
-      WHERE i."GroupLevel1" IS NOT NULL
-        AND i."GroupLevel1" != ''
-        AND LOWER(i."GroupLevel1") NOT IN ('unknown', 'n/a', 'null', 'na')
-        AND i."GroupLevel1" !~ '^\\s*$'
-      GROUP BY i."GroupLevel1"
+        item_grouplevel1 as code,
+        item_grouplevel1 as name,
+        COUNT(DISTINCT line_itemcode) as product_count
+      FROM ${SALES_TABLE}
+      WHERE item_grouplevel1 IS NOT NULL
+        AND item_grouplevel1 != ''
+        AND LOWER(item_grouplevel1) NOT IN ('unknown', 'n/a', 'null', 'na')
+        AND trx_trxtype = 1
+      GROUP BY item_grouplevel1
       ORDER BY product_count DESC
     `
 
-    // Get unique brands (GroupLevel2)
+    // Get unique brands from flat_daily_sales_report
     const brandsQuery = `
       SELECT DISTINCT
-        i."GroupLevel2" as code,
-        i."GroupLevel2" as name,
-        COUNT(DISTINCT i."Code") as product_count
-      FROM "tblItem" i
-      WHERE i."GroupLevel2" IS NOT NULL
-        AND i."GroupLevel2" != ''
-        AND LOWER(i."GroupLevel2") NOT IN ('unknown', 'n/a', 'null', 'na')
-        AND i."GroupLevel2" !~ '^\\s*$'
-      GROUP BY i."GroupLevel2"
+        item_brand_description as code,
+        item_brand_description as name,
+        COUNT(DISTINCT line_itemcode) as product_count
+      FROM ${SALES_TABLE}
+      WHERE item_brand_description IS NOT NULL
+        AND item_brand_description != ''
+        AND LOWER(item_brand_description) NOT IN ('unknown', 'n/a', 'null', 'na')
+        AND trx_trxtype = 1
+      GROUP BY item_brand_description
       ORDER BY product_count DESC
     `
 
-    // Get unique subcategories (GroupLevel3)
+    // Get unique subcategories from flat_daily_sales_report
     const subcategoriesQuery = `
       SELECT DISTINCT
-        i."GroupLevel3" as code,
-        i."GroupLevel3" as name,
-        COUNT(DISTINCT i."Code") as product_count
-      FROM "tblItem" i
-      WHERE i."GroupLevel3" IS NOT NULL
-        AND i."GroupLevel3" != ''
-        AND LOWER(i."GroupLevel3") NOT IN ('unknown', 'n/a', 'null', 'na')
-        AND i."GroupLevel3" !~ '^\\s*$'
-      GROUP BY i."GroupLevel3"
+        item_grouplevel2 as code,
+        item_grouplevel2 as name,
+        COUNT(DISTINCT line_itemcode) as product_count
+      FROM ${SALES_TABLE}
+      WHERE item_grouplevel2 IS NOT NULL
+        AND item_grouplevel2 != ''
+        AND LOWER(item_grouplevel2) NOT IN ('unknown', 'n/a', 'null', 'na')
+        AND trx_trxtype = 1
+      GROUP BY item_grouplevel2
       ORDER BY product_count DESC
     `
 
     // Get all products for search dropdown (optional)
     const productsQuery = includeProducts ? `
       SELECT DISTINCT
-        i."Code" as code,
-        i."Description" as name
-      FROM "tblItem" i
-      WHERE i."Code" IS NOT NULL
-        AND i."Description" IS NOT NULL
-        AND i."Description" != ''
-      ORDER BY i."Description"
+        line_itemcode as code,
+        MAX(line_itemdescription) as name
+      FROM ${SALES_TABLE}
+      WHERE line_itemcode IS NOT NULL
+        AND line_itemdescription IS NOT NULL
+        AND line_itemdescription != ''
+        AND trx_trxtype = 1
+      GROUP BY line_itemcode
+      ORDER BY MAX(line_itemdescription)
       LIMIT 500
     ` : null
 

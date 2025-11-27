@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { query } from '@/lib/database'
 
-// Force dynamic rendering
-export const dynamic = 'force-dynamic'
+// Enable caching with revalidation
+export const dynamic = 'auto'
+export const revalidate = 600 // Fallback: 10 minutes for filters
 
 // Table name constant
 const SALES_TABLE = 'flat_daily_sales_report'

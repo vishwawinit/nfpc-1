@@ -3,8 +3,9 @@ import { query } from '@/lib/database'
 import { unstable_cache } from 'next/cache'
 import { FILTERS_CACHE_DURATION, shouldCacheFilters, generateFilterCacheKey, getCacheControlHeader } from '@/lib/cache-utils'
 
-// Force dynamic rendering for routes that use searchParams
-export const dynamic = 'force-dynamic'
+// Enable caching with revalidation
+export const dynamic = 'auto'
+export const revalidate = 600 // Fallback: 10 minutes for filters
 
 // Table name constant
 const SALES_TABLE = 'flat_daily_sales_report'
@@ -14,8 +15,8 @@ async function fetchDailySalesFiltersInternal(params: {
   startDate: string | null
   endDate: string | null
   loginUserCode: string | null
-  selectedRegion: string | null
-  selectedCity: string | null
+  selectedArea: string | null
+  selectedSubArea: string | null
   selectedFieldUserRole: string | null
   selectedTeamLeader: string | null
   selectedUser: string | null
@@ -23,12 +24,12 @@ async function fetchDailySalesFiltersInternal(params: {
   selectedStore: string | null
 }) {
   const { query } = await import('@/lib/database')
-  
+
   const {
     startDate,
     endDate,
-    selectedRegion,
-    selectedCity,
+    selectedArea,
+    selectedSubArea,
     selectedFieldUserRole,
     selectedTeamLeader,
     selectedUser,
@@ -45,7 +46,7 @@ async function fetchDailySalesFiltersInternal(params: {
     const buildAvailabilityWhere = (excludeField?: string) => {
       const conditions = []
       conditions.push(`UPPER(COALESCE(trx_usercode, '')) NOT LIKE '%DEMO%'`)
-      conditions.push(`UPPER(COALESCE(customer_regioncode, '')) NOT LIKE '%DEMO%'`)
+      conditions.push(`UPPER(COALESCE(route_areacode, '')) NOT LIKE '%DEMO%'`)
       conditions.push(`trx_trxtype = 1`)
 
       if (startDate && endDate) {
@@ -55,11 +56,11 @@ async function fetchDailySalesFiltersInternal(params: {
 
       // Authentication removed - no user code restrictions
 
-      if (selectedRegion && excludeField !== 'region') {
-        conditions.push(`customer_regioncode = '${selectedRegion}'`)
+      if (selectedArea && excludeField !== 'area') {
+        conditions.push(`route_areacode = '${selectedArea}'`)
       }
-      if (selectedCity && excludeField !== 'city') {
-        conditions.push(`(customer_citycode = '${selectedCity}' OR city_description = '${selectedCity}')`)
+      if (selectedSubArea && excludeField !== 'subArea') {
+        conditions.push(`route_subareacode = '${selectedSubArea}'`)
       }
       if (selectedFieldUserRole && excludeField !== 'fieldUserRole') {
         conditions.push(`COALESCE(user_usertype, 'Field User') = '${selectedFieldUserRole}'`)
@@ -82,8 +83,8 @@ async function fetchDailySalesFiltersInternal(params: {
 
     // Fetch all filter options in parallel
     const [
-      regionsResult,
-      citiesResult,
+      areasResult,
+      subAreasResult,
       fieldUserRolesResult,
       teamLeadersResult,
       fieldUsersResult,
@@ -91,46 +92,35 @@ async function fetchDailySalesFiltersInternal(params: {
       storesResult,
       dateRangeResult
     ] = await Promise.all([
-      // Get ALL regions with counts based on other filters
+      // Get areas
       query(`
         SELECT
-          customer_regioncode as "value",
-          COALESCE(MAX(region_description), customer_regioncode) as "label",
+          route_areacode as "value",
+          route_areacode as "label",
           COUNT(*) as "transactionCount"
         FROM ${SALES_TABLE}
-        ${buildAvailabilityWhere('region')}
-        GROUP BY customer_regioncode
-        HAVING customer_regioncode IS NOT NULL
-        AND UPPER(customer_regioncode) NOT LIKE '%DEMO%'
-        ORDER BY customer_regioncode
+        ${buildAvailabilityWhere('area')}
+        GROUP BY route_areacode
+        HAVING route_areacode IS NOT NULL
+        AND route_areacode != ''
+        AND UPPER(route_areacode) NOT LIKE '%DEMO%'
+        ORDER BY route_areacode
       `),
 
-      // Get cities
+      // Get sub areas
       query(`
         SELECT
-          COALESCE(
-            city_description,
-            CASE
-              WHEN customer_citycode LIKE '%_%' THEN SUBSTRING(customer_citycode FROM POSITION('_' IN customer_citycode) + 1)
-              ELSE customer_citycode
-            END
-          ) as "value",
-          COALESCE(
-            city_description,
-            CASE
-              WHEN customer_citycode LIKE '%_%' THEN SUBSTRING(customer_citycode FROM POSITION('_' IN customer_citycode) + 1)
-              ELSE customer_citycode
-            END
-          ) as "label",
+          route_subareacode as "value",
+          route_subareacode as "label",
           COUNT(*) as "transactionCount",
           COUNT(DISTINCT customer_code) as "storeCount"
         FROM ${SALES_TABLE}
-        ${buildAvailabilityWhere('city')}
-        GROUP BY city_description, customer_citycode
-        HAVING COALESCE(city_description, customer_citycode) IS NOT NULL
-        AND COALESCE(city_description, customer_citycode) != ''
-        AND UPPER(COALESCE(city_description, customer_citycode)) NOT LIKE '%DEMO%'
-        ORDER BY "label"
+        ${buildAvailabilityWhere('subArea')}
+        GROUP BY route_subareacode
+        HAVING route_subareacode IS NOT NULL
+        AND route_subareacode != ''
+        AND UPPER(route_subareacode) NOT LIKE '%DEMO%'
+        ORDER BY route_subareacode
       `),
 
       // Get field user roles (excluding Team Leader)
@@ -227,22 +217,22 @@ async function fetchDailySalesFiltersInternal(params: {
     ])
 
     // Format results - ONLY SHOW OPTIONS WITH TRANSACTIONS (or currently selected)
-    const regions = regionsResult.rows
+    const areas = areasResult.rows
       .map(row => ({
         value: row.value,
         label: row.label,
         available: parseInt(row.transactionCount) || 0
       }))
-      .filter(r => r.available > 0 || r.value === selectedRegion)
+      .filter(r => r.available > 0 || r.value === selectedArea)
 
-    const cities = citiesResult.rows
+    const subAreas = subAreasResult.rows
       .map(row => ({
         value: row.value,
         label: row.label,
         available: parseInt(row.transactionCount) || 0,
         storeCount: parseInt(row.storeCount) || 0
       }))
-      .filter(c => c.available > 0 || c.value === selectedCity)
+      .filter(c => c.available > 0 || c.value === selectedSubArea)
 
     const fieldUserRoles = fieldUserRolesResult.rows
       .map(row => ({
@@ -298,7 +288,8 @@ async function fetchDailySalesFiltersInternal(params: {
 
     // Calculate summary statistics
     const summary = {
-      totalRegions: regions.length,
+      totalAreas: areas.length,
+      totalSubAreas: subAreas.length,
       totalUsers: fieldUsers.length,
       totalTeamLeaders: teamLeaders.length,
       totalChains: chains.length,
@@ -311,8 +302,10 @@ async function fetchDailySalesFiltersInternal(params: {
     }
 
     return {
-      regions,
-      cities,
+      areas,
+      subAreas,
+      regions: areas, // Alias for backward compatibility
+      cities: subAreas, // Alias for backward compatibility
       fieldUserRoles,
       teamLeaders,
       fieldUsers,
@@ -326,9 +319,9 @@ export async function GET(request: NextRequest) {
   try {
     const searchParams = request.nextUrl.searchParams
 
-    // Get selected filter values
-    const selectedRegion = searchParams.get('regionCode')
-    const selectedCity = searchParams.get('cityCode')
+    // Get selected filter values - support both old (region/city) and new (area/subArea) names
+    const selectedArea = searchParams.get('areaCode') || searchParams.get('regionCode')
+    const selectedSubArea = searchParams.get('subAreaCode') || searchParams.get('cityCode')
     const selectedFieldUserRole = searchParams.get('fieldUserRole')
     const selectedTeamLeader = searchParams.get('teamLeaderCode')
     const selectedUser = searchParams.get('userCode')
@@ -341,13 +334,13 @@ export async function GET(request: NextRequest) {
 
     // Check if we should cache (exclude custom date ranges)
     const shouldCache = shouldCacheFilters(null, startDate, endDate)
-    
+
     const filterParams = {
       startDate,
       endDate,
       loginUserCode,
-      selectedRegion,
-      selectedCity,
+      selectedArea,
+      selectedSubArea,
       selectedFieldUserRole,
       selectedTeamLeader,
       selectedUser,

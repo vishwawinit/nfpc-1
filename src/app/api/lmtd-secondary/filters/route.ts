@@ -5,6 +5,9 @@ import { FILTERS_CACHE_DURATION, generateFilterCacheKey, getCacheControlHeader }
 // Force dynamic rendering for routes that use searchParams
 export const dynamic = 'force-dynamic'
 
+// Use the flat_daily_sales_report table
+const SALES_TABLE = 'flat_daily_sales_report'
+
 // Internal function to fetch filter options (will be cached)
 async function fetchLMTDFiltersInternal(params: {
   startDate: string | null
@@ -18,10 +21,9 @@ async function fetchLMTDFiltersInternal(params: {
 }) {
   // Use the query function from the module scope
   const { query: dbQuery } = await import('@/lib/database')
-  
-  // Use COALESCE to handle both trx_date_only and transaction_date columns
-  // This matches the pattern used in the main LMTD route
-  const dateColumnExpr = 'DATE(t.transaction_date)'
+
+  // Date column expression for flat_daily_sales_report
+  const dateColumnExpr = 'DATE(trx_trxdate)'
   
   const {
     startDate,
@@ -36,18 +38,21 @@ async function fetchLMTDFiltersInternal(params: {
 
   const selectedEndDate = endDate || currentDate
   const [year, month, day] = selectedEndDate.split('-').map(Number)
-  
-  // MTD: Always from 1st of current month (based on endDate) to the endDate
+
+  // MTD: Always from 1st of current month to the selected/current date
   const mtdStart = `${year}-${String(month).padStart(2, '0')}-01`
   const mtdEnd = selectedEndDate
 
-  // LMTD: Always the entire previous month relative to the endDate
+  // LMTD: From 1st of last month to same day in last month
   const prevMonth = month === 1 ? 12 : month - 1
   const prevYear = month === 1 ? year - 1 : year
+
+  // Handle day overflow for previous month (e.g., March 31 -> Feb 28/29)
   const lastDayOfPrevMonth = new Date(year, month - 1, 0).getDate()
-  
+  const adjustedDay = Math.min(day, lastDayOfPrevMonth)
+
   const lmtdStart = `${prevYear}-${String(prevMonth).padStart(2, '0')}-01`
-  const lmtdEnd = `${prevYear}-${String(prevMonth).padStart(2, '0')}-${String(lastDayOfPrevMonth).padStart(2, '0')}`
+  const lmtdEnd = `${prevYear}-${String(prevMonth).padStart(2, '0')}-${String(adjustedDay).padStart(2, '0')}`
 
   // Authentication removed - no hierarchy filtering
 
@@ -66,40 +71,34 @@ async function fetchLMTDFiltersInternal(params: {
     params.push(mtdEnd)
     paramIndex++
     
-    // Filter out NULL net_amount/order_total values for accurate KPI calculations
-    // Use COALESCE to handle different column names
-    conditions.push(`COALESCE(t.order_total, t.net_amount, t.line_amount, 0) > 0`)
-    
-    // Authentication removed - no user hierarchy filtering
-    
+    // Filter out NULL and zero trx_totalamount values
+    conditions.push(`trx_totalamount > 0`)
+
+    // Always filter for sales transactions
+    conditions.push(`trx_trxtype = 1`)
+
     if (selectedTeamLeader && excludeField !== 'teamLeader') {
-      conditions.push(`c.sales_person_code = $${paramIndex}`)
+      conditions.push(`route_salesmancode = $${paramIndex}`)
       params.push(selectedTeamLeader)
       paramIndex++
     }
     if (selectedUser && excludeField !== 'user') {
-      conditions.push(`t.user_code = $${paramIndex}`)
+      conditions.push(`trx_usercode = $${paramIndex}`)
       params.push(selectedUser)
       paramIndex++
     }
     if (selectedChain && excludeField !== 'chain') {
-      conditions.push(`c.customer_type = $${paramIndex}`)
+      conditions.push(`customer_channel_description = $${paramIndex}`)
       params.push(selectedChain)
       paramIndex++
     }
     if (selectedStore && excludeField !== 'store') {
-      conditions.push(`t.customer_code = $${paramIndex}`)
+      conditions.push(`customer_code = $${paramIndex}`)
       params.push(selectedStore)
       paramIndex++
     }
     if (selectedCategory && excludeField !== 'category') {
-      // Use product_group_level1 from transactions table instead of products master
-      // as flat_products_master may not have product_category column
-      conditions.push(`t.product_code IN (
-        SELECT DISTINCT product_code 
-        FROM flat_transactions 
-        WHERE product_group_level1 = $${paramIndex}
-      )`)
+      conditions.push(`item_grouplevel1 = $${paramIndex}`)
       params.push(selectedCategory)
       paramIndex++
     }
@@ -133,32 +132,17 @@ async function fetchLMTDFiltersInternal(params: {
       const whereClause = buildWhereClause('teamLeader')
       
       const query = `
-        WITH all_team_leaders AS (
-          SELECT DISTINCT
-            c.sales_person_code as code,
-            '' as name
-          FROM flat_transactions t
-          LEFT JOIN flat_customers_master c ON t.customer_code = c.customer_code
-          WHERE c.sales_person_code IS NOT NULL
-          AND UPPER(COALESCE(c.sales_person_code, '')) NOT LIKE '%DEMO%'
-        ),
-        filtered_transactions AS (
-          SELECT
-            c.sales_person_code as tl_code,
-            COUNT(*) as transaction_count
-          FROM flat_transactions t
-          LEFT JOIN flat_customers_master c ON t.customer_code = c.customer_code
-          ${whereClause.clause}
-          AND c.sales_person_code IS NOT NULL
-          GROUP BY c.sales_person_code
-        )
-        SELECT
-          tl.code as "value",
-          tl.code || ' (' || tl.code || ')' as "label",
-          COALESCE(ft.transaction_count, 0) as "count"
-        FROM all_team_leaders tl
-        LEFT JOIN filtered_transactions ft ON tl.code = ft.tl_code
-        ORDER BY tl.code
+        SELECT DISTINCT
+          route_salesmancode as "value",
+          route_salesmancode as "label",
+          COUNT(*) as "count"
+        FROM ${SALES_TABLE}
+        ${whereClause.clause}
+        AND route_salesmancode IS NOT NULL
+        AND UPPER(COALESCE(route_salesmancode, '')) NOT LIKE '%DEMO%'
+        GROUP BY route_salesmancode
+        ORDER BY route_salesmancode
+        LIMIT 100
       `
       const params = [...whereClause.params]
       try {
@@ -176,28 +160,18 @@ async function fetchLMTDFiltersInternal(params: {
       const whereClause = buildWhereClause('user')
       
       const query = `
-        SELECT
-          fu.user_code as "value",
-          fu.user_code || ' (' || fu.user_code || ')' as "label",
+        SELECT DISTINCT
+          trx_usercode as "value",
+          trx_usercode || ' (' || trx_usercode || ')' as "label",
           'Field User' as "role",
-          COALESCE(counts.transaction_count, 0) as "count"
-        FROM (
-          SELECT DISTINCT
-            t.user_code
-          FROM flat_transactions t
-          WHERE t.user_code IS NOT NULL
-          AND UPPER(t.user_code) NOT LIKE '%DEMO%'
-        ) fu
-        LEFT JOIN (
-          SELECT
-            t.user_code,
-            COUNT(*) as transaction_count
-          FROM flat_transactions t
-          LEFT JOIN flat_customers_master c ON t.customer_code = c.customer_code
-          ${whereClause.clause}
-          GROUP BY t.user_code
-        ) counts ON fu.user_code = counts.user_code
-        ORDER BY fu.user_code
+          COUNT(*) as "count"
+        FROM ${SALES_TABLE}
+        ${whereClause.clause}
+        AND trx_usercode IS NOT NULL
+        AND UPPER(trx_usercode) NOT LIKE '%DEMO%'
+        GROUP BY trx_usercode
+        ORDER BY trx_usercode
+        LIMIT 200
       `
       const params = [...whereClause.params]
       try {
@@ -214,27 +188,17 @@ async function fetchLMTDFiltersInternal(params: {
       const whereClause = buildWhereClause('chain')
       
       const query = `
-        SELECT
-          c.customer_type as "value",
-          c.customer_type as "label",
-          COALESCE(counts.transaction_count, 0) as "count"
-        FROM (
-          SELECT DISTINCT COALESCE(c.customer_type, 'Unknown') as customer_type
-          FROM flat_transactions t
-          LEFT JOIN flat_customers_master c ON t.customer_code = c.customer_code
-          WHERE c.customer_type IS NOT NULL
-          AND UPPER(c.customer_type) NOT LIKE '%DEMO%'
-        ) c
-        LEFT JOIN (
-          SELECT
-            COALESCE(c.customer_type, 'Unknown') as customer_type,
-            COUNT(*) as transaction_count
-          FROM flat_transactions t
-          LEFT JOIN flat_customers_master c ON t.customer_code = c.customer_code
-          ${whereClause.clause}
-          GROUP BY c.customer_type
-        ) counts ON c.customer_type = counts.customer_type
-        ORDER BY c.customer_type
+        SELECT DISTINCT
+          customer_channel_description as "value",
+          customer_channel_description as "label",
+          COUNT(*) as "count"
+        FROM ${SALES_TABLE}
+        ${whereClause.clause}
+        AND customer_channel_description IS NOT NULL
+        AND UPPER(customer_channel_description) NOT LIKE '%DEMO%'
+        GROUP BY customer_channel_description
+        ORDER BY customer_channel_description
+        LIMIT 50
       `
       const params = [...whereClause.params]
       try {
@@ -252,30 +216,16 @@ async function fetchLMTDFiltersInternal(params: {
       
       const query = `
         SELECT
-          s.customer_code as "value",
-          s.customer_name || ' (' || s.customer_code || ')' as "label",
-          COALESCE(counts.transaction_count, 0) as "count"
-        FROM (
-          SELECT DISTINCT
-            c.customer_code,
-            c.customer_name
-          FROM flat_transactions t
-          LEFT JOIN flat_customers_master c ON t.customer_code = c.customer_code
-          WHERE c.customer_code IS NOT NULL
-          AND c.customer_name IS NOT NULL
-          AND UPPER(c.customer_code) NOT LIKE '%DEMO%'
-        ) s
-        LEFT JOIN (
-          SELECT
-            t.customer_code,
-            COUNT(*) as transaction_count
-          FROM flat_transactions t
-          LEFT JOIN flat_customers_master c ON t.customer_code = c.customer_code
-          ${whereClause.clause}
-          GROUP BY t.customer_code
-        ) counts ON s.customer_code = counts.customer_code
-        ORDER BY s.customer_name
-        LIMIT 500
+          customer_code as "value",
+          COALESCE(MAX(customer_description), customer_code) || ' (' || customer_code || ')' as "label",
+          COUNT(*) as "count"
+        FROM ${SALES_TABLE}
+        ${whereClause.clause}
+        AND customer_code IS NOT NULL
+        AND UPPER(customer_code) NOT LIKE '%DEMO%'
+        GROUP BY customer_code
+        ORDER BY customer_code
+        LIMIT 200
       `
       const params = [...whereClause.params]
       try {
@@ -292,25 +242,16 @@ async function fetchLMTDFiltersInternal(params: {
       const whereClause = buildWhereClause('category')
       
       const query = `
-        SELECT
-          p.product_category as "value",
-          p.product_category as "label",
-          COALESCE(counts.transaction_count, 0) as "count"
-        FROM (
-          SELECT DISTINCT COALESCE(t.product_group_level1, 'Unknown') as product_category
-          FROM flat_transactions t
-          WHERE t.product_group_level1 IS NOT NULL
-        ) p
-        LEFT JOIN (
-          SELECT
-            COALESCE(t.product_group_level1, 'Unknown') as product_category,
-            COUNT(*) as transaction_count
-          FROM flat_transactions t
-          LEFT JOIN flat_customers_master c ON t.customer_code = c.customer_code
-          ${whereClause.clause}
-          GROUP BY t.product_group_level1
-        ) counts ON p.product_category = counts.product_category
-        ORDER BY p.product_category
+        SELECT DISTINCT
+          item_grouplevel1 as "value",
+          item_grouplevel1 as "label",
+          COUNT(*) as "count"
+        FROM ${SALES_TABLE}
+        ${whereClause.clause}
+        AND item_grouplevel1 IS NOT NULL
+        GROUP BY item_grouplevel1
+        ORDER BY item_grouplevel1
+        LIMIT 50
       `
       const params = [...whereClause.params]
       try {
@@ -327,15 +268,13 @@ async function fetchLMTDFiltersInternal(params: {
       const whereClause = buildWhereClause()
       const query = `
         SELECT DISTINCT
-          t.product_code as "value",
-          t.product_code || ' - ' || COALESCE(p.product_name, 'Unknown Product') as "label",
-          SUM(COALESCE(t.order_total, t.net_amount, t.line_amount, 0)) as "totalAmount"
-        FROM flat_transactions t
-        LEFT JOIN flat_customers_master c ON t.customer_code = c.customer_code
-        LEFT JOIN flat_products_master p ON t.product_code = p.product_code
+          line_itemcode as "value",
+          line_itemcode || ' - ' || COALESCE(MAX(line_itemdescription), 'Unknown Product') as "label",
+          SUM(CASE WHEN trx_totalamount > 0 THEN trx_totalamount ELSE 0 END) as "totalAmount"
+        FROM ${SALES_TABLE}
         ${whereClause.clause}
-        GROUP BY t.product_code, p.product_name
-        HAVING t.product_code IS NOT NULL
+        GROUP BY line_itemcode
+        HAVING line_itemcode IS NOT NULL
         ORDER BY "totalAmount" DESC
         LIMIT 100
       `

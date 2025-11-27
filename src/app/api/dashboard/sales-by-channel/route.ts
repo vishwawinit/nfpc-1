@@ -2,8 +2,9 @@ import { NextRequest, NextResponse } from 'next/server'
 import { query } from '@/lib/database'
 import { getCacheDuration, getCacheControlHeader } from '@/lib/cache-utils'
 
-// Force dynamic rendering for routes that use searchParams
-export const dynamic = 'force-dynamic'
+// Enable caching with revalidation
+export const dynamic = 'auto'
+export const revalidate = 300 // Fallback: 5 minutes
 
 // Table name constant
 const SALES_TABLE = 'flat_daily_sales_report'

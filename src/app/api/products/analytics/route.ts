@@ -4,6 +4,8 @@ import { query } from '@/lib/database'
 // Force dynamic rendering
 export const dynamic = 'force-dynamic'
 
+const SALES_TABLE = 'flat_daily_sales_report'
+
 // Helper function to parse date range string
 const getDateRangeFromString = (dateRange: string) => {
   const current = new Date()
@@ -87,63 +89,61 @@ export async function GET(request: NextRequest) {
     let paramIndex = 1
 
     // Date conditions
-    conditions.push(`h."TrxDate" >= $${paramIndex}::timestamp`)
+    conditions.push(`trx_trxdate >= $${paramIndex}::timestamp`)
     params.push(startDate)
     paramIndex++
-    conditions.push(`h."TrxDate" < ($${paramIndex}::timestamp + INTERVAL '1 day')`)
+    conditions.push(`trx_trxdate < ($${paramIndex}::timestamp + INTERVAL '1 day')`)
     params.push(endDate)
     paramIndex++
 
     // Only include invoices/sales (TrxType = 1)
-    conditions.push(`h."TrxType" = 1`)
+    conditions.push(`trx_trxtype = 1`)
 
     // Category filter
     if (categoryFilter) {
-      conditions.push(`i."GroupLevel1" = $${paramIndex}`)
+      conditions.push(`item_grouplevel1 = $${paramIndex}`)
       params.push(categoryFilter)
       paramIndex++
     }
 
     // Product code filter
     if (productCodeFilter) {
-      conditions.push(`d."ItemCode" = $${paramIndex}`)
+      conditions.push(`line_itemcode = $${paramIndex}`)
       params.push(productCodeFilter)
       paramIndex++
     }
 
     // Base conditions
-    conditions.push('d."ItemCode" IS NOT NULL')
-    conditions.push('COALESCE(d."QuantityBU", 0) != 0')
+    conditions.push('line_itemcode IS NOT NULL')
+    conditions.push('COALESCE(line_quantitybu, 0) != 0')
 
     const whereClause = `WHERE ${conditions.join(' AND ')}`
 
     // Get product summary data
     const productSummaryQuery = `
       SELECT
-        d."ItemCode" as product_code,
-        MAX(d."ItemDescription") as product_name,
-        COALESCE(MAX(i."GroupLevel1"), 'Uncategorized') as category,
-        COALESCE(MAX(i."GroupLevel2"), 'No Brand') as brand,
-        COALESCE(MAX(d."UOM"), 'PCS') as base_uom,
-        SUM(CASE WHEN (d."BasePrice" * d."QuantityBU") > 0 THEN (d."BasePrice" * d."QuantityBU") ELSE 0 END) as total_sales,
-        SUM(ABS(COALESCE(d."QuantityBU", 0))) as total_quantity,
-        COUNT(DISTINCT d."TrxCode") as total_orders,
-        CASE WHEN SUM(ABS(COALESCE(d."QuantityBU", 0))) > 0
-             THEN SUM(CASE WHEN (d."BasePrice" * d."QuantityBU") > 0 THEN (d."BasePrice" * d."QuantityBU") ELSE 0 END) / SUM(ABS(COALESCE(d."QuantityBU", 0)))
+        line_itemcode as product_code,
+        MAX(line_itemdescription) as product_name,
+        COALESCE(MAX(item_grouplevel1), 'Uncategorized') as category,
+        COALESCE(MAX(item_brand_description), 'No Brand') as brand,
+        COALESCE(MAX(line_uom), 'PCS') as base_uom,
+        SUM(CASE WHEN trx_totalamount > 0 THEN trx_totalamount ELSE 0 END) as total_sales,
+        SUM(ABS(COALESCE(line_quantitybu, 0))) as total_quantity,
+        COUNT(DISTINCT trx_trxcode) as total_orders,
+        CASE WHEN SUM(ABS(COALESCE(line_quantitybu, 0))) > 0
+             THEN SUM(CASE WHEN trx_totalamount > 0 THEN trx_totalamount ELSE 0 END) / SUM(ABS(COALESCE(line_quantitybu, 0)))
              ELSE 0 END as avg_price,
         CASE
-          WHEN SUM(ABS(COALESCE(d."QuantityBU", 0))) > 1000 THEN 'Fast'
-          WHEN SUM(ABS(COALESCE(d."QuantityBU", 0))) > 100 THEN 'Medium'
-          WHEN SUM(ABS(COALESCE(d."QuantityBU", 0))) > 0 THEN 'Slow'
+          WHEN SUM(ABS(COALESCE(line_quantitybu, 0))) > 1000 THEN 'Fast'
+          WHEN SUM(ABS(COALESCE(line_quantitybu, 0))) > 100 THEN 'Medium'
+          WHEN SUM(ABS(COALESCE(line_quantitybu, 0))) > 0 THEN 'Slow'
           ELSE 'No Sales'
         END as movement_status,
-        COALESCE(MAX(h."CurrencyCode"), 'AED') as currency_code
-      FROM "tblTrxDetail" d
-      INNER JOIN "tblTrxHeader" h ON d."TrxCode" = h."TrxCode"
-      LEFT JOIN "tblItem" i ON d."ItemCode" = i."Code"
+        COALESCE(MAX(trx_currencycode), 'AED') as currency_code
+      FROM ${SALES_TABLE}
       ${whereClause}
-      GROUP BY d."ItemCode"
-      ORDER BY SUM(CASE WHEN (d."BasePrice" * d."QuantityBU") > 0 THEN (d."BasePrice" * d."QuantityBU") ELSE 0 END) DESC
+      GROUP BY line_itemcode
+      ORDER BY SUM(CASE WHEN trx_totalamount > 0 THEN trx_totalamount ELSE 0 END) DESC
     `
 
     const productResult = await query(productSummaryQuery, params)

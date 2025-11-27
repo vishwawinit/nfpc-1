@@ -724,25 +724,44 @@ export function CustomersReportUpdated() {
       {/* Content based on view mode */}
       {activeView === 'summary' ? (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          {/* Sales by Region */}
-          {data?.salesByRegion && (
+          {/* Sales by Brand */}
+          {data?.salesByBrand && (
             <Card>
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
-                  <MapPin className="h-5 w-5" />
-                  Sales by Region
+                  <Package className="h-5 w-5" />
+                  Sales by Brand
                 </CardTitle>
               </CardHeader>
               <CardContent>
-                <ResponsiveContainer width="100%" height={300}>
-                  <BarChart data={data.salesByRegion.slice(0, 10)}>
-                    <CartesianGrid strokeDasharray="3 3" />
-                    <XAxis dataKey="region" angle={-45} textAnchor="end" height={80} />
-                    <YAxis tickFormatter={(value) => `${(value / 1000).toFixed(0)}K`} />
-                    <Tooltip formatter={(value: any) => formatCurrency(value)} />
-                    <Bar dataKey="sales" fill="#3b82f6" />
-                  </BarChart>
-                </ResponsiveContainer>
+                <div style={{ width: '100%', height: '400px' }}>
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={data.salesByBrand.slice(0, 10)} margin={{ bottom: 100, left: 20, right: 20, top: 10 }}>
+                      <CartesianGrid strokeDasharray="3 3" />
+                      <XAxis
+                        dataKey="brand"
+                        angle={-45}
+                        textAnchor="end"
+                        height={110}
+                        interval={0}
+                        tick={{ fontSize: 12 }}
+                        tickFormatter={(value) => truncateName(value, 20)}
+                      />
+                      <YAxis tickFormatter={(value) => `${(value / 1000).toFixed(0)}K`} tick={{ fontSize: 11 }} />
+                      <Tooltip
+                        formatter={(value: any) => [`Sales: ${formatCurrency(value)}`, 'Amount']}
+                        labelFormatter={(label) => {
+                          const brand = data.salesByBrand.find((b: any) => b.brand === label)
+                          if (brand) {
+                            return `${brand.brand}\nProducts: ${brand.productCount || 0} | Customers: ${brand.customerCount || 0}`
+                          }
+                          return label
+                        }}
+                      />
+                      <Bar dataKey="sales" fill="#3b82f6" radius={[4, 4, 0, 0]} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
               </CardContent>
             </Card>
           )}

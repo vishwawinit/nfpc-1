@@ -4,7 +4,8 @@ export interface FilterOption {
   value: string
   label: string
   available?: number
-  regionCode?: string
+  areaCode?: string
+  regionCode?: string // Keep for backward compatibility
   routeCode?: string
   teamLeaderCode?: string
   role?: string
@@ -19,8 +20,10 @@ export interface FilterOption {
 export interface DashboardFilters {
   startDate: string | null
   endDate: string | null
-  regionCode: string | null
-  cityCode: string | null
+  areaCode: string | null
+  subAreaCode: string | null
+  regionCode: string | null // Keep for backward compatibility
+  cityCode: string | null // Keep for backward compatibility
   fieldUserRole: string | null
   teamLeaderCode: string | null
   userCode: string | null
@@ -29,15 +32,19 @@ export interface DashboardFilters {
 }
 
 export interface FilterOptions {
-  regions: FilterOption[]
-  cities: FilterOption[]
+  areas: FilterOption[]
+  subAreas: FilterOption[]
+  regions: FilterOption[] // Keep for backward compatibility
+  cities: FilterOption[] // Keep for backward compatibility
   fieldUserRoles: FilterOption[]
   teamLeaders: FilterOption[]
   fieldUsers: FilterOption[]
   chains: FilterOption[]
   stores: FilterOption[]
   summary: {
-    totalRegions: number
+    totalAreas: number
+    totalSubAreas: number
+    totalRegions: number // Keep for backward compatibility
     totalRoutes: number
     totalUsers: number
     totalTeamLeaders: number
@@ -85,8 +92,10 @@ export const useDashboardFilters = () => {
   const [filters, setFilters] = useState<DashboardFilters>({
     startDate: defaultDates.startDate,
     endDate: defaultDates.endDate,
-    regionCode: null,
-    cityCode: null,
+    areaCode: null,
+    subAreaCode: 'ALN', // Default filter for dashboard: SUB AREA = ALN
+    regionCode: null, // Keep for backward compatibility
+    cityCode: 'ALN', // Keep for backward compatibility (sync with subAreaCode)
     fieldUserRole: null,
     teamLeaderCode: null,
     userCode: null,
@@ -95,15 +104,19 @@ export const useDashboardFilters = () => {
   })
 
   const [filterOptions, setFilterOptions] = useState<FilterOptions>({
-    regions: [],
-    cities: [],
+    areas: [],
+    subAreas: [],
+    regions: [], // Keep for backward compatibility
+    cities: [], // Keep for backward compatibility
     fieldUserRoles: [],
     teamLeaders: [],
     fieldUsers: [],
     chains: [],
     stores: [],
     summary: {
-      totalRegions: 0,
+      totalAreas: 0,
+      totalSubAreas: 0,
+      totalRegions: 0, // Keep for backward compatibility
       totalRoutes: 0,
       totalUsers: 0,
       totalTeamLeaders: 0,
@@ -136,40 +149,44 @@ export const useDashboardFilters = () => {
     try {
       const params = new URLSearchParams()
 
-      // Add current filter values to params
+      // Add current filter values to params - use new parameter names
       if (filters.startDate) params.append('startDate', filters.startDate)
       if (filters.endDate) params.append('endDate', filters.endDate)
-      if (filters.regionCode) params.append('regionCode', filters.regionCode)
-      if (filters.cityCode) params.append('cityCode', filters.cityCode)
+      if (filters.areaCode) params.append('areaCode', filters.areaCode)
+      if (filters.subAreaCode) params.append('subAreaCode', filters.subAreaCode)
       if (filters.fieldUserRole) params.append('fieldUserRole', filters.fieldUserRole)
       if (filters.teamLeaderCode) params.append('teamLeaderCode', filters.teamLeaderCode)
       if (filters.userCode) params.append('userCode', filters.userCode)
       if (filters.chainName) params.append('chainName', filters.chainName)
       if (filters.storeCode) params.append('storeCode', filters.storeCode)
-      
+
       // Authentication removed - no hierarchy filtering
 
       const response = await fetch(`/api/dashboard/filters?${params}`)
       const result = await response.json()
 
-      if (result.success) {
+      if (result.success || result.data) {
         // Map API response to expected structure
         const mappedData: FilterOptions = {
-          regions: result.data.regions || [],
-          cities: result.data.cities || result.data.routes || [], // Use routes as fallback for cities
-          fieldUserRoles: result.data.fieldUserRoles || [],
-          teamLeaders: result.data.teamLeaders || result.data.users || [], // Use users as fallback
-          fieldUsers: result.data.fieldUsers || result.data.salesmen || result.data.users || [],
-          chains: result.data.chains || result.data.channels || [],
-          stores: result.data.stores || result.data.customers || [],
-          summary: result.data.summary || {
-            totalRegions: result.data.regions?.length || 0,
-            totalRoutes: result.data.routes?.length || 0,
-            totalUsers: result.data.users?.length || 0,
-            totalTeamLeaders: result.data.teamLeaders?.length || result.data.users?.length || 0,
-            totalChains: result.data.chains?.length || result.data.channels?.length || 0,
-            totalStores: result.data.stores?.length || result.data.customers?.length || 0,
-            dateRange: result.data.summary?.dateRange || { min: '', max: '', daysWithData: 0 }
+          areas: result.data?.areas || result.data?.regions || [],
+          subAreas: result.data?.subAreas || result.data?.cities || result.data?.routes || [],
+          regions: result.data?.regions || result.data?.areas || [], // Keep for backward compatibility
+          cities: result.data?.cities || result.data?.subAreas || result.data?.routes || [], // Keep for backward compatibility
+          fieldUserRoles: result.data?.fieldUserRoles || [],
+          teamLeaders: result.data?.teamLeaders || result.data?.users || [],
+          fieldUsers: result.data?.fieldUsers || result.data?.salesmen || result.data?.users || [],
+          chains: result.data?.chains || result.data?.channels || [],
+          stores: result.data?.stores || result.data?.customers || [],
+          summary: result.data?.summary || {
+            totalAreas: result.data?.areas?.length || result.data?.regions?.length || 0,
+            totalSubAreas: result.data?.subAreas?.length || result.data?.cities?.length || result.data?.routes?.length || 0,
+            totalRegions: result.data?.regions?.length || result.data?.areas?.length || 0,
+            totalRoutes: result.data?.routes?.length || result.data?.subAreas?.length || 0,
+            totalUsers: result.data?.users?.length || 0,
+            totalTeamLeaders: result.data?.teamLeaders?.length || result.data?.users?.length || 0,
+            totalChains: result.data?.chains?.length || result.data?.channels?.length || 0,
+            totalStores: result.data?.stores?.length || result.data?.customers?.length || 0,
+            dateRange: result.data?.summary?.dateRange || { min: '', max: '', daysWithData: 0 }
           }
         }
         setFilterOptions(mappedData)
@@ -189,8 +206,8 @@ export const useDashboardFilters = () => {
   }, [
     filters.startDate,
     filters.endDate,
-    filters.regionCode,
-    filters.cityCode,
+    filters.areaCode,
+    filters.subAreaCode,
     filters.fieldUserRole,
     filters.teamLeaderCode,
     filters.userCode,
@@ -203,22 +220,33 @@ export const useDashboardFilters = () => {
     setFilters(prev => {
       const updated = { ...prev, [key]: value }
 
-      // Clear dependent filters when parent filter changes
-      if (key === 'startDate' || key === 'endDate') {
-        // Date change affects all filters - optionally keep selections
-        // Or clear all: updated.regionCode = null, updated.routeCode = null, etc.
+      // Sync areaCode with regionCode for backward compatibility
+      if (key === 'areaCode') {
+        updated.regionCode = value
+        updated.subAreaCode = null
+        updated.cityCode = null
+        updated.teamLeaderCode = null
+        updated.fieldUserRole = null
+        updated.userCode = null
       }
-
       if (key === 'regionCode') {
-        // Region change clears city and downstream filters
+        updated.areaCode = value
+        updated.subAreaCode = null
         updated.cityCode = null
         updated.teamLeaderCode = null
         updated.fieldUserRole = null
         updated.userCode = null
       }
 
+      // Sync subAreaCode with cityCode for backward compatibility
+      if (key === 'subAreaCode') {
+        updated.cityCode = value
+        updated.teamLeaderCode = null
+        updated.fieldUserRole = null
+        updated.userCode = null
+      }
       if (key === 'cityCode') {
-        // City change clears team leader and subordinates
+        updated.subAreaCode = value
         updated.teamLeaderCode = null
         updated.fieldUserRole = null
         updated.userCode = null
@@ -255,14 +283,16 @@ export const useDashboardFilters = () => {
     }))
   }, [])
 
-  // Reset all filters - reset to default date range
+  // Reset all filters - reset to default date range and default SubArea
   const resetFilters = useCallback(() => {
     const defaultDates = getDefaultDateRange()
     setFilters({
       startDate: defaultDates.startDate,
       endDate: defaultDates.endDate,
-      regionCode: null,
-      cityCode: null,
+      areaCode: null,
+      subAreaCode: 'ALN', // Default filter for dashboard: SUB AREA = ALN
+      regionCode: null, // Keep for backward compatibility
+      cityCode: 'ALN', // Keep for backward compatibility (sync with subAreaCode)
       fieldUserRole: null,
       teamLeaderCode: null,
       userCode: null,
@@ -282,14 +312,14 @@ export const useDashboardFilters = () => {
 
     if (filters.startDate) params.append('startDate', filters.startDate)
     if (filters.endDate) params.append('endDate', filters.endDate)
-    if (filters.regionCode) params.append('regionCode', filters.regionCode)
-    if (filters.cityCode) params.append('cityCode', filters.cityCode)
+    if (filters.areaCode) params.append('areaCode', filters.areaCode)
+    if (filters.subAreaCode) params.append('subAreaCode', filters.subAreaCode)
     if (filters.fieldUserRole) params.append('fieldUserRole', filters.fieldUserRole)
     if (filters.teamLeaderCode) params.append('teamLeaderCode', filters.teamLeaderCode)
     if (filters.userCode) params.append('userCode', filters.userCode)
     if (filters.chainName) params.append('chainName', filters.chainName)
     if (filters.storeCode) params.append('storeCode', filters.storeCode)
-    
+
     // Authentication removed - no hierarchy filtering
 
     return params

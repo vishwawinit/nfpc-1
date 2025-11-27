@@ -3,7 +3,9 @@ import { getDailyTrend } from '@/services/dailySalesService'
 import { unstable_cache } from 'next/cache'
 import { shouldCacheFilters, generateFilterCacheKey, getCacheControlHeader, getCacheDuration } from '@/lib/cache-utils'
 
-export const dynamic = 'force-dynamic'
+// Enable caching with revalidation
+export const dynamic = 'auto'
+export const revalidate = 300 // Fallback: 5 minutes
 
 export async function GET(request: Request) {
   try {

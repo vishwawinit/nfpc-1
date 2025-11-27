@@ -142,29 +142,29 @@ export const DashboardFilters: React.FC<DashboardFiltersProps> = ({
               />
             </div>
 
-            {/* Main Filters Grid - Hierarchy: Region → City → Team Leader → Field User Role → Field User */}
+            {/* Main Filters Grid - Hierarchy: AREA → Sub AREA → Team Leader → Field User Role → Field User */}
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-              {/* 1. Region Filter */}
+              {/* 1. AREA Filter */}
               <SearchableSelect
-                value={filters.regionCode || null}
-                onChange={(value) => onFilterChange('regionCode', value)}
-                options={filterOptions.regions}
-                placeholder={`All Regions (Available: ${filterOptions.regions.length})`}
+                value={filters.areaCode || null}
+                onChange={(value) => onFilterChange('areaCode', value)}
+                options={filterOptions.areas}
+                placeholder={`All Areas (Available: ${filterOptions.areas.length})`}
                 icon={<MapPin className="w-4 h-4 text-gray-500" />}
-                label="Region"
+                label="AREA"
                 disabled={loading}
                 formatOptionLabel={(option) => formatOptionLabel(option)}
               />
 
-              {/* 2. City Filter */}
-              {showCityFilter && filterOptions.cities && filterOptions.cities.length > 0 && (
+              {/* 2. Sub AREA Filter */}
+              {showCityFilter && filterOptions.subAreas && filterOptions.subAreas.length > 0 && (
                 <SearchableSelect
-                  value={filters.cityCode || null}
-                  onChange={(value) => onFilterChange('cityCode', value)}
-                  options={filterOptions.cities}
-                  placeholder={`All Cities (Available: ${filterOptions.cities.length})`}
+                  value={filters.subAreaCode || null}
+                  onChange={(value) => onFilterChange('subAreaCode', value)}
+                  options={filterOptions.subAreas}
+                  placeholder={`All Sub Areas (Available: ${filterOptions.subAreas.length})`}
                   icon={<MapPin className="w-4 h-4 text-gray-500" />}
-                  label="City"
+                  label="Sub AREA"
                   disabled={loading}
                   formatOptionLabel={(option) => formatOptionLabel(option)}
                 />

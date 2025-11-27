@@ -32,14 +32,19 @@ const getDateRangeFromString = (dateRange: string, currentDate: string = new Dat
       startDate.setDate(startDate.getDate() - 29)
       break
     case 'thisMonth':
+      // This month: 1st day to TODAY (inclusive)
       startDate = new Date(current.getFullYear(), current.getMonth(), 1)
+      endDate = new Date(current)
       break
     case 'lastMonth':
+      // Last month: 1st to last day of previous month
       startDate = new Date(current.getFullYear(), current.getMonth() - 1, 1)
       endDate = new Date(current.getFullYear(), current.getMonth(), 0)
       break
     case 'thisYear':
+      // This year: Jan 1 to TODAY (inclusive)
       startDate = new Date(current.getFullYear(), 0, 1)
+      endDate = new Date(current)
       break
     default:
       startDate = new Date(current)
@@ -64,17 +69,17 @@ const buildWhereClause = (filters: any, params: any[], startParamIndex: number =
   // Transaction type filter (1 = Sales)
   conditions.push(`trx_trxtype = 1`)
 
-  // Region filter
-  if (filters.regionCode) {
-    conditions.push(`customer_regioncode = $${paramCount}`)
-    params.push(filters.regionCode)
+  // Area filter (support both old regionCode and new areaCode)
+  if (filters.areaCode || filters.regionCode) {
+    conditions.push(`route_areacode = $${paramCount}`)
+    params.push(filters.areaCode || filters.regionCode)
     paramCount++
   }
 
-  // City filter
-  if (filters.cityCode) {
-    conditions.push(`(customer_citycode = $${paramCount} OR city_description = $${paramCount})`)
-    params.push(filters.cityCode)
+  // Sub Area filter (support both old cityCode and new subAreaCode)
+  if (filters.subAreaCode || filters.cityCode) {
+    conditions.push(`route_subareacode = $${paramCount}`)
+    params.push(filters.subAreaCode || filters.cityCode)
     paramCount++
   }
 
@@ -101,7 +106,7 @@ const buildWhereClause = (filters: any, params: any[], startParamIndex: number =
 
   // Chain Name filter
   if (filters.chainName) {
-    conditions.push(`customer_jdecustomertype = $${paramCount}`)
+    conditions.push(`customer_channel_description = $${paramCount}`)
     params.push(filters.chainName)
     paramCount++
   }
@@ -155,13 +160,14 @@ export const getFilterOptions = async (filters: any = {}) => {
 
     // Get distinct values for filters
     const [regions, cities, roles, teamLeaders, users, chains, stores] = await Promise.all([
-      // Regions
+      // Areas (formerly Regions)
       query(`
         SELECT DISTINCT
-          customer_regioncode as value,
-          COALESCE(region_description, customer_regioncode) as label
+          route_areacode as value,
+          route_areacode as label
         FROM ${SALES_TABLE}
-        WHERE customer_regioncode IS NOT NULL
+        WHERE route_areacode IS NOT NULL
+          AND route_areacode != ''
           AND trx_trxdate >= $1::timestamp
           AND trx_trxdate < ($2::timestamp + INTERVAL '1 day')
           AND trx_trxtype = 1
@@ -169,13 +175,14 @@ export const getFilterOptions = async (filters: any = {}) => {
         LIMIT 100
       `, [startDateStr, endDateStr]),
 
-      // Cities
+      // Sub Areas (formerly Cities)
       query(`
         SELECT DISTINCT
-          COALESCE(customer_citycode, city_description) as value,
-          COALESCE(city_description, customer_citycode) as label
+          route_subareacode as value,
+          route_subareacode as label
         FROM ${SALES_TABLE}
-        WHERE (customer_citycode IS NOT NULL OR city_description IS NOT NULL)
+        WHERE route_subareacode IS NOT NULL
+          AND route_subareacode != ''
           AND trx_trxdate >= $1::timestamp
           AND trx_trxdate < ($2::timestamp + INTERVAL '1 day')
           AND trx_trxtype = 1
@@ -230,10 +237,10 @@ export const getFilterOptions = async (filters: any = {}) => {
       // Chains
       query(`
         SELECT DISTINCT
-          customer_jdecustomertype as value,
-          customer_jdecustomertype as label
+          COALESCE(customer_channel_description, customer_channelcode, 'Unknown') as value,
+          COALESCE(customer_channel_description, customer_channelcode, 'Unknown') as label
         FROM ${SALES_TABLE}
-        WHERE customer_jdecustomertype IS NOT NULL
+        WHERE (customer_channel_description IS NOT NULL OR customer_channelcode IS NOT NULL)
           AND trx_trxdate >= $1::timestamp
           AND trx_trxdate < ($2::timestamp + INTERVAL '1 day')
           AND trx_trxtype = 1
@@ -626,13 +633,13 @@ export const getTransactionDetails = async (filters: any = {}) => {
         COALESCE(user_usertype, 'Field User') as "fieldUserRole",
         COALESCE(route_salesmancode, '') as "tlCode",
         COALESCE(route_salesmancode, '') as "tlName",
-        COALESCE(customer_regioncode, '') as "regionCode",
-        COALESCE(region_description, customer_regioncode, '') as "regionName",
-        COALESCE(customer_citycode, '') as "cityCode",
-        COALESCE(city_description, customer_citycode, '') as "cityName",
+        COALESCE(route_areacode, '') as "regionCode",
+        COALESCE(route_areacode, '') as "regionName",
+        COALESCE(route_subareacode, '') as "cityCode",
+        COALESCE(route_subareacode, '') as "cityName",
         customer_code as "storeCode",
         COALESCE(customer_description, customer_code) as "storeName",
-        COALESCE(customer_jdecustomertype, '') as "chainType",
+        COALESCE(customer_channel_description, customer_channelcode, '') as "chainType",
         line_itemcode as "productCode",
         COALESCE(line_itemdescription, item_description, line_itemcode) as "productName",
         COALESCE(item_grouplevel1, '') as "productCategory",

@@ -1,10 +1,19 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { query } from '@/lib/database'
 
-// Force dynamic rendering
-export const dynamic = 'force-dynamic'
+// Enable caching with revalidation based on Cache-Control headers
+export const dynamic = 'auto'
+export const revalidate = 300 // Fallback: 5 minutes
 
 const SALES_TABLE = 'flat_daily_sales_report'
+
+// Helper to convert Date to YYYY-MM-DD string in local timezone (no UTC conversion)
+const toLocalDateString = (date: Date): string => {
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
 
 /**
  * API Endpoint: GET /api/products/top
@@ -46,54 +55,70 @@ function getCacheDuration(dateRange: string, hasCustomDates: boolean): number {
   }
 }
 
-// Helper function to parse date range string
+// Helper function to parse date range string (UTC-safe)
 const getDateRangeFromString = (dateRange: string) => {
-  const current = new Date()
+  // Get current date in local timezone, extract components
+  const now = new Date()
+  const year = now.getFullYear()
+  const month = now.getMonth()
+  const day = now.getDate()
+
   let startDate: Date
-  let endDate: Date = new Date(current)
+  let endDate: Date
 
   switch(dateRange) {
     case 'today':
-      startDate = new Date(current)
+      startDate = new Date(year, month, day)
+      endDate = new Date(year, month, day)
       break
     case 'yesterday':
-      startDate = new Date(current)
-      startDate.setDate(startDate.getDate() - 1)
-      endDate = new Date(startDate)
+      startDate = new Date(year, month, day - 1)
+      endDate = new Date(year, month, day - 1)
       break
     case 'thisWeek':
     case 'last7Days':
-      startDate = new Date(current)
-      startDate.setDate(startDate.getDate() - 6)
+      startDate = new Date(year, month, day - 6)
+      endDate = new Date(year, month, day)
       break
     case 'last30Days':
+      startDate = new Date(year, month, day - 29)
+      endDate = new Date(year, month, day)
+      break
     case 'thisMonth':
-      startDate = new Date(current.getFullYear(), current.getMonth(), 1)
+      // This month: 1st day to TODAY (inclusive)
+      startDate = new Date(year, month, 1)
+      endDate = new Date(year, month, day)
       break
     case 'lastMonth':
-      startDate = new Date(current.getFullYear(), current.getMonth() - 1, 1)
-      endDate = new Date(current.getFullYear(), current.getMonth(), 0)
+      // Last month: 1st to last day of previous month
+      startDate = new Date(year, month - 1, 1)
+      endDate = new Date(year, month, 0)
       break
     case 'thisQuarter':
-      const quarter = Math.floor(current.getMonth() / 3)
-      startDate = new Date(current.getFullYear(), quarter * 3, 1)
+      // This quarter: 1st day of quarter to TODAY (inclusive)
+      const quarter = Math.floor(month / 3)
+      startDate = new Date(year, quarter * 3, 1)
+      endDate = new Date(year, month, day)
       break
     case 'lastQuarter':
-      const lastQuarter = Math.floor(current.getMonth() / 3) - 1
-      startDate = new Date(current.getFullYear(), lastQuarter * 3, 1)
-      endDate = new Date(current.getFullYear(), lastQuarter * 3 + 3, 0)
+      // Last quarter: 1st to last day of previous quarter
+      const lastQuarter = Math.floor(month / 3) - 1
+      startDate = new Date(year, lastQuarter * 3, 1)
+      endDate = new Date(year, lastQuarter * 3 + 3, 0)
       break
     case 'thisYear':
-      startDate = new Date(current.getFullYear(), 0, 1)
+      // This year: Jan 1 to TODAY (inclusive)
+      startDate = new Date(year, 0, 1)
+      endDate = new Date(year, month, day)
       break
     default:
-      startDate = new Date(current)
-      startDate.setDate(startDate.getDate() - 29)
+      startDate = new Date(year, month, day - 29)
+      endDate = new Date(year, month, day)
   }
 
   return {
-    startDate: startDate.toISOString().split('T')[0],
-    endDate: endDate.toISOString().split('T')[0]
+    startDate: toLocalDateString(startDate),
+    endDate: toLocalDateString(endDate)
   }
 }
 
@@ -112,14 +137,14 @@ const buildWhereClause = (params: any) => {
     conditions.push(`trx_trxdate < ('${params.endDate}'::timestamp + INTERVAL '1 day')`)
   }
 
-  // Region filter
-  if (params.regionCode) {
-    conditions.push(`customer_regioncode = '${params.regionCode}'`)
+  // Area filter (support both old regionCode and new areaCode)
+  if (params.areaCode || params.regionCode) {
+    conditions.push(`route_areacode = '${params.areaCode || params.regionCode}'`)
   }
 
-  // City filter
-  if (params.cityCode) {
-    conditions.push(`(customer_citycode = '${params.cityCode}' OR city_description = '${params.cityCode}')`)
+  // Sub Area filter (support both old cityCode and new subAreaCode)
+  if (params.subAreaCode || params.cityCode) {
+    conditions.push(`route_subareacode = '${params.subAreaCode || params.cityCode}'`)
   }
 
   // Route filter
@@ -160,9 +185,11 @@ export async function GET(request: NextRequest) {
     const limit = parseInt(searchParams.get('limit') || '10')
     const dateRange = searchParams.get('range') || 'thisMonth'
 
-    // Get filter parameters
-    const regionCode = searchParams.get('regionCode')
-    const cityCode = searchParams.get('city') || searchParams.get('cityCode')
+    // Get filter parameters - support both old (region/city) and new (area/subArea) names
+    const areaCode = searchParams.get('areaCode') || searchParams.get('regionCode')
+    const subAreaCode = searchParams.get('subAreaCode') || searchParams.get('city') || searchParams.get('cityCode')
+    const regionCode = searchParams.get('regionCode') // Keep for backward compatibility
+    const cityCode = searchParams.get('city') || searchParams.get('cityCode') // Keep for backward compatibility
     const teamLeaderCode = searchParams.get('teamLeaderCode')
     const routeCode = searchParams.get('routeCode')
     const fieldUserRole = searchParams.get('fieldUserRole')
@@ -186,8 +213,10 @@ export async function GET(request: NextRequest) {
     const filterParams = {
       startDate,
       endDate,
-      regionCode,
-      cityCode,
+      areaCode,
+      subAreaCode,
+      regionCode, // Keep for backward compatibility in WHERE clause
+      cityCode, // Keep for backward compatibility in WHERE clause
       teamLeaderCode,
       routeCode,
       userCode,

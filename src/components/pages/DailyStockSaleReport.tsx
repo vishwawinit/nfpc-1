@@ -187,8 +187,8 @@ export const DailyStockSaleReport: React.FC = () => {
   }, [
     filters.startDate,
     filters.endDate,
-    filters.regionCode,
-    filters.cityCode,
+    filters.areaCode,
+    filters.subAreaCode,
     filters.fieldUserRole,
     filters.teamLeaderCode,
     filters.userCode,
@@ -1237,8 +1237,8 @@ export const DailyStockSaleReport: React.FC = () => {
                             <th className="font-semibold text-gray-800 px-6 py-4 min-w-[120px] whitespace-nowrap text-left">Date</th>
                             <th className="font-semibold text-gray-800 px-6 py-4 min-w-[140px] whitespace-nowrap text-left">Field User Code</th>
                             <th className="font-semibold text-gray-800 px-6 py-4 min-w-[180px] whitespace-nowrap text-left">Field User Name</th>
-                            <th className="font-semibold text-gray-800 px-6 py-4 min-w-[120px] whitespace-nowrap text-left">Region</th>
-                            <th className="font-semibold text-gray-800 px-6 py-4 min-w-[120px] whitespace-nowrap text-left">City</th>
+                            <th className="font-semibold text-gray-800 px-6 py-4 min-w-[120px] whitespace-nowrap text-left">AREA</th>
+                            <th className="font-semibold text-gray-800 px-6 py-4 min-w-[120px] whitespace-nowrap text-left">Sub AREA</th>
                             <th className="font-semibold text-gray-800 px-6 py-4 min-w-[120px] whitespace-nowrap text-left">Store Code</th>
                             <th className="font-semibold text-gray-800 px-6 py-4 min-w-[200px] whitespace-nowrap text-left">Store Name</th>
                             <th className="font-semibold text-gray-800 px-6 py-4 min-w-[140px] whitespace-nowrap text-left">Product Code</th>
