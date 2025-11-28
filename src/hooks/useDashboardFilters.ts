@@ -98,7 +98,7 @@ export const useDashboardFilters = () => {
     cityCode: 'ALN', // Keep for backward compatibility (sync with subAreaCode)
     fieldUserRole: null,
     teamLeaderCode: null,
-    userCode: null,
+    userCode: '187219', // Default filter for dashboard: FIELD USER = ABDULLAH AL HARUN
     chainName: null,
     storeCode: null
   })
@@ -283,7 +283,7 @@ export const useDashboardFilters = () => {
     }))
   }, [])
 
-  // Reset all filters - reset to default date range and default sub area (ALN)
+  // Reset all filters - reset to default date range, default sub area (ALN), and default user (187219)
   const resetFilters = useCallback(() => {
     const defaultDates = getDefaultDateRange()
     setFilters({
@@ -295,7 +295,7 @@ export const useDashboardFilters = () => {
       cityCode: 'ALN', // Keep for backward compatibility (sync with subAreaCode)
       fieldUserRole: null,
       teamLeaderCode: null,
-      userCode: null,
+      userCode: '187219', // Default filter for dashboard: FIELD USER = ABDULLAH AL HARUN
       chainName: null,
       storeCode: null
     })
