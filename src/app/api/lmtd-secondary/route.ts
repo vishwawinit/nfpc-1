@@ -28,14 +28,14 @@ export async function GET(request: NextRequest) {
     const offset = (page - 1) * limit
 
     // Calculate date ranges for MTD and LMTD
-    // MTD: Always from 1st of current month to the selected/current date
+    // MTD: Use provided startDate (defaults to 1st of current month) to endDate
     // LMTD: Always from 1st of last month to the same day of last month
 
     const selectedEndDate = endDate || currentDate
     const [year, month, day] = selectedEndDate.split('-').map(Number)
 
-    // MTD: Always from 1st of current month to current date
-    const mtdStart = `${year}-${String(month).padStart(2, '0')}-01`
+    // MTD: Use provided startDate if available, otherwise default to 1st of current month
+    const mtdStart = startDate || `${year}-${String(month).padStart(2, '0')}-01`
     const mtdEnd = selectedEndDate
 
     // LMTD: From 1st of last month to same day in last month
@@ -50,6 +50,7 @@ export async function GET(request: NextRequest) {
     const lmtdEnd = `${prevYear}-${String(prevMonth).padStart(2, '0')}-${String(adjustedDay).padStart(2, '0')}`
 
     console.log('LMTD Secondary Sales API - Date Ranges:', {
+      receivedParams: { startDate, endDate, currentDate },
       mtdPeriod: { start: mtdStart, end: mtdEnd },
       lmtdPeriod: { start: lmtdStart, end: lmtdEnd }
     })

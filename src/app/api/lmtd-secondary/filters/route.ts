@@ -39,8 +39,8 @@ async function fetchLMTDFiltersInternal(params: {
   const selectedEndDate = endDate || currentDate
   const [year, month, day] = selectedEndDate.split('-').map(Number)
 
-  // MTD: Always from 1st of current month to the selected/current date
-  const mtdStart = `${year}-${String(month).padStart(2, '0')}-01`
+  // MTD: Use provided startDate if available, otherwise default to 1st of current month
+  const mtdStart = startDate || `${year}-${String(month).padStart(2, '0')}-01`
   const mtdEnd = selectedEndDate
 
   // LMTD: From 1st of last month to same day in last month
