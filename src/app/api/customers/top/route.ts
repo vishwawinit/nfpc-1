@@ -129,12 +129,14 @@ const buildWhereClause = (params: any) => {
   // Always filter for sales transactions
   conditions.push(`trx_trxtype = 1`)
 
-  // Date conditions - use DATE() to compare date-only, ignoring time
+  // Date conditions - use indexed timestamp ranges for performance
+  // Database is in UTC, so we use timestamp ranges that cover the full date
   if (params.startDate) {
-    conditions.push(`DATE(trx_trxdate) >= '${params.startDate}'::date`)
+    conditions.push(`trx_trxdate >= '${params.startDate} 00:00:00'::timestamp`)
   }
   if (params.endDate) {
-    conditions.push(`DATE(trx_trxdate) <= '${params.endDate}'::date`)
+    // Add 1 day and use < instead of <= to get all records on endDate
+    conditions.push(`trx_trxdate < ('${params.endDate}'::date + INTERVAL '1 day')`)
   }
 
   // Area filter (support both old regionCode and new areaCode)

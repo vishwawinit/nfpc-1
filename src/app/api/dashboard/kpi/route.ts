@@ -86,12 +86,14 @@ const buildWhereClause = (params: any) => {
   // Always filter for sales transactions
   conditions.push(`trx_trxtype = 1`)
 
-  // Date conditions - use DATE() to compare date-only, ignoring time
+  // Date conditions - use indexed timestamp ranges for performance
+  // Database is in UTC, so we use timestamp ranges that cover the full date
   if (params.startDate) {
-    conditions.push(`DATE(trx_trxdate) >= '${params.startDate}'::date`)
+    conditions.push(`trx_trxdate >= '${params.startDate} 00:00:00'::timestamp`)
   }
   if (params.endDate) {
-    conditions.push(`DATE(trx_trxdate) <= '${params.endDate}'::date`)
+    // Add 1 day and use < instead of <= to get all records on endDate
+    conditions.push(`trx_trxdate < ('${params.endDate}'::date + INTERVAL '1 day')`)
   }
 
   // Area filter (support both old regionCode and new areaCode)
@@ -181,57 +183,58 @@ async function fetchKPIDataInternal(params: {
   const prevEndDate = new Date(startDate.getFullYear(), startDate.getMonth(), startDate.getDate() - 1)
 
   // OPTIMIZED: Single query for both current and previous periods using CASE statements
+  // Using indexed timestamp ranges for performance
   const optimizedKpiQuery = `
     SELECT
-      -- Current period metrics (using DATE() for timezone-safe comparison)
+      -- Current period metrics (using indexed timestamp ranges)
       COALESCE(SUM(CASE
-        WHEN DATE(trx_trxdate) >= '${filterParams.startDate}'::date
-        AND DATE(trx_trxdate) <= '${filterParams.endDate}'::date
+        WHEN trx_trxdate >= '${filterParams.startDate} 00:00:00'::timestamp
+        AND trx_trxdate < ('${filterParams.endDate}'::date + INTERVAL '1 day')
         AND trx_totalamount >= 0 THEN trx_totalamount ELSE 0 END), 0) as current_total_sales,
       COALESCE(SUM(CASE
-        WHEN DATE(trx_trxdate) >= '${filterParams.startDate}'::date
-        AND DATE(trx_trxdate) <= '${filterParams.endDate}'::date
+        WHEN trx_trxdate >= '${filterParams.startDate} 00:00:00'::timestamp
+        AND trx_trxdate < ('${filterParams.endDate}'::date + INTERVAL '1 day')
         AND trx_totalamount < 0 THEN ABS(trx_totalamount) ELSE 0 END), 0) as current_return_sales,
       COALESCE(SUM(CASE
-        WHEN DATE(trx_trxdate) >= '${filterParams.startDate}'::date
-        AND DATE(trx_trxdate) <= '${filterParams.endDate}'::date
+        WHEN trx_trxdate >= '${filterParams.startDate} 00:00:00'::timestamp
+        AND trx_trxdate < ('${filterParams.endDate}'::date + INTERVAL '1 day')
         THEN trx_totalamount ELSE 0 END), 0) as current_net_sales,
       COUNT(DISTINCT CASE
-        WHEN DATE(trx_trxdate) >= '${filterParams.startDate}'::date
-        AND DATE(trx_trxdate) <= '${filterParams.endDate}'::date
+        WHEN trx_trxdate >= '${filterParams.startDate} 00:00:00'::timestamp
+        AND trx_trxdate < ('${filterParams.endDate}'::date + INTERVAL '1 day')
         AND trx_totalamount >= 0 THEN trx_trxcode END) as current_total_orders,
       COUNT(DISTINCT CASE
-        WHEN DATE(trx_trxdate) >= '${filterParams.startDate}'::date
-        AND DATE(trx_trxdate) <= '${filterParams.endDate}'::date
+        WHEN trx_trxdate >= '${filterParams.startDate} 00:00:00'::timestamp
+        AND trx_trxdate < ('${filterParams.endDate}'::date + INTERVAL '1 day')
         THEN customer_code END) as current_unique_customers,
       COALESCE(SUM(CASE
-        WHEN DATE(trx_trxdate) >= '${filterParams.startDate}'::date
-        AND DATE(trx_trxdate) <= '${filterParams.endDate}'::date
+        WHEN trx_trxdate >= '${filterParams.startDate} 00:00:00'::timestamp
+        AND trx_trxdate < ('${filterParams.endDate}'::date + INTERVAL '1 day')
         THEN ABS(line_quantitybu) ELSE 0 END), 0) as current_total_quantity,
 
-      -- Previous period metrics (using DATE() for timezone-safe comparison)
+      -- Previous period metrics (using indexed timestamp ranges)
       COALESCE(SUM(CASE
-        WHEN DATE(trx_trxdate) >= '${toLocalDateString(prevStartDate)}'::date
-        AND DATE(trx_trxdate) <= '${toLocalDateString(prevEndDate)}'::date
+        WHEN trx_trxdate >= '${toLocalDateString(prevStartDate)} 00:00:00'::timestamp
+        AND trx_trxdate < ('${toLocalDateString(prevEndDate)}'::date + INTERVAL '1 day')
         THEN trx_totalamount ELSE 0 END), 0) as prev_net_sales,
       COUNT(DISTINCT CASE
-        WHEN DATE(trx_trxdate) >= '${toLocalDateString(prevStartDate)}'::date
-        AND DATE(trx_trxdate) <= '${toLocalDateString(prevEndDate)}'::date
+        WHEN trx_trxdate >= '${toLocalDateString(prevStartDate)} 00:00:00'::timestamp
+        AND trx_trxdate < ('${toLocalDateString(prevEndDate)}'::date + INTERVAL '1 day')
         AND trx_totalamount >= 0 THEN trx_trxcode END) as prev_total_orders,
       COUNT(DISTINCT CASE
-        WHEN DATE(trx_trxdate) >= '${toLocalDateString(prevStartDate)}'::date
-        AND DATE(trx_trxdate) <= '${toLocalDateString(prevEndDate)}'::date
+        WHEN trx_trxdate >= '${toLocalDateString(prevStartDate)} 00:00:00'::timestamp
+        AND trx_trxdate < ('${toLocalDateString(prevEndDate)}'::date + INTERVAL '1 day')
         THEN customer_code END) as prev_unique_customers,
       COALESCE(SUM(CASE
-        WHEN DATE(trx_trxdate) >= '${toLocalDateString(prevStartDate)}'::date
-        AND DATE(trx_trxdate) <= '${toLocalDateString(prevEndDate)}'::date
+        WHEN trx_trxdate >= '${toLocalDateString(prevStartDate)} 00:00:00'::timestamp
+        AND trx_trxdate < ('${toLocalDateString(prevEndDate)}'::date + INTERVAL '1 day')
         THEN ABS(line_quantitybu) ELSE 0 END), 0) as prev_total_quantity,
 
       COALESCE(MAX(trx_currencycode), 'AED') as currency_code
     FROM ${SALES_TABLE}
     WHERE trx_trxtype = 1
-      AND (trx_trxdate >= '${toLocalDateString(prevStartDate)}'::timestamp
-      AND trx_trxdate < ('${filterParams.endDate}'::timestamp + INTERVAL '1 day'))
+      AND (trx_trxdate >= '${toLocalDateString(prevStartDate)} 00:00:00'::timestamp
+      AND trx_trxdate < ('${filterParams.endDate}'::date + INTERVAL '1 day'))
       ${whereClause.replace('WHERE trx_trxtype = 1', '').replace('WHERE', 'AND')}
   `
 
