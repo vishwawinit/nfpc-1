@@ -11,6 +11,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Input } from '@/components/ui/input'
 import { Users, TrendingUp, ShoppingBag, DollarSign, RefreshCw, ChevronLeft, ChevronRight, Download, X, Maximize2, Minimize2, Search, Filter, ChevronDown, Package, BarChart3 } from 'lucide-react'
 import ExcelJS from 'exceljs'
+import { useSalesByChannel } from '@/hooks/useDataService'
+import { CustomerTransactionsModal } from '@/components/CustomerTransactionsModal'
 
 // Color palette
 const CHART_COLORS = {
@@ -31,6 +33,8 @@ const CLASSIFICATION_COLORS = {
   'C Class': '#fbbf24',
   'New Customer': '#94a3b8'
 }
+
+const CHANNEL_COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#14b8a6', '#f97316']
 
 interface CustomerData {
   customerCode: string
@@ -134,11 +138,70 @@ export function CustomersReport() {
     salesmanCode: 'all',
     routeCode: 'all',
     channelCode: 'all',
+    subAreaCode: 'all',
     searchTerm: '',
   })
 
   // Applied filters state (for applying filters on button click)
   const [appliedFilters, setAppliedFilters] = useState(filters)
+
+  // Build additional params for sales by channel hook
+  const channelParams = useMemo(() => {
+    const params = new URLSearchParams()
+    params.append('range', appliedFilters.dateRange)
+
+    if (appliedFilters.regionCode && appliedFilters.regionCode !== 'all') {
+      params.append('areaCode', appliedFilters.regionCode)
+    }
+    if (appliedFilters.subAreaCode && appliedFilters.subAreaCode !== 'all') {
+      params.append('subAreaCode', appliedFilters.subAreaCode)
+    }
+    if (appliedFilters.salesmanCode && appliedFilters.salesmanCode !== 'all') {
+      params.append('userCode', appliedFilters.salesmanCode)
+    }
+    if (appliedFilters.routeCode && appliedFilters.routeCode !== 'all') {
+      params.append('routeCode', appliedFilters.routeCode)
+    }
+    if (appliedFilters.channelCode && appliedFilters.channelCode !== 'all') {
+      params.append('chainName', appliedFilters.channelCode)
+    }
+
+    return params
+  }, [appliedFilters])
+
+  // Fetch sales by channel data using the same hook as dashboard
+  const { data: salesByChannelData, loading: channelLoading } = useSalesByChannel({
+    additionalParams: channelParams,
+    onError: (error) => console.error('Error loading channel data:', error)
+  })
+
+  // Transform channel data for pie chart - group < 5% as "Others" (same as dashboard)
+  const pieChartData = useMemo(() => {
+    if (!salesByChannelData || salesByChannelData.length === 0) return []
+
+    const majorChannels = salesByChannelData.filter(c => c.percentage >= 5)
+    const minorChannels = salesByChannelData.filter(c => c.percentage < 5)
+
+    const chartData = [...majorChannels]
+
+    // If there are minor channels, group them as "Others"
+    if (minorChannels.length > 0) {
+      const othersTotal = minorChannels.reduce((sum, c) => sum + c.sales, 0)
+      const othersPercentage = minorChannels.reduce((sum, c) => sum + c.percentage, 0)
+      const othersOrders = minorChannels.reduce((sum, c) => sum + c.orders, 0)
+      const othersCustomers = minorChannels.reduce((sum, c) => sum + c.customers, 0)
+
+      chartData.push({
+        channel: 'Others',
+        sales: othersTotal,
+        percentage: othersPercentage,
+        orders: othersOrders,
+        customers: othersCustomers
+      })
+    }
+
+    return chartData
+  }, [salesByChannelData])
 
   // Detailed view state
   const [detailedCustomers, setDetailedCustomers] = useState<Customer[]>([])
@@ -148,6 +211,10 @@ export function CustomersReport() {
   const [sortBy, setSortBy] = useState('total_sales')
   const [sortOrder, setSortOrder] = useState<'ASC' | 'DESC'>('DESC')
   const [detailedLoading, setDetailedLoading] = useState(false)
+
+  // Modal state for viewing customer transactions
+  const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null)
+  const [isTransactionsModalOpen, setIsTransactionsModalOpen] = useState(false)
 
   // Fetch analytics data
   const fetchAnalytics = async () => {
@@ -540,10 +607,10 @@ export function CustomersReport() {
                   </Select>
                 </div>
 
-                {/* Channel Code Filter */}
+                {/* Chain/Channel Filter */}
                 <div>
                   <label className="block text-xs font-semibold text-slate-600 mb-1 uppercase tracking-wide">
-                    Channel Code
+                    Chain/Channel
                   </label>
                   <Select
                     value={filters.channelCode}
@@ -551,10 +618,10 @@ export function CustomersReport() {
                     disabled={loading}
                   >
                     <SelectTrigger>
-                      <SelectValue placeholder="Select Channel" />
+                      <SelectValue placeholder="Select Chain/Channel" />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="all">All Channels</SelectItem>
+                      <SelectItem value="all">All Chains/Channels</SelectItem>
                       <SelectItem value="GT">General Trade (GT)</SelectItem>
                       <SelectItem value="MT">Modern Trade (MT)</SelectItem>
                     </SelectContent>
@@ -742,58 +809,151 @@ export function CustomersReport() {
                 </Card>
               </div>
 
-              {/* Channel Code and Chain Name Analysis */}
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                <Card>
-                  <CardHeader>
-                    <CardTitle className="flex items-center gap-2">
-                      Sales by Channel Code
-                    </CardTitle>
-                    <p className="text-sm text-gray-600">Distribution by channel</p>
-                  </CardHeader>
-                  <CardContent>
-                    <ResponsiveContainer width="100%" height={300}>
-                      <PieChart>
-                        <Pie
-                          data={analytics.channelCodeAnalysis}
-                          dataKey="sales"
-                          nameKey="channelCode"
-                          cx="50%"
-                          cy="50%"
-                          outerRadius={80}
-                          label={(entry) => `${entry.channelCode}: ${entry.contribution?.toFixed(1)}%`}
-                        >
-                          {analytics.channelCodeAnalysis.map((entry: any, index: number) => (
-                            <Cell key={`channel-cell-${index}`} fill={CHART_COLORS.primary} />
-                          ))}
-                        </Pie>
-                        <Tooltip formatter={(value, name) => [formatCurrency(Number(value), analytics.metrics.currencyCode), name]} />
-                      </PieChart>
-                    </ResponsiveContainer>
-                  </CardContent>
-                </Card>
+              {/* Sales by Channel - Full Width (Same as Dashboard) */}
+              <Card>
+                <CardHeader>
+                  <CardTitle>Sales by Channel</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  {channelLoading ? (
+                    <div style={{ textAlign: 'center', padding: '20px' }}>
+                      Loading channel data...
+                    </div>
+                  ) : salesByChannelData && salesByChannelData.length > 0 ? (
+                    <div>
+                      {/* Pie Chart - Shows channels >= 5% individually, others grouped */}
+                      <div style={{ height: '300px', width: '100%' }}>
+                        <ResponsiveContainer width="100%" height="100%">
+                          <PieChart>
+                            <Pie
+                              data={pieChartData}
+                              cx="50%"
+                              cy="50%"
+                              labelLine={false}
+                              label={({ channel, percentage }) => `${channel}: ${percentage.toFixed(2)}%`}
+                              outerRadius={100}
+                              fill="#8884d8"
+                              dataKey="sales"
+                            >
+                              {pieChartData.map((entry, index) => (
+                                <Cell key={`cell-${index}`} fill={CHANNEL_COLORS[index % CHANNEL_COLORS.length]} />
+                              ))}
+                            </Pie>
+                            <Tooltip
+                              content={({ active, payload }) => {
+                                if (!active || !payload || !payload.length) return null
 
-                <Card>
-                  <CardHeader>
-                    <CardTitle className="flex items-center gap-2">
-                      <BarChart3 className="h-5 w-5" />
-                      Sales by Chain Name
-                    </CardTitle>
-                    <p className="text-sm text-gray-600">Top 10 chains by sales</p>
-                  </CardHeader>
-                  <CardContent>
-                    <ResponsiveContainer width="100%" height={300}>
-                      <BarChart data={analytics.chainNameAnalysis.slice(0, 10)}>
-                        <CartesianGrid strokeDasharray="3 3" />
-                        <XAxis dataKey="chainName" angle={-45} textAnchor="end" height={100} />
-                        <YAxis />
-                        <Tooltip formatter={(value) => formatCurrency(Number(value), analytics.metrics.currencyCode)} />
-                        <Bar dataKey="sales" fill="#8B5CF6" />
-                      </BarChart>
-                    </ResponsiveContainer>
-                  </CardContent>
-                </Card>
-              </div>
+                                const data = payload[0].payload
+
+                                return (
+                                  <div style={{
+                                    backgroundColor: '#fff',
+                                    border: '2px solid #3b82f6',
+                                    borderRadius: '8px',
+                                    padding: '14px 18px',
+                                    boxShadow: '0 4px 12px rgba(0, 0, 0, 0.15)',
+                                    fontSize: '13px',
+                                    lineHeight: '1.6'
+                                  }}>
+                                    <div style={{ fontWeight: '600', marginBottom: '6px', fontSize: '14px', color: '#1f2937' }}>
+                                      {data.channel}
+                                    </div>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '4px' }}>
+                                      <span style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: '#3b82f6', display: 'inline-block' }}></span>
+                                      <span>Sales: {formatCurrency(Number(data.sales), analytics?.metrics.currencyCode || 'AED')}</span>
+                                    </div>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '4px' }}>
+                                      <span style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: '#10b981', display: 'inline-block' }}></span>
+                                      <span>Orders: {data.orders?.toLocaleString()}</span>
+                                    </div>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '4px' }}>
+                                      <span style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: '#f59e0b', display: 'inline-block' }}></span>
+                                      <span>Customers: {data.customers?.toLocaleString()}</span>
+                                    </div>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                      <span style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: '#8b5cf6', display: 'inline-block' }}></span>
+                                      <span>Percentage: {data.percentage?.toFixed(2)}%</span>
+                                    </div>
+                                  </div>
+                                )
+                              }}
+                            />
+                          </PieChart>
+                        </ResponsiveContainer>
+                      </div>
+
+                      {/* Channel Legend - Shows ALL channels individually */}
+                      <div style={{ marginTop: '16px', paddingRight: '8px' }}>
+                        {salesByChannelData.map((channel, index) => {
+                          // Create rich tooltip content with color indicators
+                          const tooltipContent = `${channel.channel}
+
+🔵 Sales: ${formatCurrency(channel.sales, analytics?.metrics.currencyCode || 'AED')}
+🟢 Orders: ${channel.orders.toLocaleString()}
+🟠 Customers: ${channel.customers.toLocaleString()}
+🟣 Percentage: ${channel.percentage.toFixed(2)}%`
+
+                          return (
+                            <div
+                              key={`channel-${index}`}
+                              title={tooltipContent}
+                              style={{
+                                display: 'flex',
+                                justifyContent: 'space-between',
+                                alignItems: 'center',
+                                padding: '8px 12px',
+                                marginBottom: '4px',
+                                backgroundColor: '#fafafa',
+                                borderRadius: '6px',
+                                borderLeft: `4px solid ${CHANNEL_COLORS[index % CHANNEL_COLORS.length]}`,
+                                cursor: 'pointer',
+                                transition: 'background-color 0.2s ease'
+                              }}
+                              onMouseEnter={(e) => {
+                                e.currentTarget.style.backgroundColor = '#f3f4f6'
+                              }}
+                              onMouseLeave={(e) => {
+                                e.currentTarget.style.backgroundColor = '#fafafa'
+                              }}
+                            >
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flex: 1 }}>
+                                <div
+                                  style={{
+                                    width: '12px',
+                                    height: '12px',
+                                    borderRadius: '50%',
+                                    backgroundColor: CHANNEL_COLORS[index % CHANNEL_COLORS.length]
+                                  }}
+                                />
+                                <div style={{ flex: 1, minWidth: 0 }}>
+                                  <div style={{ fontSize: '13px', fontWeight: '500', color: '#111827', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                    {channel.channel}
+                                  </div>
+                                  <div style={{ fontSize: '11px', color: '#6b7280' }}>
+                                    <span style={{ color: '#10b981' }}>●</span> {channel.orders} orders · <span style={{ color: '#f59e0b' }}>●</span> {channel.customers} customers
+                                  </div>
+                                </div>
+                              </div>
+                              <div style={{ textAlign: 'right', marginLeft: '8px' }}>
+                                <div style={{ fontSize: '13px', fontWeight: '600', color: '#374151' }}>
+                                  <span style={{ color: '#3b82f6', fontSize: '10px' }}>●</span> {formatCurrency(channel.sales, analytics?.metrics.currencyCode || 'AED')}
+                                </div>
+                                <div style={{ fontSize: '11px', color: '#6b7280' }}>
+                                  <span style={{ color: '#8b5cf6' }}>●</span> {channel.percentage.toFixed(2)}%
+                                </div>
+                              </div>
+                            </div>
+                          )
+                        })}
+                      </div>
+                    </div>
+                  ) : (
+                    <div style={{ textAlign: 'center', padding: '20px', color: '#6b7280' }}>
+                      No channel data available
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
             </>
           )}
         </TabsContent>
@@ -878,7 +1038,7 @@ export function CustomersReport() {
                       <TableHead>City</TableHead>
                       <TableHead>Region</TableHead>
                       <TableHead>Channel Code</TableHead>
-                      <TableHead>Chain Name</TableHead>
+                      <TableHead>Chain/Channel</TableHead>
                       <TableHead>Total Sales</TableHead>
                       <TableHead>Total Orders</TableHead>
                       <TableHead>AOV</TableHead>
@@ -921,8 +1081,15 @@ export function CustomersReport() {
                           </div>
                         </TableCell>
                         <TableCell>
-                          <Button variant="outline" size="sm">
-                            Orders
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => {
+                              setSelectedCustomer(customer)
+                              setIsTransactionsModalOpen(true)
+                            }}
+                          >
+                            View Orders
                           </Button>
                         </TableCell>
                       </TableRow>
@@ -1052,6 +1219,19 @@ export function CustomersReport() {
           </Card>
         </TabsContent>
       </Tabs>
+
+      {/* Customer Transactions Modal */}
+      {selectedCustomer && (
+        <CustomerTransactionsModal
+          customer={selectedCustomer}
+          isOpen={isTransactionsModalOpen}
+          onClose={() => {
+            setIsTransactionsModalOpen(false)
+            setSelectedCustomer(null)
+          }}
+          dateRange={appliedFilters.dateRange}
+        />
+      )}
     </div>
   )
 }

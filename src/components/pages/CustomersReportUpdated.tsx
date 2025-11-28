@@ -10,14 +10,14 @@ import { Badge } from '@/components/ui/badge'
 import { LoadingBar } from '@/components/ui/LoadingBar'
 import { InfoTooltip } from '@/components/ui/InfoTooltip'
 import { SearchableSelect } from '@/components/ui/SearchableSelect'
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog'
 import {
   TrendingUp, TrendingDown, Users, Package, ShoppingCart, DollarSign,
   Download, RefreshCw, Maximize, Minimize, ChevronLeft, ChevronRight,
-  Eye, Filter, MapPin, Store, Calendar, X, Phone, Mail
+  Eye, Filter, X, Calendar, MapPin
 } from 'lucide-react'
 import * as ExcelJS from 'exceljs'
 import { CustomDatePicker } from '@/components/ui/CustomDatePicker'
+import { CustomerTransactionsModal } from '@/components/CustomerTransactionsModal'
 
 const CHART_COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#06b6d4', '#84cc16']
 
@@ -73,9 +73,6 @@ export function CustomersReportUpdated() {
   // Dialog states
   const [showOrdersDialog, setShowOrdersDialog] = useState(false)
   const [selectedCustomer, setSelectedCustomer] = useState<any>(null)
-  const [customerDetail, setCustomerDetail] = useState<any>(null)
-  const [transactions, setTransactions] = useState<any[]>([])
-  const [transactionsLoading, setTransactionsLoading] = useState(false)
 
   // Filters
   const [customerFilter, setCustomerFilter] = useState('')
@@ -210,43 +207,9 @@ export function CustomersReportUpdated() {
     salesmanFilter || teamLeaderFilter || productCategoryFilter
 
   // View customer orders in dialog
-  const viewCustomerOrders = async (customer: any) => {
+  const viewCustomerOrders = (customer: any) => {
     setSelectedCustomer(customer)
     setShowOrdersDialog(true)
-    setTransactionsLoading(true)
-
-    try {
-      // Fetch customer details
-      const detailResponse = await fetch(`/api/customers/${customer.customerCode}/details`)
-      const detailResult = await detailResponse.json()
-
-      if (detailResult.success) {
-        console.log('Customer detail received:', detailResult.data)
-        console.log('Region:', detailResult.data.region)
-        console.log('City:', detailResult.data.city)
-        console.log('Chain:', detailResult.data.chain)
-        console.log('TL Code:', detailResult.data.teamLeaderCode)
-        setCustomerDetail(detailResult.data)
-      }
-
-      // Fetch customer transactions
-      let transUrl = `/api/customers/${customer.customerCode}/transactions`
-      if (dateRangeType === 'custom') {
-        transUrl += `?startDate=${customStartDate}&endDate=${customEndDate}`
-      } else {
-        transUrl += `?range=${selectedPeriod}`
-      }
-      const transResponse = await fetch(transUrl)
-      const transResult = await transResponse.json()
-
-      if (transResult.success) {
-        setTransactions(transResult.data.transactions || [])
-      }
-    } catch (error) {
-      console.error('Error fetching customer data:', error)
-    } finally {
-      setTransactionsLoading(false)
-    }
   }
 
   // Export to Excel
@@ -991,285 +954,19 @@ export function CustomersReportUpdated() {
         </Card>
       )}
 
-      {/* Customer Orders Dialog */}
-      <Dialog open={showOrdersDialog} onOpenChange={setShowOrdersDialog}>
-        <DialogContent className="max-w-[90vw] max-h-[90vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle className="text-2xl font-bold">
-              Customer Orders - {selectedCustomer?.customerName}
-            </DialogTitle>
-            <DialogDescription>
-              Order details for {dateRangeType === 'custom'
-                ? `${new Date(customStartDate).toLocaleDateString()} - ${new Date(customEndDate).toLocaleDateString()}`
-                : getDateRangeLabel(selectedPeriod)}
-            </DialogDescription>
-          </DialogHeader>
-
-          {transactionsLoading ? (
-            <div className="flex justify-center py-8">
-              <LoadingBar />
-            </div>
-          ) : (
-            <div className="space-y-6">
-              {/* Customer Information */}
-              <Card>
-                <CardHeader>
-                  <CardTitle className="text-lg flex items-center gap-2">
-                    <Store className="h-5 w-5" />
-                    Customer Information
-                  </CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                    <div>
-                      <p className="text-sm text-gray-600">Customer Code</p>
-                      <p className="font-semibold">{selectedCustomer?.customerCode}</p>
-                    </div>
-                    <div>
-                      <p className="text-sm text-gray-600">Customer Name</p>
-                      <p className="font-semibold">{customerDetail?.customerName || selectedCustomer?.customerName}</p>
-                    </div>
-                    <div>
-                      <p className="text-sm text-gray-600">City</p>
-                      <p className="font-semibold">{customerDetail?.city || selectedCustomer?.city || 'N/A'}</p>
-                    </div>
-                    <div>
-                      <p className="text-sm text-gray-600">Chain</p>
-                      <p className="font-semibold">{customerDetail?.chain || selectedCustomer?.chain || 'N/A'}</p>
-                    </div>
-                    <div>
-                      <p className="text-sm text-gray-600">Total Sales</p>
-                      <p className="font-semibold text-green-600">{formatCurrency(selectedCustomer?.totalSales || 0)}</p>
-                    </div>
-                  </div>
-                  {customerDetail?.address && (
-                    <div className="mt-4 pt-4 border-t">
-                      <div className="flex items-start gap-2">
-                        <MapPin className="h-4 w-4 text-gray-500 mt-1" />
-                        <div>
-                          <p className="text-sm text-gray-600">Address</p>
-                          <p className="font-medium">{customerDetail.address}</p>
-                        </div>
-                      </div>
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
-                        {customerDetail?.phone && (
-                          <div className="flex items-start gap-2">
-                            <Phone className="h-4 w-4 text-gray-500 mt-1" />
-                            <div>
-                              <p className="text-sm text-gray-600">Phone</p>
-                              <p className="font-medium">{customerDetail.phone}</p>
-                            </div>
-                          </div>
-                        )}
-                        {customerDetail?.email && (
-                          <div className="flex items-start gap-2">
-                            <Mail className="h-4 w-4 text-gray-500 mt-1" />
-                            <div>
-                              <p className="text-sm text-gray-600">Email</p>
-                              <p className="font-medium">{customerDetail.email}</p>
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
-
-              {/* Transactions Table */}
-              <Card>
-                <CardHeader>
-                  <div className="flex justify-between items-center">
-                    <CardTitle className="text-lg flex items-center gap-2">
-                      <Calendar className="h-5 w-5" />
-                      Transactions
-                    </CardTitle>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={() => exportCustomerTransactions(selectedCustomer, customerDetail, transactions)}
-                      className="flex items-center gap-2"
-                    >
-                      <Download className="h-4 w-4" />
-                      Export
-                    </Button>
-                  </div>
-                </CardHeader>
-                <CardContent>
-                  <div className="overflow-x-auto">
-                    <Table>
-                      <TableHeader>
-                        <TableRow>
-                          <TableHead>Transaction ID</TableHead>
-                          <TableHead>Date</TableHead>
-                          <TableHead>Product Code</TableHead>
-                          <TableHead>Product Name</TableHead>
-                          <TableHead>Quantity</TableHead>
-                          <TableHead>Unit Price</TableHead>
-                          <TableHead>Total</TableHead>
-                          <TableHead>Net Amount</TableHead>
-                        </TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        {transactions.length > 0 ? (
-                          transactions.map((trans: any, index: number) => (
-                            <TableRow key={`${trans.transactionId}-${index}`}>
-                              <TableCell className="font-medium">{trans.transactionId}</TableCell>
-                              <TableCell>
-                                {new Date(trans.transactionDate).toLocaleDateString('en-GB', {
-                                  day: '2-digit',
-                                  month: '2-digit',
-                                  year: 'numeric'
-                                })}
-                              </TableCell>
-                              <TableCell>{trans.productCode}</TableCell>
-                              <TableCell>{trans.productName}</TableCell>
-                              <TableCell>{formatNumber(trans.quantity)}</TableCell>
-                              <TableCell>{formatCurrency(trans.unitPrice)}</TableCell>
-                              <TableCell>{formatCurrency(trans.totalAmount)}</TableCell>
-                              <TableCell className="font-semibold text-green-600">
-                                {formatCurrency(trans.netAmount)}
-                              </TableCell>
-                            </TableRow>
-                          ))
-                        ) : (
-                          <TableRow>
-                            <TableCell colSpan={8} className="text-center py-8 text-gray-500">
-                              No transactions found for this period
-                            </TableCell>
-                          </TableRow>
-                        )}
-                      </TableBody>
-                    </Table>
-                  </div>
-                </CardContent>
-              </Card>
-            </div>
-          )}
-        </DialogContent>
-      </Dialog>
+      {/* Customer Transactions Modal */}
+      {selectedCustomer && (
+        <CustomerTransactionsModal
+          customer={selectedCustomer}
+          isOpen={showOrdersDialog}
+          onClose={() => {
+            setShowOrdersDialog(false)
+            setSelectedCustomer(null)
+          }}
+          dateRange={selectedPeriod}
+        />
+      )}
     </div>
   )
 }
 
-// Helper function for date range labels
-function getDateRangeLabel(range: string): string {
-  const labels: any = {
-    today: 'Today',
-    yesterday: 'Yesterday',
-    thisWeek: 'This Week',
-    thisMonth: 'This Month',
-    lastMonth: 'Last Month',
-    thisQuarter: 'This Quarter',
-    lastQuarter: 'Last Quarter'
-  }
-  return labels[range] || range
-}
-
-// Export customer transactions to Excel
-async function exportCustomerTransactions(customer: any, customerDetail: any, transactions: any[]) {
-  const formatCurrency = (value: number) => {
-    if (value >= 1000000) return `AED${(value / 1000000).toFixed(1)}M`
-    if (value >= 1000) return `AED${(value / 1000).toFixed(0)}K`
-    return `AED${value.toFixed(0)}`
-  }
-
-  try {
-    const workbook = new ExcelJS.Workbook()
-    const worksheet = workbook.addWorksheet('Customer Transactions')
-
-    // Add customer info header section
-    worksheet.addRow(['CUSTOMER INFORMATION'])
-    worksheet.addRow([])
-    worksheet.addRow(['Customer Code:', customer.customerCode || ''])
-    worksheet.addRow(['Customer Name:', customerDetail?.customerName || customer.customerName || ''])
-    worksheet.addRow(['City:', customerDetail?.city || customer.city || ''])
-    worksheet.addRow(['Chain:', customerDetail?.chain || customer.chain || ''])
-    if (customerDetail?.address) {
-      worksheet.addRow(['Address:', customerDetail.address])
-    }
-    if (customerDetail?.phone) {
-      worksheet.addRow(['Phone:', customerDetail.phone])
-    }
-    if (customerDetail?.email) {
-      worksheet.addRow(['Email:', customerDetail.email])
-    }
-    worksheet.addRow(['Total Sales:', formatCurrency(customer.totalSales || 0)])
-    worksheet.addRow([])
-    worksheet.addRow([])
-
-    // Style customer info section
-    worksheet.getRow(1).font = { bold: true, size: 14 }
-    worksheet.getRow(1).fill = {
-      type: 'pattern',
-      pattern: 'solid',
-      fgColor: { argb: 'FF4472C4' }
-    }
-    worksheet.getRow(1).font = { bold: true, color: { argb: 'FFFFFFFF' }, size: 14 }
-
-    // Add transaction headers
-    const headerRowIndex = worksheet.lastRow.number + 1
-    const headers = [
-      'Transaction ID', 'Date', 'Product Code', 'Product Name',
-      'Quantity', 'Unit Price', 'Total Amount', 'Net Amount'
-    ]
-    worksheet.addRow(headers)
-
-    // Style transaction headers
-    worksheet.getRow(headerRowIndex).font = { bold: true, color: { argb: 'FFFFFFFF' } }
-    worksheet.getRow(headerRowIndex).fill = {
-      type: 'pattern',
-      pattern: 'solid',
-      fgColor: { argb: 'FF4472C4' }
-    }
-    worksheet.getRow(headerRowIndex).alignment = { vertical: 'middle', horizontal: 'center' }
-
-    // Add transaction data
-    transactions.forEach(trans => {
-      worksheet.addRow([
-        trans.transactionId,
-        new Date(trans.transactionDate).toLocaleDateString('en-GB', {
-          day: '2-digit',
-          month: '2-digit',
-          year: 'numeric'
-        }),
-        trans.productCode,
-        trans.productName,
-        trans.quantity,
-        trans.unitPrice,
-        trans.totalAmount,
-        trans.netAmount
-      ])
-    })
-
-    // Set column widths
-    worksheet.columns = [
-      { width: 20 },
-      { width: 15 },
-      { width: 15 },
-      { width: 35 },
-      { width: 12 },
-      { width: 15 },
-      { width: 15 },
-      { width: 15 }
-    ]
-
-    // Style the worksheet
-    worksheet.eachRow((row, rowNumber) => {
-      row.alignment = { vertical: 'middle', horizontal: 'left' }
-    })
-
-    const buffer = await workbook.xlsx.writeBuffer()
-    const blob = new Blob([buffer], {
-      type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-    })
-    const url = URL.createObjectURL(blob)
-    const link = document.createElement('a')
-    link.href = url
-    link.download = `customer-${customer.customerCode}-transactions-${new Date().toISOString().split('T')[0]}.xlsx`
-    link.click()
-  } catch (error) {
-    console.error('Export error:', error)
-    alert('Failed to export data')
-  }
-}

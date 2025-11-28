@@ -73,60 +73,60 @@ export async function GET(request: NextRequest) {
     const startDateStr = startDate.toISOString().split('T')[0]
     const endDateStr = endDate.toISOString().split('T')[0]
 
-    // Build filter conditions using real tables
+    // Build filter conditions using flat_daily_sales_report
     const conditions: string[] = []
     const params: any[] = []
     let paramIndex = 1
 
-    // Always filter by transaction type (invoices only)
-    conditions.push(`t."TrxType" = 1`)
+    // Always filter by transaction type = 1 (sales/invoices only)
+    conditions.push(`trx_trxtype = '1'`)
 
     // Date conditions
-    conditions.push(`t."TrxDate" >= $${paramIndex}::timestamp`)
+    conditions.push(`trx_trxdate::date >= $${paramIndex}::date`)
     params.push(startDateStr)
     paramIndex++
-    conditions.push(`t."TrxDate" < ($${paramIndex}::timestamp + INTERVAL '1 day')`)
+    conditions.push(`trx_trxdate::date <= $${paramIndex}::date`)
     params.push(endDateStr)
     paramIndex++
 
     // Search condition
     if (search) {
-      conditions.push(`(c."Description" ILIKE $${paramIndex} OR c."Code" ILIKE $${paramIndex})`)
+      conditions.push(`(customer_description ILIKE $${paramIndex} OR customer_code ILIKE $${paramIndex})`)
       params.push(`%${search}%`)
       paramIndex++
     }
 
-    // Region filter
+    // Region/Area filter
     if (regionCode) {
-      conditions.push(`c."RegionCode" = $${paramIndex}`)
+      conditions.push(`route_areacode = $${paramIndex}`)
       params.push(regionCode)
       paramIndex++
     }
 
     // Salesman filter
     if (salesmanCode) {
-      conditions.push(`t."UserCode" = $${paramIndex}`)
+      conditions.push(`trx_usercode = $${paramIndex}`)
       params.push(salesmanCode)
       paramIndex++
     }
 
     // Route filter
     if (routeCode) {
-      conditions.push(`t."RouteCode" = $${paramIndex}`)
+      conditions.push(`trx_routecode = $${paramIndex}`)
       params.push(routeCode)
       paramIndex++
     }
 
     // Customer filter
     if (customerCode) {
-      conditions.push(`t."ClientCode" = $${paramIndex}`)
+      conditions.push(`customer_code = $${paramIndex}`)
       params.push(customerCode)
       paramIndex++
     }
 
-    // Channel filter - using tblCustomerDetail
+    // Channel filter
     if (channelCode) {
-      conditions.push(`TRIM(cd."ChannelCode") = $${paramIndex}`)
+      conditions.push(`customer_channel_description = $${paramIndex}`)
       params.push(channelCode)
       paramIndex++
     }
@@ -150,35 +150,48 @@ export async function GET(request: NextRequest) {
       orderByClause = `total_sales ${sortOrder}`
     }
 
-    // Get customer details with pagination using real tables
+    // Get customer details with pagination using flat_daily_sales_report
+    // IMPORTANT: trx_totalamount is repeated on every line item of a transaction
+    // We must use a subquery to get distinct transaction totals first, then sum them
     const customerDetailsQuery = `
       SELECT
-        t."ClientCode" as customer_code,
-        MAX(c."Description") as customer_name,
-        MAX(c."RouteCode") as territory,
-        MAX(c."RegionCode") as region,
-        MAX(r."Description") as region_name,
-        MAX(c."Address1") as city,
-        MAX(TRIM(cd."ChannelCode")) as channel_code,
-        MAX(ch."Description") as chain_name,
+        customer_code,
+        MAX(customer_description) as customer_name,
+        MAX(trx_routecode) as territory,
+        MAX(route_areacode) as region,
+        MAX(route_areacode) as region_name,
+        MAX(route_subareacode) as city,
+        MAX(customer_channelcode) as channel_code,
+        MAX(customer_channel_description) as chain_name,
         'Active' as status,
-        COALESCE(SUM(t."TotalAmount"), 0) as total_sales,
-        COUNT(DISTINCT t."TrxCode") as total_orders,
+        COALESCE(SUM(transaction_total), 0) as total_sales,
+        COUNT(DISTINCT trx_trxcode) as total_orders,
         CASE
-          WHEN COUNT(DISTINCT t."TrxCode") > 0
-          THEN COALESCE(SUM(t."TotalAmount"), 0) / COUNT(DISTINCT t."TrxCode")
+          WHEN COUNT(DISTINCT trx_trxcode) > 0
+          THEN COALESCE(SUM(transaction_total), 0) / COUNT(DISTINCT trx_trxcode)
           ELSE 0
         END as avg_order_value,
-        'AED' as currency_code,
-        MAX(DATE(t."TrxDate")) as last_order_date,
-        COUNT(DISTINCT t."UserCode") as assigned_salesmen
-      FROM "tblTrxHeader" t
-      LEFT JOIN "tblCustomer" c ON t."ClientCode" = c."Code"
-      LEFT JOIN "tblRegion" r ON c."RegionCode" = r."Code"
-      LEFT JOIN "tblCustomerDetail" cd ON t."ClientCode" = cd."CustomerCode"
-      LEFT JOIN "tblChannel" ch ON TRIM(cd."ChannelCode") = ch."Code"
-      ${whereClause}
-      GROUP BY t."ClientCode"
+        MAX(trx_currencycode) as currency_code,
+        MAX(trx_trxdate::date) as last_order_date,
+        COUNT(DISTINCT trx_usercode) as assigned_salesmen
+      FROM (
+        SELECT DISTINCT ON (customer_code, trx_trxcode)
+          customer_code,
+          customer_description,
+          trx_routecode,
+          route_areacode,
+          route_subareacode,
+          customer_channelcode,
+          customer_channel_description,
+          trx_currencycode,
+          trx_trxcode,
+          trx_trxdate,
+          trx_usercode,
+          trx_totalamount as transaction_total
+        FROM flat_daily_sales_report
+        ${whereClause}
+      ) AS distinct_transactions
+      GROUP BY customer_code
       ORDER BY ${orderByClause}
       LIMIT $${paramIndex} OFFSET $${paramIndex + 1}
     `
@@ -190,10 +203,8 @@ export async function GET(request: NextRequest) {
 
     // Get total count for pagination
     const countQuery = `
-      SELECT COUNT(DISTINCT t."ClientCode") as total_count
-      FROM "tblTrxHeader" t
-      LEFT JOIN "tblCustomer" c ON t."ClientCode" = c."Code"
-      LEFT JOIN "tblCustomerDetail" cd ON t."ClientCode" = cd."CustomerCode"
+      SELECT COUNT(DISTINCT customer_code) as total_count
+      FROM flat_daily_sales_report
       ${whereClause}
     `
     const countParams = params.slice(0, -2)
@@ -240,7 +251,7 @@ export async function GET(request: NextRequest) {
         }
       },
       timestamp: new Date().toISOString(),
-      source: 'postgresql-real-tables'
+      source: 'flat_daily_sales_report'
     })
 
   } catch (error) {

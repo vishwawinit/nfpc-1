@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { db } from '@/lib/database'
+import { query } from '@/lib/database'
 
 export async function GET(request: NextRequest) {
   try {
@@ -16,8 +16,6 @@ export async function GET(request: NextRequest) {
         error: 'Customer code is required'
       }, { status: 400 })
     }
-
-    await db.initialize()
 
     // Calculate date range filter
     const today = new Date()
@@ -64,40 +62,39 @@ export async function GET(request: NextRequest) {
     const startDateStr = startDate.toISOString().split('T')[0]
     const endDateStr = endDate.toISOString().split('T')[0]
 
-    // Get daily transaction summary
+    // Get daily transaction summary using flat_daily_sales_report table
     // This query aggregates all transactions by date and type
     const dailyTransactionsQuery = `
       WITH daily_summary AS (
         SELECT
-          trx_date_only as transaction_date,
-          -- Sales (trx_type = 1)
-          SUM(CASE WHEN trx_type = 1 THEN total_amount ELSE 0 END) as sales_amount,
-          COUNT(DISTINCT CASE WHEN trx_type = 1 THEN trx_code END) as sales_count,
-          SUM(CASE WHEN trx_type = 1 THEN quantity ELSE 0 END) as sales_quantity,
+          trx_trxdate::date as transaction_date,
+          -- Sales (trx_trxtype = '1')
+          SUM(CASE WHEN trx_trxtype = '1' THEN trx_totalamount ELSE 0 END) as sales_amount,
+          COUNT(DISTINCT CASE WHEN trx_trxtype = '1' THEN trx_trxcode END) as sales_count,
+          SUM(CASE WHEN trx_trxtype = '1' THEN line_quantitybu ELSE 0 END) as sales_quantity,
 
-          -- Returns/Collections (trx_type = 4)
-          -- Good returns (trx_type = 4 AND collection_type = 1)
-          SUM(CASE WHEN trx_type = 4 AND collection_type = 1 THEN total_amount ELSE 0 END) as good_returns_amount,
-          COUNT(DISTINCT CASE WHEN trx_type = 4 AND collection_type = 1 THEN trx_code END) as good_returns_count,
-          SUM(CASE WHEN trx_type = 4 AND collection_type = 1 THEN quantity ELSE 0 END) as good_returns_quantity,
+          -- Good Returns (trx_trxtype = '4' AND trx_collectiontype = '1')
+          SUM(CASE WHEN trx_trxtype = '4' AND trx_collectiontype = '1' THEN ABS(trx_totalamount) ELSE 0 END) as good_returns_amount,
+          COUNT(DISTINCT CASE WHEN trx_trxtype = '4' AND trx_collectiontype = '1' THEN trx_trxcode END) as good_returns_count,
+          SUM(CASE WHEN trx_trxtype = '4' AND trx_collectiontype = '1' THEN ABS(line_quantitybu) ELSE 0 END) as good_returns_quantity,
 
-          -- Bad returns/Wastage (trx_type = 4 AND collection_type = 0)
-          SUM(CASE WHEN trx_type = 4 AND collection_type = 0 THEN total_amount ELSE 0 END) as bad_returns_amount,
-          COUNT(DISTINCT CASE WHEN trx_type = 4 AND collection_type = 0 THEN trx_code END) as bad_returns_count,
-          SUM(CASE WHEN trx_type = 4 AND collection_type = 0 THEN quantity ELSE 0 END) as bad_returns_quantity,
+          -- Bad Returns (trx_trxtype = '4' AND trx_collectiontype = '0')
+          SUM(CASE WHEN trx_trxtype = '4' AND trx_collectiontype = '0' THEN ABS(trx_totalamount) ELSE 0 END) as bad_returns_amount,
+          COUNT(DISTINCT CASE WHEN trx_trxtype = '4' AND trx_collectiontype = '0' THEN trx_trxcode END) as bad_returns_count,
+          SUM(CASE WHEN trx_trxtype = '4' AND trx_collectiontype = '0' THEN ABS(line_quantitybu) ELSE 0 END) as bad_returns_quantity,
 
-          -- Deliveries/Stock In (trx_type = 3)
-          SUM(CASE WHEN trx_type = 3 THEN total_amount ELSE 0 END) as delivery_amount,
-          COUNT(DISTINCT CASE WHEN trx_type = 3 THEN trx_code END) as delivery_count,
-          SUM(CASE WHEN trx_type = 3 THEN quantity ELSE 0 END) as delivery_quantity,
+          -- Deliveries/Stock In (trx_trxtype = '3')
+          SUM(CASE WHEN trx_trxtype = '3' THEN trx_totalamount ELSE 0 END) as delivery_amount,
+          COUNT(DISTINCT CASE WHEN trx_trxtype = '3' THEN trx_trxcode END) as delivery_count,
+          SUM(CASE WHEN trx_trxtype = '3' THEN line_quantitybu ELSE 0 END) as delivery_quantity,
 
           -- Get currency
-          MAX(currency_code) as currency_code
-        FROM new_flat_transactions
+          MAX(trx_currencycode) as currency_code
+        FROM flat_daily_sales_report
         WHERE customer_code = $1
-          AND trx_date_only BETWEEN $2 AND $3
-        GROUP BY trx_date_only
-        ORDER BY trx_date_only DESC
+          AND trx_trxdate::date BETWEEN $2::date AND $3::date
+        GROUP BY trx_trxdate::date
+        ORDER BY trx_trxdate::date DESC
       )
       SELECT
         transaction_date,
@@ -122,33 +119,34 @@ export async function GET(request: NextRequest) {
 
     // Get count for pagination
     const countQuery = `
-      SELECT COUNT(DISTINCT trx_date_only) as total_days
-      FROM new_flat_transactions
+      SELECT COUNT(DISTINCT trx_trxdate::date) as total_days
+      FROM flat_daily_sales_report
       WHERE customer_code = $1
-        AND trx_date_only BETWEEN $2 AND $3
+        AND trx_trxdate::date BETWEEN $2::date AND $3::date
     `
 
     const [transactionsResult, countResult] = await Promise.all([
-      db.query(dailyTransactionsQuery, [customerCode, startDateStr, endDateStr, limit, offset]),
-      db.query(countQuery, [customerCode, startDateStr, endDateStr])
+      query(dailyTransactionsQuery, [customerCode, startDateStr, endDateStr, limit, offset]),
+      query(countQuery, [customerCode, startDateStr, endDateStr])
     ])
 
     const totalDays = parseInt(countResult.rows[0]?.total_days || 0)
 
-    // Get customer info
+    // Get customer info from flat_daily_sales_report
     const customerQuery = `
       SELECT
         customer_code,
-        customer_name,
-        route_code,
-        city,
-        is_active
-      FROM new_flat_customer_master
+        MAX(customer_description) as customer_name,
+        MAX(trx_routecode) as route_code,
+        MAX(route_subareacode) as city,
+        'Active' as is_active
+      FROM flat_daily_sales_report
       WHERE customer_code = $1
+      GROUP BY customer_code
       LIMIT 1
     `
 
-    const customerResult = await db.query(customerQuery, [customerCode])
+    const customerResult = await query(customerQuery, [customerCode])
     const currency = transactionsResult.rows[0]?.currency_code || 'AED'
 
     // Calculate totals

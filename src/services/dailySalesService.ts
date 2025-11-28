@@ -320,15 +320,15 @@ export const getDailySalesSummary = async (filters: any = {}) => {
 
     const sql = `
       SELECT
-        COUNT(DISTINCT trx_trxcode) as total_orders,
+        COUNT(DISTINCT CASE WHEN trx_totalamount >= 0 THEN trx_trxcode END) as total_orders,
         COUNT(DISTINCT customer_code) as total_stores,
         COUNT(DISTINCT trx_usercode) as total_users,
         COUNT(DISTINCT line_itemcode) as total_products,
-        COALESCE(SUM(CASE WHEN trx_totalamount > 0 THEN trx_totalamount ELSE 0 END), 0) as gross_sales,
+        COALESCE(SUM(CASE WHEN trx_totalamount >= 0 THEN trx_totalamount ELSE 0 END), 0) as gross_sales,
         COALESCE(SUM(CASE WHEN trx_totalamount < 0 THEN ABS(trx_totalamount) ELSE 0 END), 0) as return_sales,
         COALESCE(SUM(trx_totaldiscountamount), 0) as total_discount,
         COALESCE(SUM(trx_totalamount), 0) as total_net_sales,
-        COALESCE(SUM(line_quantitybu), 0) as total_quantity,
+        COALESCE(SUM(ABS(line_quantitybu)), 0) as total_quantity,
         COALESCE(MAX(trx_currencycode), 'AED') as currency_code
       FROM ${SALES_TABLE}
       ${whereClause}
@@ -339,6 +339,10 @@ export const getDailySalesSummary = async (filters: any = {}) => {
 
     const result = await query(sql, params)
     const stats = result.rows[0]
+
+    console.log('📊 Raw database result:', stats)
+    console.log('📊 gross_sales value:', stats.gross_sales)
+    console.log('📊 total_orders value:', stats.total_orders)
 
     const totalOrders = parseInt(stats.total_orders) || 0
     const totalNetSales = parseFloat(stats.total_net_sales) || 0
@@ -382,14 +386,14 @@ export const getDailyTrend = async (filters: any = {}) => {
     const sql = `
       SELECT
         DATE(trx_trxdate)::date as date,
-        COUNT(DISTINCT trx_trxcode) as orders,
+        COUNT(DISTINCT CASE WHEN trx_totalamount >= 0 THEN trx_trxcode END) as orders,
         COUNT(DISTINCT customer_code) as stores,
         COUNT(DISTINCT customer_code) as customers,
-        COALESCE(SUM(trx_totalamount), 0) as sales
+        COALESCE(SUM(CASE WHEN trx_totalamount >= 0 THEN trx_totalamount ELSE 0 END), 0) as sales
       FROM ${SALES_TABLE}
       ${whereClause}
-      GROUP BY DATE(trx_trxdate)
-      ORDER BY DATE(trx_trxdate) ASC
+      GROUP BY DATE(trx_trxdate)::date
+      ORDER BY date ASC
     `
 
     console.log('📈 Trend SQL:', sql)
@@ -433,18 +437,17 @@ export const getProductPerformance = async (filters: any = {}) => {
         MAX(COALESCE(line_itemdescription, item_description, line_itemcode)) as "productName",
         MAX(COALESCE(item_grouplevel1, 'Unknown')) as "productCategory",
         MAX(COALESCE(line_uom, 'PCS')) as "productUom",
-        COUNT(DISTINCT trx_trxcode) as orders,
+        COUNT(DISTINCT CASE WHEN trx_totalamount >= 0 THEN trx_trxcode END) as orders,
         COUNT(DISTINCT customer_code) as stores,
-        COALESCE(SUM(line_quantitybu), 0) as quantity,
-        COALESCE(SUM(line_baseprice * line_quantitybu), 0) as sales,
+        COALESCE(SUM(ABS(line_quantitybu)), 0) as quantity,
+        COALESCE(SUM(CASE WHEN (line_baseprice * line_quantitybu) > 0 THEN (line_baseprice * line_quantitybu) ELSE 0 END), 0) as sales,
         COALESCE(SUM(line_totaldiscountamount), 0) as discount,
-        COALESCE(SUM(line_baseprice * line_quantitybu - COALESCE(line_totaldiscountamount, 0)), 0) as net_sales,
+        COALESCE(SUM((line_baseprice * line_quantitybu) - COALESCE(line_totaldiscountamount, 0)), 0) as net_sales,
         COALESCE(AVG(NULLIF(line_baseprice, 0)), 0) as avg_price
       FROM ${SALES_TABLE}
       ${whereClause}
       GROUP BY line_itemcode
       ORDER BY net_sales DESC
-      LIMIT 100
     `
 
     console.log('📦 Product SQL:', sql)
@@ -495,17 +498,16 @@ export const getStorePerformance = async (filters: any = {}) => {
         MAX(COALESCE(customer_regioncode, 'Unknown')) as "regionCode",
         MAX(COALESCE(region_description, customer_regioncode)) as "regionName",
         MAX(COALESCE(city_description, customer_citycode)) as "cityName",
-        COUNT(DISTINCT trx_trxcode) as orders,
+        COUNT(DISTINCT CASE WHEN trx_totalamount >= 0 THEN trx_trxcode END) as orders,
         COUNT(DISTINCT trx_usercode) as users,
-        COALESCE(SUM(CASE WHEN trx_totalamount > 0 THEN trx_totalamount ELSE 0 END), 0) as sales,
+        COALESCE(SUM(CASE WHEN trx_totalamount >= 0 THEN trx_totalamount ELSE 0 END), 0) as sales,
         COALESCE(SUM(trx_totaldiscountamount), 0) as discount,
         COALESCE(SUM(trx_totalamount), 0) as net_sales,
-        COALESCE(AVG(NULLIF(trx_totalamount, 0)), 0) as avg_order_value
+        COALESCE(SUM(trx_totalamount) / NULLIF(COUNT(DISTINCT CASE WHEN trx_totalamount >= 0 THEN trx_trxcode END), 0), 0) as avg_order_value
       FROM ${SALES_TABLE}
       ${whereClause}
       GROUP BY customer_code
       ORDER BY net_sales DESC
-      LIMIT 100
     `
 
     console.log('🏪 Store SQL:', sql)
@@ -555,17 +557,16 @@ export const getUserPerformance = async (filters: any = {}) => {
         MAX(COALESCE(user_description, trx_usercode)) as "userName",
         MAX(COALESCE(user_usertype, 'Salesman')) as "userType",
         MAX(route_salesmancode) as "teamLeaderCode",
-        COUNT(DISTINCT trx_trxcode) as orders,
+        COUNT(DISTINCT CASE WHEN trx_totalamount >= 0 THEN trx_trxcode END) as orders,
         COUNT(DISTINCT customer_code) as stores,
-        COALESCE(SUM(CASE WHEN trx_totalamount > 0 THEN trx_totalamount ELSE 0 END), 0) as sales,
+        COALESCE(SUM(CASE WHEN trx_totalamount >= 0 THEN trx_totalamount ELSE 0 END), 0) as sales,
         COALESCE(SUM(trx_totaldiscountamount), 0) as discount,
         COALESCE(SUM(trx_totalamount), 0) as net_sales,
-        COALESCE(AVG(NULLIF(trx_totalamount, 0)), 0) as avg_order_value
+        COALESCE(SUM(trx_totalamount) / NULLIF(COUNT(DISTINCT CASE WHEN trx_totalamount >= 0 THEN trx_trxcode END), 0), 0) as avg_order_value
       FROM ${SALES_TABLE}
       ${whereClause}
       GROUP BY trx_usercode
       ORDER BY net_sales DESC
-      LIMIT 100
     `
 
     console.log('👤 User SQL:', sql)

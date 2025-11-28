@@ -7,11 +7,12 @@ import { Button } from '@/components/ui/button'
 import { LoadingBar } from '@/components/ui/LoadingBar'
 import { Store, Calendar, MapPin, Phone, Mail, Download } from 'lucide-react'
 import * as ExcelJS from 'exceljs'
-import { DynamicKPICards } from '../dashboard/DynamicKPICards'
+import { EnhancedKPICards } from '../dashboard/EnhancedKPICards'
 import { DashboardFilters } from '../dashboard/DashboardFilters'
 import { useDashboardFilters } from '@/hooks/useDashboardFilters'
 import { useTopCustomers, useTopProducts, useSalesByChannel } from '@/hooks/useDataService'
 import { useResponsive } from '@/hooks/useResponsive'
+import { CustomerTransactionsModal } from '../CustomerTransactionsModal'
 
 const formatCurrency = (value: number) => {
   return new Intl.NumberFormat('en-IN', {
@@ -39,9 +40,6 @@ export const DynamicWorkingDashboard: React.FC = () => {
   // Dialog states for customer details
   const [showOrdersDialog, setShowOrdersDialog] = useState(false)
   const [selectedCustomer, setSelectedCustomer] = useState<any>(null)
-  const [customerDetail, setCustomerDetail] = useState<any>(null)
-  const [transactions, setTransactions] = useState<any[]>([])
-  const [transactionsLoading, setTransactionsLoading] = useState(false)
 
   // Use the dashboard filters hook
   const {
@@ -345,31 +343,9 @@ export const DynamicWorkingDashboard: React.FC = () => {
   }, [dailySalesTrendData, selectedDateRange])
 
   // View customer orders in dialog
-  const viewCustomerOrders = async (customer: any) => {
+  const viewCustomerOrders = (customer: any) => {
     setSelectedCustomer(customer)
     setShowOrdersDialog(true)
-    setTransactionsLoading(true)
-    
-    try {
-      const detailResponse = await fetch(`/api/customers/${customer.customerCode}/details`)
-      const detailResult = await detailResponse.json()
-      
-      if (detailResult.success) {
-        setCustomerDetail(detailResult.data)
-      }
-      
-      const transUrl = `/api/customers/${customer.customerCode}/transactions?range=${selectedDateRange}`
-      const transResponse = await fetch(transUrl)
-      const transResult = await transResponse.json()
-      
-      if (transResult.success) {
-        setTransactions(transResult.data.transactions || [])
-      }
-    } catch (error) {
-      console.error('Error fetching customer data:', error)
-    } finally {
-      setTransactionsLoading(false)
-    }
   }
 
   // Export customer transactions to Excel  
@@ -579,8 +555,7 @@ export const DynamicWorkingDashboard: React.FC = () => {
 
       {/* KPI Cards Row */}
       <div style={{ marginBottom: isMobile ? '20px' : '32px' }}>
-        <DynamicKPICards
-          showRefreshButton={false}
+        <EnhancedKPICards
           dateRange={selectedDateRange}
           additionalParams={queryParams}
         />
@@ -1049,161 +1024,18 @@ export const DynamicWorkingDashboard: React.FC = () => {
         </Card>
       </div>
 
-      {/* Customer Orders Dialog */}
-      <Dialog open={showOrdersDialog} onOpenChange={setShowOrdersDialog}>
-        <DialogContent className="max-w-[90vw] max-h-[90vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle className="text-2xl font-bold">
-              Customer Orders - {selectedCustomer?.customerName}
-            </DialogTitle>
-            <DialogDescription>
-              Order details for selected date range
-            </DialogDescription>
-          </DialogHeader>
-          
-          {transactionsLoading ? (
-            <div className="flex justify-center py-8">
-              <LoadingBar />
-            </div>
-          ) : (
-            <div className="space-y-6">
-              {/* Customer Information */}
-              <Card>
-                <CardHeader>
-                  <CardTitle className="text-lg flex items-center gap-2">
-                    <Store className="h-5 w-5" />
-                    Customer Information
-                  </CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                    <div>
-                      <p className="text-sm text-gray-600">Customer Code</p>
-                      <p className="font-semibold">{selectedCustomer?.customerCode}</p>
-                    </div>
-                    <div>
-                      <p className="text-sm text-gray-600">Customer Name</p>
-                      <p className="font-semibold">{customerDetail?.customerName || selectedCustomer?.customerName}</p>
-                    </div>
-                    <div>
-                      <p className="text-sm text-gray-600">Region</p>
-                      <p className="font-semibold">{customerDetail?.region || 'N/A'}</p>
-                    </div>
-                    <div>
-                      <p className="text-sm text-gray-600">City</p>
-                      <p className="font-semibold">{customerDetail?.city || 'N/A'}</p>
-                    </div>
-                    <div>
-                      <p className="text-sm text-gray-600">Total Sales</p>
-                      <p className="font-semibold text-green-600">{formatCurrency(selectedCustomer?.totalSales || 0)}</p>
-                    </div>
-                  </div>
-                  {customerDetail?.address && (
-                    <div className="mt-4 pt-4 border-t">
-                      <div className="flex items-start gap-2">
-                        <MapPin className="h-4 w-4 text-gray-500 mt-1" />
-                        <div>
-                          <p className="text-sm text-gray-600">Address</p>
-                          <p className="font-medium">{customerDetail.address}</p>
-                        </div>
-                      </div>
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
-                        {customerDetail?.phone && (
-                          <div className="flex items-start gap-2">
-                            <Phone className="h-4 w-4 text-gray-500 mt-1" />
-                            <div>
-                              <p className="text-sm text-gray-600">Phone</p>
-                              <p className="font-medium">{customerDetail.phone}</p>
-                            </div>
-                          </div>
-                        )}
-                        {customerDetail?.email && (
-                          <div className="flex items-start gap-2">
-                            <Mail className="h-4 w-4 text-gray-500 mt-1" />
-                            <div>
-                              <p className="text-sm text-gray-600">Email</p>
-                              <p className="font-medium">{customerDetail.email}</p>
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
-              
-              {/* Transactions Table */}
-              <Card>
-                <CardHeader>
-                  <div className="flex justify-between items-center">
-                    <CardTitle className="text-lg flex items-center gap-2">
-                      <Calendar className="h-5 w-5" />
-                      Transactions
-                    </CardTitle>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={() => exportCustomerTransactions(selectedCustomer, customerDetail, transactions)}
-                      className="flex items-center gap-2"
-                    >
-                      <Download className="h-4 w-4" />
-                      Export
-                    </Button>
-                  </div>
-                </CardHeader>
-                <CardContent>
-                  <div className="overflow-x-auto">
-                    <Table>
-                      <TableHeader>
-                        <TableRow>
-                          <TableHead>Transaction ID</TableHead>
-                          <TableHead>Date</TableHead>
-                          <TableHead>Product Code</TableHead>
-                          <TableHead>Product Name</TableHead>
-                          <TableHead>Quantity</TableHead>
-                          <TableHead>Unit Price</TableHead>
-                          <TableHead>Total</TableHead>
-                          <TableHead>Net Amount</TableHead>
-                        </TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        {transactions.length > 0 ? (
-                          transactions.map((trans: any, index: number) => (
-                            <TableRow key={`${trans.transactionId}-${index}`}>
-                              <TableCell className="font-medium">{trans.transactionId}</TableCell>
-                              <TableCell>
-                                {new Date(trans.transactionDate).toLocaleDateString('en-GB', {
-                                  day: '2-digit',
-                                  month: '2-digit',
-                                  year: 'numeric'
-                                })}
-                              </TableCell>
-                              <TableCell>{trans.productCode}</TableCell>
-                              <TableCell>{trans.productName}</TableCell>
-                              <TableCell>{formatNumber(trans.quantity)}</TableCell>
-                              <TableCell>{formatCurrency(trans.unitPrice)}</TableCell>
-                              <TableCell>{formatCurrency(trans.totalAmount)}</TableCell>
-                              <TableCell className="font-semibold text-green-600">
-                                {formatCurrency(trans.netAmount)}
-                              </TableCell>
-                            </TableRow>
-                          ))
-                        ) : (
-                          <TableRow>
-                            <TableCell colSpan={8} className="text-center py-8 text-gray-500">
-                              No transactions found for this period
-                            </TableCell>
-                          </TableRow>
-                        )}
-                      </TableBody>
-                    </Table>
-                  </div>
-                </CardContent>
-              </Card>
-            </div>
-          )}
-        </DialogContent>
-      </Dialog>
+      {/* Customer Transactions Modal */}
+      {selectedCustomer && (
+        <CustomerTransactionsModal
+          customer={selectedCustomer}
+          isOpen={showOrdersDialog}
+          onClose={() => {
+            setShowOrdersDialog(false)
+            setSelectedCustomer(null)
+          }}
+          dateRange={selectedDateRange}
+        />
+      )}
       </div>
     </>
   )

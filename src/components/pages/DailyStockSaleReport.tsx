@@ -16,6 +16,7 @@ import { businessColors } from '@/styles/businessColors'
 import { useDashboardFilters } from '@/hooks/useDashboardFilters'
 import { DashboardFilters } from '@/components/dashboard/DashboardFilters'
 import { useSalesByChannel } from '@/hooks/useDataService'
+import { EnhancedKPICards } from '@/components/dashboard/EnhancedKPICards'
 
 export const DailyStockSaleReport: React.FC = () => {
   const [selectedDateRange, setSelectedDateRange] = useState('thisMonth')
@@ -274,6 +275,14 @@ export const DailyStockSaleReport: React.FC = () => {
         parseResponse(transactionsRes, 'transactions')
       ])
 
+      console.log('📊 Daily Sales Report - Data loaded with filters:', {
+        queryParams: currentQueryParams,
+        productsCount: productsResult?.products?.length || 0,
+        topProduct: productsResult?.products?.[0]?.productCode,
+        storesCount: storesResult?.stores?.length || 0,
+        topStore: storesResult?.stores?.[0]?.storeCode
+      })
+
       setSummary(summaryData)
       setTrendData(trendResult?.trend || [])
       setProductsData(productsResult?.products || [])
@@ -340,7 +349,7 @@ export const DailyStockSaleReport: React.FC = () => {
   const topProductsChart = useMemo(() => {
     if (!Array.isArray(productsData) || productsData.length === 0) return []
 
-    return productsData
+    const result = productsData
       .filter(p => p && p.productCode) // Filter out invalid items
       .map(p => ({
         name: (p.productName?.substring(0, 30) || p.productCode?.substring(0, 30)) + ((p.productName?.length || p.productCode?.length || 0) > 30 ? '...' : '') || 'Unknown Product',
@@ -350,13 +359,20 @@ export const DailyStockSaleReport: React.FC = () => {
       }))
       .sort((a, b) => b.value - a.value) // Sort by netSales descending
       .slice(0, 10) // Take top 10
+
+    console.log('📈 Top 10 Products Chart Updated:', {
+      totalProducts: productsData.length,
+      top3: result.slice(0, 3).map(p => ({ code: p.productCode, sales: p.value }))
+    })
+
+    return result
   }, [productsData])
 
   // Get top stores for chart
   const topStoresChart = useMemo(() => {
     if (!Array.isArray(storesData) || storesData.length === 0) return []
 
-    return storesData
+    const result = storesData
       .filter(s => s && s.storeCode) // Filter out invalid items
       .map(s => ({
         name: (s.storeName || s.storeCode || 'Unknown Store').substring(0, 40) + ((s.storeName || s.storeCode || '').length > 40 ? '...' : ''),
@@ -366,6 +382,13 @@ export const DailyStockSaleReport: React.FC = () => {
       }))
       .sort((a, b) => b.value - a.value) // Sort by netSales descending
       .slice(0, 10) // Take top 10
+
+    console.log('🏪 Top 10 Stores Chart Updated:', {
+      totalStores: storesData.length,
+      top3: result.slice(0, 3).map(s => ({ code: s.storeCode, sales: s.value }))
+    })
+
+    return result
   }, [storesData])
 
   // Pie chart data transformation - group channels < 5% as "Others"
@@ -568,103 +591,12 @@ export const DailyStockSaleReport: React.FC = () => {
       )}
 
       {/* KPI Cards */}
-      {!loading && summary && (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 mb-6">
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <div className="flex items-center gap-2">
-                <CardTitle className="text-sm font-medium">Total Sales</CardTitle>
-                <InfoTooltip content="Total sales amount for the selected period. Net Sales = Gross Sales - Discounts." />
-              </div>
-              <DollarSign className="h-4 w-4 text-muted-foreground" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold">{formatCurrency(summary.totalNetSales)}</div>
-              <p className="text-xs text-muted-foreground">
-                Gross: {formatCurrency(summary.totalSales)}
-              </p>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <div className="flex items-center gap-2">
-                <CardTitle className="text-sm font-medium">Total Orders</CardTitle>
-                <InfoTooltip content="Count of unique transactions/orders in the period." />
-              </div>
-              <ShoppingCart className="h-4 w-4 text-muted-foreground" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold">{summary.totalOrders}</div>
-              <p className="text-xs text-muted-foreground">
-                Avg: {formatCurrency(summary.avgOrderValue)}
-              </p>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <div className="flex items-center gap-2">
-                <CardTitle className="text-sm font-medium">Total Quantity</CardTitle>
-                <InfoTooltip content="Total number of product units sold across all transactions." />
-              </div>
-              <Package className="h-4 w-4 text-muted-foreground" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold">{(summary?.totalQuantity || 0).toFixed(0)}</div>
-              <p className="text-xs text-muted-foreground">
-                Units sold
-              </p>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <div className="flex items-center gap-2">
-                <CardTitle className="text-sm font-medium">Stores</CardTitle>
-                <InfoTooltip content="Number of unique retail locations that generated sales in this period." />
-              </div>
-              <Store className="h-4 w-4 text-muted-foreground" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold">{summary.totalStores}</div>
-              <p className="text-xs text-muted-foreground">
-                Unique stores
-              </p>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <div className="flex items-center gap-2">
-                <CardTitle className="text-sm font-medium">Products</CardTitle>
-                <InfoTooltip content="Count of distinct product SKUs sold during the period." />
-              </div>
-              <BarChart3 className="h-4 w-4 text-muted-foreground" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold">{summary.totalProducts}</div>
-              <p className="text-xs text-muted-foreground">
-                Unique products
-              </p>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <div className="flex items-center gap-2">
-                <CardTitle className="text-sm font-medium">Field Users</CardTitle>
-                <InfoTooltip content="Number of active field sales representatives who completed transactions." />
-              </div>
-              <TrendingUp className="h-4 w-4 text-muted-foreground" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold">{summary.totalUsers}</div>
-              <p className="text-xs text-muted-foreground">
-                Active users
-              </p>
-            </CardContent>
-          </Card>
+      {!loading && (
+        <div className="mb-6">
+          <EnhancedKPICards
+            dateRange={selectedDateRange}
+            additionalParams={getQueryParams()}
+          />
         </div>
       )}
 

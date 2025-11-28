@@ -237,7 +237,6 @@ export async function GET(request: NextRequest) {
     })
 
     // Query to get top products with all metrics
-    // Note: line_baseprice is stored in fils (1/100 AED), so we divide by 100 to convert to AED
     const topProductsQuery = `
       SELECT
         line_itemcode as "productCode",
@@ -246,18 +245,18 @@ export async function GET(request: NextRequest) {
         COALESCE(MAX(line_uom), 'PCS') as "baseUom",
         SUM(ABS(COALESCE(line_quantitybu, 0))) as "quantitySold",
         COALESCE(CAST(SUM(CASE
-          WHEN (line_baseprice * line_quantitybu) > 0 THEN (line_baseprice * line_quantitybu) / 100.0
+          WHEN (line_baseprice * line_quantitybu) > 0 THEN (line_baseprice * line_quantitybu)
           ELSE 0
         END) AS NUMERIC(15,2)), 0) as "salesAmount",
         CASE
           WHEN SUM(ABS(COALESCE(line_quantitybu, 0))) > 0
           THEN COALESCE(CAST(SUM(CASE
-            WHEN (line_baseprice * line_quantitybu) > 0 THEN (line_baseprice * line_quantitybu) / 100.0
+            WHEN (line_baseprice * line_quantitybu) > 0 THEN (line_baseprice * line_quantitybu)
             ELSE 0
           END) / SUM(ABS(COALESCE(line_quantitybu, 0))) AS NUMERIC(15,2)), 0)
           ELSE 0
         END as "averagePrice",
-        COUNT(DISTINCT trx_trxcode) as "totalOrders",
+        COUNT(DISTINCT CASE WHEN trx_totalamount >= 0 THEN trx_trxcode END) as "totalOrders",
         COUNT(DISTINCT customer_code) as "uniqueCustomers",
         MAX(trx_trxdate) as "lastSoldDate",
         COALESCE(MAX(trx_currencycode), 'AED') as "currency"
@@ -265,7 +264,7 @@ export async function GET(request: NextRequest) {
       ${whereClause}
       GROUP BY line_itemcode
       ORDER BY COALESCE(SUM(CASE
-        WHEN (line_baseprice * line_quantitybu) > 0 THEN (line_baseprice * line_quantitybu) / 100.0
+        WHEN (line_baseprice * line_quantitybu) > 0 THEN (line_baseprice * line_quantitybu)
         ELSE 0
       END), 0) DESC
       LIMIT ${limit}

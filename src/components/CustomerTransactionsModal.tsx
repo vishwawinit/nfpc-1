@@ -12,6 +12,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Badge } from '@/components/ui/badge'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { ChevronLeft, ChevronRight, Download, RefreshCw, TrendingUp, TrendingDown, Package, ShoppingCart, HelpCircle, Calculator } from 'lucide-react'
 import {
   Tooltip,
@@ -34,13 +35,19 @@ export const CustomerTransactionsModal: React.FC<CustomerTransactionsModalProps>
   onClose,
   dateRange: initialDateRange
 }) => {
+  const [activeTab, setActiveTab] = useState('detailed')
   const [transactions, setTransactions] = useState<any[]>([])
+  const [detailedTransactions, setDetailedTransactions] = useState<any[]>([])
   const [totals, setTotals] = useState<any>(null)
   const [loading, setLoading] = useState(false)
+  const [detailedLoading, setDetailedLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [currentPage, setCurrentPage] = useState(1)
+  const [detailedPage, setDetailedPage] = useState(1)
   const [pageSize, setPageSize] = useState(30)
+  const [detailedPageSize, setDetailedPageSize] = useState(50)
   const [pagination, setPagination] = useState<any>(null)
+  const [detailedPagination, setDetailedPagination] = useState<any>(null)
   const [dateRange, setDateRange] = useState(initialDateRange)
   const [currencyCode, setCurrencyCode] = useState('AED')
 
@@ -77,11 +84,58 @@ export const CustomerTransactionsModal: React.FC<CustomerTransactionsModalProps>
     }
   }
 
+  const fetchDetailedTransactions = async () => {
+    if (!customer?.customerCode) {
+      console.log('No customer code, skipping fetch')
+      return
+    }
+
+    console.log('Fetching detailed transactions for customer:', customer.customerCode)
+    setDetailedLoading(true)
+    setError(null)
+
+    try {
+      const params = new URLSearchParams({
+        customerCode: customer.customerCode,
+        range: dateRange,
+        page: detailedPage.toString(),
+        limit: detailedPageSize.toString()
+      })
+
+      const url = `/api/customers/transactions/details?${params.toString()}`
+      console.log('Fetching from:', url)
+
+      const response = await fetch(url)
+      const result = await response.json()
+
+      console.log('API response:', result)
+
+      if (result.success && result.data) {
+        console.log('Setting transactions:', result.data.transactions?.length, 'items')
+        setDetailedTransactions(result.data.transactions || [])
+        setDetailedPagination(result.pagination || null)
+        setCurrencyCode(result.data.currencyCode || 'AED')
+      } else {
+        console.error('API failed:', result.error)
+        setError(result.error || 'Failed to fetch transaction details')
+      }
+    } catch (err) {
+      console.error('Error fetching transaction details:', err)
+      setError('An error occurred while fetching transaction details')
+    } finally {
+      setDetailedLoading(false)
+    }
+  }
+
   useEffect(() => {
     if (isOpen && customer) {
-      fetchTransactions()
+      if (activeTab === 'daily') {
+        fetchTransactions()
+      } else {
+        fetchDetailedTransactions()
+      }
     }
-  }, [isOpen, customer, currentPage, pageSize, dateRange])
+  }, [isOpen, customer, currentPage, pageSize, detailedPage, detailedPageSize, dateRange, activeTab])
 
   useEffect(() => {
     setDateRange(initialDateRange)
@@ -358,6 +412,7 @@ export const CustomerTransactionsModal: React.FC<CustomerTransactionsModalProps>
               <Select value={dateRange} onValueChange={(value) => {
                 setDateRange(value)
                 setCurrentPage(1)
+                setDetailedPage(1)
               }}>
                 <SelectTrigger className="w-40">
                   <SelectValue />
@@ -376,17 +431,23 @@ export const CustomerTransactionsModal: React.FC<CustomerTransactionsModalProps>
               <Button
                 variant="outline"
                 size="sm"
-                onClick={fetchTransactions}
-                disabled={loading}
+                onClick={() => {
+                  if (activeTab === 'daily') {
+                    fetchTransactions()
+                  } else {
+                    fetchDetailedTransactions()
+                  }
+                }}
+                disabled={loading || detailedLoading}
               >
-                <RefreshCw className={`h-4 w-4 mr-2 ${loading ? 'animate-spin' : ''}`} />
+                <RefreshCw className={`h-4 w-4 mr-2 ${(loading || detailedLoading) ? 'animate-spin' : ''}`} />
                 Refresh
               </Button>
             </div>
 
             <Button
               onClick={exportToExcel}
-              disabled={transactions.length === 0}
+              disabled={transactions.length === 0 && detailedTransactions.length === 0}
               className="bg-green-600 hover:bg-green-700 text-white"
               size="sm"
             >
@@ -395,6 +456,152 @@ export const CustomerTransactionsModal: React.FC<CustomerTransactionsModalProps>
             </Button>
           </div>
 
+          <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
+            <TabsList className="grid w-full grid-cols-2">
+              <TabsTrigger value="detailed">Transaction Details</TabsTrigger>
+              <TabsTrigger value="daily">Daily Summary</TabsTrigger>
+            </TabsList>
+
+            <TabsContent value="detailed" className="space-y-4 mt-4">
+              {/* Error State */}
+              {error && (
+                <div className="p-4 bg-red-50 border border-red-200 rounded-lg text-red-800">
+                  {error}
+                </div>
+              )}
+
+              {/* Detailed Transactions Table */}
+              {!detailedLoading && !error && (
+                <>
+                  <div className="border rounded-lg overflow-x-auto">
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>Transaction ID</TableHead>
+                          <TableHead>Date</TableHead>
+                          <TableHead className="text-right">Trx Total</TableHead>
+                          <TableHead>Product Code</TableHead>
+                          <TableHead>Product Name</TableHead>
+                          <TableHead className="text-right">Quantity</TableHead>
+                          <TableHead className="text-right">Unit Price</TableHead>
+                          <TableHead className="text-right">Line Total</TableHead>
+                          <TableHead className="text-right">Discount</TableHead>
+                          <TableHead className="text-right">Line Net</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {(() => {
+                          console.log('Rendering table with transactions:', detailedTransactions.length)
+                          return detailedTransactions.length === 0 ? (
+                            <TableRow>
+                              <TableCell colSpan={10} className="text-center py-8 text-gray-500">
+                                No transactions found for this period
+                              </TableCell>
+                            </TableRow>
+                          ) : (
+                          (() => {
+                            let lastTxId = null;
+                            return detailedTransactions.map((transaction, index) => {
+                              const isNewTransaction = transaction.transactionId !== lastTxId;
+                              lastTxId = transaction.transactionId;
+                              return (
+                                <TableRow key={index} className={isNewTransaction ? 'border-t-2 border-gray-300' : ''}>
+                                  <TableCell className="font-medium">
+                                    {isNewTransaction ? transaction.transactionId : ''}
+                                  </TableCell>
+                                  <TableCell>
+                                    {isNewTransaction ? formatDate(transaction.date) : ''}
+                                  </TableCell>
+                                  <TableCell className="text-right font-bold text-purple-600">
+                                    {isNewTransaction ? formatCurrency(transaction.transactionTotal) : ''}
+                                  </TableCell>
+                                  <TableCell className="font-mono text-sm">{transaction.productCode}</TableCell>
+                                  <TableCell className="max-w-xs truncate">{transaction.productName}</TableCell>
+                                  <TableCell className="text-right font-semibold">{transaction.quantity.toFixed(2)}</TableCell>
+                                  <TableCell className="text-right">{formatCurrency(transaction.unitPrice)}</TableCell>
+                                  <TableCell className="text-right font-semibold text-blue-600">{formatCurrency(transaction.lineTotal)}</TableCell>
+                                  <TableCell className="text-right text-orange-600">{formatCurrency(transaction.lineDiscount)}</TableCell>
+                                  <TableCell className="text-right font-bold text-green-600">{formatCurrency(transaction.lineNetAmount)}</TableCell>
+                                </TableRow>
+                              );
+                            });
+                          })()
+                          );
+                        })()}
+                      </TableBody>
+                    </Table>
+                  </div>
+
+                  {/* Pagination for detailed transactions */}
+                  {detailedPagination && detailedPagination.totalPages > 1 && (
+                    <div className="flex items-center justify-between border-t pt-4">
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm text-gray-600">Show</span>
+                        <Select
+                          value={detailedPageSize.toString()}
+                          onValueChange={(value) => {
+                            setDetailedPageSize(Number(value))
+                            setDetailedPage(1)
+                          }}
+                        >
+                          <SelectTrigger className="w-20 h-8">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="25">25</SelectItem>
+                            <SelectItem value="50">50</SelectItem>
+                            <SelectItem value="100">100</SelectItem>
+                            <SelectItem value="200">200</SelectItem>
+                          </SelectContent>
+                        </Select>
+                        <span className="text-sm text-gray-600">per page</span>
+                      </div>
+
+                      <div className="flex items-center gap-2">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => setDetailedPage(Math.max(1, detailedPage - 1))}
+                          disabled={detailedPage <= 1}
+                        >
+                          <ChevronLeft className="h-4 w-4" />
+                          Previous
+                        </Button>
+
+                        <div className="px-3 py-1 bg-gray-100 border rounded">
+                          <span className="text-sm font-medium">
+                            Page {detailedPage} of {detailedPagination.totalPages}
+                          </span>
+                        </div>
+
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => setDetailedPage(detailedPage + 1)}
+                          disabled={detailedPage >= detailedPagination.totalPages}
+                        >
+                          Next
+                          <ChevronRight className="h-4 w-4" />
+                        </Button>
+                      </div>
+
+                      <div className="text-sm text-gray-600">
+                        Total: {detailedPagination.totalCount} transactions
+                      </div>
+                    </div>
+                  )}
+                </>
+              )}
+
+              {/* Loading State */}
+              {detailedLoading && (
+                <div className="flex items-center justify-center py-12">
+                  <RefreshCw className="h-8 w-8 animate-spin text-gray-400" />
+                </div>
+              )}
+            </TabsContent>
+
+            <TabsContent value="daily" className="space-y-4 mt-4">
           {/* Summary Cards */}
           {totals && (
             <TooltipProvider>
@@ -731,12 +938,14 @@ export const CustomerTransactionsModal: React.FC<CustomerTransactionsModalProps>
             </>
           )}
 
-          {/* Loading State */}
-          {loading && (
-            <div className="flex items-center justify-center py-12">
-              <RefreshCw className="h-8 w-8 animate-spin text-gray-400" />
-            </div>
-          )}
+              {/* Loading State */}
+              {loading && (
+                <div className="flex items-center justify-center py-12">
+                  <RefreshCw className="h-8 w-8 animate-spin text-gray-400" />
+                </div>
+              )}
+            </TabsContent>
+          </Tabs>
         </div>
       </DialogContent>
     </Dialog>

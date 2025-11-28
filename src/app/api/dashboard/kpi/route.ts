@@ -79,12 +79,9 @@ const getDateRangeFromString = (dateRange: string) => {
   return { startDate, endDate }
 }
 
-// Build WHERE clause for filters
+// Build WHERE clause for filters (no longer includes trx_trxtype filter - handled in query)
 const buildWhereClause = (params: any) => {
   const conditions: string[] = []
-
-  // Always filter for sales transactions
-  conditions.push(`trx_trxtype = 1`)
 
   // Date conditions - use indexed timestamp ranges for performance
   // Database is in UTC, so we use timestamp ranges that cover the full date
@@ -184,55 +181,138 @@ async function fetchKPIDataInternal(params: {
 
   // OPTIMIZED: Single query for both current and previous periods using CASE statements
   // Using indexed timestamp ranges for performance
+  // Now includes proper good/bad returns handling (trx_trxtype=4 with collection_type)
   const optimizedKpiQuery = `
     SELECT
       -- Current period metrics (using indexed timestamp ranges)
+      -- Gross sales from trx_trxtype=1 (sales transactions)
       COALESCE(SUM(CASE
         WHEN trx_trxdate >= '${filterParams.startDate} 00:00:00'::timestamp
         AND trx_trxdate < ('${filterParams.endDate}'::date + INTERVAL '1 day')
+        AND trx_trxtype = 1
         AND trx_totalamount >= 0 THEN trx_totalamount ELSE 0 END), 0) as current_total_sales,
+
+      -- Good returns: trx_trxtype=4 AND collection_type='1'
       COALESCE(SUM(CASE
         WHEN trx_trxdate >= '${filterParams.startDate} 00:00:00'::timestamp
         AND trx_trxdate < ('${filterParams.endDate}'::date + INTERVAL '1 day')
-        AND trx_totalamount < 0 THEN ABS(trx_totalamount) ELSE 0 END), 0) as current_return_sales,
+        AND trx_trxtype = 4
+        AND trx_collectiontype = '1' THEN ABS(trx_totalamount) ELSE 0 END), 0) as current_good_returns,
+
+      -- Bad returns: trx_trxtype=4 AND collection_type='0'
       COALESCE(SUM(CASE
         WHEN trx_trxdate >= '${filterParams.startDate} 00:00:00'::timestamp
         AND trx_trxdate < ('${filterParams.endDate}'::date + INTERVAL '1 day')
-        THEN trx_totalamount ELSE 0 END), 0) as current_net_sales,
+        AND trx_trxtype = 4
+        AND trx_collectiontype = '0' THEN ABS(trx_totalamount) ELSE 0 END), 0) as current_bad_returns,
+
+      -- Net sales = Gross sales - Good returns - Bad returns
+      COALESCE(
+        SUM(CASE WHEN trx_trxdate >= '${filterParams.startDate} 00:00:00'::timestamp
+          AND trx_trxdate < ('${filterParams.endDate}'::date + INTERVAL '1 day')
+          AND trx_trxtype = 1 AND trx_totalamount >= 0 THEN trx_totalamount ELSE 0 END) -
+        SUM(CASE WHEN trx_trxdate >= '${filterParams.startDate} 00:00:00'::timestamp
+          AND trx_trxdate < ('${filterParams.endDate}'::date + INTERVAL '1 day')
+          AND trx_trxtype = 4 AND trx_collectiontype = '1' THEN ABS(trx_totalamount) ELSE 0 END) -
+        SUM(CASE WHEN trx_trxdate >= '${filterParams.startDate} 00:00:00'::timestamp
+          AND trx_trxdate < ('${filterParams.endDate}'::date + INTERVAL '1 day')
+          AND trx_trxtype = 4 AND trx_collectiontype = '0' THEN ABS(trx_totalamount) ELSE 0 END),
+      0) as current_net_sales,
+
+      -- Total orders (sales only, not returns)
       COUNT(DISTINCT CASE
         WHEN trx_trxdate >= '${filterParams.startDate} 00:00:00'::timestamp
         AND trx_trxdate < ('${filterParams.endDate}'::date + INTERVAL '1 day')
+        AND trx_trxtype = 1
         AND trx_totalamount >= 0 THEN trx_trxcode END) as current_total_orders,
+
+      -- Good return orders count
       COUNT(DISTINCT CASE
         WHEN trx_trxdate >= '${filterParams.startDate} 00:00:00'::timestamp
         AND trx_trxdate < ('${filterParams.endDate}'::date + INTERVAL '1 day')
+        AND trx_trxtype = 4
+        AND trx_collectiontype = '1' THEN trx_trxcode END) as current_good_return_orders,
+
+      -- Bad return orders count
+      COUNT(DISTINCT CASE
+        WHEN trx_trxdate >= '${filterParams.startDate} 00:00:00'::timestamp
+        AND trx_trxdate < ('${filterParams.endDate}'::date + INTERVAL '1 day')
+        AND trx_trxtype = 4
+        AND trx_collectiontype = '0' THEN trx_trxcode END) as current_bad_return_orders,
+
+      -- Unique customers (from sales transactions only)
+      COUNT(DISTINCT CASE
+        WHEN trx_trxdate >= '${filterParams.startDate} 00:00:00'::timestamp
+        AND trx_trxdate < ('${filterParams.endDate}'::date + INTERVAL '1 day')
+        AND trx_trxtype = 1
         THEN customer_code END) as current_unique_customers,
+
+      -- Total quantity (from sales transactions only)
       COALESCE(SUM(CASE
         WHEN trx_trxdate >= '${filterParams.startDate} 00:00:00'::timestamp
         AND trx_trxdate < ('${filterParams.endDate}'::date + INTERVAL '1 day')
+        AND trx_trxtype = 1
         THEN ABS(line_quantitybu) ELSE 0 END), 0) as current_total_quantity,
 
       -- Previous period metrics (using indexed timestamp ranges)
+      -- Previous gross sales
       COALESCE(SUM(CASE
         WHEN trx_trxdate >= '${toLocalDateString(prevStartDate)} 00:00:00'::timestamp
         AND trx_trxdate < ('${toLocalDateString(prevEndDate)}'::date + INTERVAL '1 day')
-        THEN trx_totalamount ELSE 0 END), 0) as prev_net_sales,
+        AND trx_trxtype = 1
+        AND trx_totalamount >= 0 THEN trx_totalamount ELSE 0 END), 0) as prev_total_sales,
+
+      -- Previous good returns
+      COALESCE(SUM(CASE
+        WHEN trx_trxdate >= '${toLocalDateString(prevStartDate)} 00:00:00'::timestamp
+        AND trx_trxdate < ('${toLocalDateString(prevEndDate)}'::date + INTERVAL '1 day')
+        AND trx_trxtype = 4
+        AND trx_collectiontype = '1' THEN ABS(trx_totalamount) ELSE 0 END), 0) as prev_good_returns,
+
+      -- Previous bad returns
+      COALESCE(SUM(CASE
+        WHEN trx_trxdate >= '${toLocalDateString(prevStartDate)} 00:00:00'::timestamp
+        AND trx_trxdate < ('${toLocalDateString(prevEndDate)}'::date + INTERVAL '1 day')
+        AND trx_trxtype = 4
+        AND trx_collectiontype = '0' THEN ABS(trx_totalamount) ELSE 0 END), 0) as prev_bad_returns,
+
+      -- Previous net sales
+      COALESCE(
+        SUM(CASE WHEN trx_trxdate >= '${toLocalDateString(prevStartDate)} 00:00:00'::timestamp
+          AND trx_trxdate < ('${toLocalDateString(prevEndDate)}'::date + INTERVAL '1 day')
+          AND trx_trxtype = 1 AND trx_totalamount >= 0 THEN trx_totalamount ELSE 0 END) -
+        SUM(CASE WHEN trx_trxdate >= '${toLocalDateString(prevStartDate)} 00:00:00'::timestamp
+          AND trx_trxdate < ('${toLocalDateString(prevEndDate)}'::date + INTERVAL '1 day')
+          AND trx_trxtype = 4 AND trx_collectiontype = '1' THEN ABS(trx_totalamount) ELSE 0 END) -
+        SUM(CASE WHEN trx_trxdate >= '${toLocalDateString(prevStartDate)} 00:00:00'::timestamp
+          AND trx_trxdate < ('${toLocalDateString(prevEndDate)}'::date + INTERVAL '1 day')
+          AND trx_trxtype = 4 AND trx_collectiontype = '0' THEN ABS(trx_totalamount) ELSE 0 END),
+      0) as prev_net_sales,
+
+      -- Previous orders
       COUNT(DISTINCT CASE
         WHEN trx_trxdate >= '${toLocalDateString(prevStartDate)} 00:00:00'::timestamp
         AND trx_trxdate < ('${toLocalDateString(prevEndDate)}'::date + INTERVAL '1 day')
+        AND trx_trxtype = 1
         AND trx_totalamount >= 0 THEN trx_trxcode END) as prev_total_orders,
+
+      -- Previous unique customers
       COUNT(DISTINCT CASE
         WHEN trx_trxdate >= '${toLocalDateString(prevStartDate)} 00:00:00'::timestamp
         AND trx_trxdate < ('${toLocalDateString(prevEndDate)}'::date + INTERVAL '1 day')
+        AND trx_trxtype = 1
         THEN customer_code END) as prev_unique_customers,
+
+      -- Previous quantity
       COALESCE(SUM(CASE
         WHEN trx_trxdate >= '${toLocalDateString(prevStartDate)} 00:00:00'::timestamp
         AND trx_trxdate < ('${toLocalDateString(prevEndDate)}'::date + INTERVAL '1 day')
+        AND trx_trxtype = 1
         THEN ABS(line_quantitybu) ELSE 0 END), 0) as prev_total_quantity,
 
       COALESCE(MAX(trx_currencycode), 'AED') as currency_code
     FROM ${SALES_TABLE}
-    WHERE trx_trxtype = 1
+    WHERE (trx_trxtype = 1 OR trx_trxtype = 4)
       AND (trx_trxdate >= '${toLocalDateString(prevStartDate)} 00:00:00'::timestamp
       AND trx_trxdate < ('${filterParams.endDate}'::date + INTERVAL '1 day'))
       ${whereClause.replace('WHERE trx_trxtype = 1', '').replace('WHERE', 'AND')}
@@ -244,11 +324,13 @@ async function fetchKPIDataInternal(params: {
 
   // Current period values
   const currentTotalSales = parseFloat(data.current_total_sales || '0')
-  const currentReturnSales = parseFloat(data.current_return_sales || '0')
+  const currentGoodReturns = parseFloat(data.current_good_returns || '0')
+  const currentBadReturns = parseFloat(data.current_bad_returns || '0')
   const currentNetSales = parseFloat(data.current_net_sales || '0')
   const currentTotalOrders = parseInt(data.current_total_orders || '0')
-  const currentReturnOrders = 0 // Return orders not separately tracked in optimized query
-  const currentNetOrders = currentTotalOrders
+  const currentGoodReturnOrders = parseInt(data.current_good_return_orders || '0')
+  const currentBadReturnOrders = parseInt(data.current_bad_return_orders || '0')
+  const currentNetOrders = currentTotalOrders - currentGoodReturnOrders - currentBadReturnOrders
   const currentUniqueCustomers = parseInt(data.current_unique_customers || '0')
   const currentUniqueSalesmen = 0 // Salesmen count not tracked in optimized query
   const currentTotalQuantity = parseFloat(data.current_total_quantity || '0')
@@ -256,6 +338,9 @@ async function fetchKPIDataInternal(params: {
   const currentAvgOrder = currentNetOrders > 0 ? currentNetSales / currentNetOrders : 0
 
   // Previous period values
+  const prevTotalSales = parseFloat(data.prev_total_sales || '0')
+  const prevGoodReturns = parseFloat(data.prev_good_returns || '0')
+  const prevBadReturns = parseFloat(data.prev_bad_returns || '0')
   const prevNetSales = parseFloat(data.prev_net_sales || '0')
   const prevTotalOrders = parseInt(data.prev_total_orders || '0')
   const prevNetOrders = prevTotalOrders
@@ -276,11 +361,15 @@ async function fetchKPIDataInternal(params: {
 
   return {
     currentTotalSales,
-    currentReturnSales,
+    currentGoodReturns,
+    currentBadReturns,
+    currentReturnSales: currentGoodReturns + currentBadReturns, // For backward compatibility
     currentNetSales,
     currentSales: currentNetSales,
     currentTotalOrders,
-    currentReturnOrders,
+    currentGoodReturnOrders,
+    currentBadReturnOrders,
+    currentReturnOrders: currentGoodReturnOrders + currentBadReturnOrders, // For backward compatibility
     currentNetOrders,
     currentOrders: currentNetOrders,
     currentUniqueCustomers,
@@ -294,6 +383,7 @@ async function fetchKPIDataInternal(params: {
     prevNetSales,
     prevNetOrders,
     prevUniqueCustomers,
+    currentAvgOrder,
     averageOrderValue: currentAvgOrder,
     avgOrderChange,
     netSalesChange,
@@ -326,6 +416,14 @@ async function fetchKPIDataInternal(params: {
         userCode: params.userCode,
         customerCode: params.customerCode,
         chainName: params.chainName
+      },
+      returnsBreakdown: {
+        goodReturns: currentGoodReturns,
+        badReturns: currentBadReturns,
+        totalReturns: currentGoodReturns + currentBadReturns,
+        goodReturnOrders: currentGoodReturnOrders,
+        badReturnOrders: currentBadReturnOrders,
+        totalReturnOrders: currentGoodReturnOrders + currentBadReturnOrders
       }
     }
   }
