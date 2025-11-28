@@ -22,9 +22,10 @@ export async function GET(request: NextRequest) {
     const productCategory = searchParams.get('productCategory')
     const productCode = searchParams.get('productCode')
 
-    // Pagination parameters - Allow fetching all data
+    // Pagination parameters - No limit, fetch all data
     const page = parseInt(searchParams.get('page') || '1')
-    const limit = Math.min(parseInt(searchParams.get('limit') || '100'), 999999) // Allow fetching all data
+    const requestedLimit = searchParams.get('limit')
+    const limit = requestedLimit ? parseInt(requestedLimit) : 999999999 // No limit by default
     const offset = (page - 1) * limit
 
     console.log('LMTD Secondary - Pagination:', { page, limit, offset })
@@ -120,7 +121,7 @@ export async function GET(request: NextRequest) {
       filterConditionsCount: filterConditions.length
     })
 
-    // OPTIMIZED main query with separate CTEs for MTD and LMTD
+    // ULTRA-OPTIMIZED main query with timestamp ranges (works with indexes)
     const mainQueryText = `
       WITH mtd_data AS (
         SELECT
@@ -134,7 +135,8 @@ export async function GET(request: NextRequest) {
           SUM(ABS(COALESCE(line_quantitybu, 0))) as mtd_quantity,
           SUM(CASE WHEN trx_totalamount > 0 THEN trx_totalamount ELSE 0 END) as mtd_revenue
         FROM ${SALES_TABLE}
-        WHERE DATE(trx_trxdate) BETWEEN $1::date AND $2::date
+        WHERE trx_trxdate >= $1::timestamp
+          AND trx_trxdate < ($2::timestamp + INTERVAL '1 day')
           AND trx_trxtype = 1
           ${whereClause}
         GROUP BY trx_usercode, customer_code, line_itemcode
@@ -147,7 +149,8 @@ export async function GET(request: NextRequest) {
           SUM(ABS(COALESCE(line_quantitybu, 0))) as lmtd_quantity,
           SUM(CASE WHEN trx_totalamount > 0 THEN trx_totalamount ELSE 0 END) as lmtd_revenue
         FROM ${SALES_TABLE}
-        WHERE DATE(trx_trxdate) BETWEEN $3::date AND $4::date
+        WHERE trx_trxdate >= $3::timestamp
+          AND trx_trxdate < ($4::timestamp + INTERVAL '1 day')
           AND trx_trxtype = 1
           ${whereClause}
         GROUP BY trx_usercode, customer_code, line_itemcode
@@ -191,7 +194,7 @@ export async function GET(request: NextRequest) {
       LIMIT ${limit}
     `
 
-    // OPTIMIZED summary query with separate CTEs for MTD and LMTD
+    // ULTRA-OPTIMIZED summary query with timestamp ranges (works with indexes)
     const summaryQueryText = `
       WITH mtd_summary AS (
         SELECT
@@ -202,7 +205,8 @@ export async function GET(request: NextRequest) {
           COUNT(DISTINCT trx_usercode) as users,
           COUNT(DISTINCT route_salesmancode) as team_leaders
         FROM ${SALES_TABLE}
-        WHERE DATE(trx_trxdate) BETWEEN $1::date AND $2::date
+        WHERE trx_trxdate >= $1::timestamp
+          AND trx_trxdate < ($2::timestamp + INTERVAL '1 day')
           AND trx_trxtype = 1
           ${whereClause}
       ),
@@ -215,7 +219,8 @@ export async function GET(request: NextRequest) {
           COUNT(DISTINCT trx_usercode) as users,
           COUNT(DISTINCT route_salesmancode) as team_leaders
         FROM ${SALES_TABLE}
-        WHERE DATE(trx_trxdate) BETWEEN $3::date AND $4::date
+        WHERE trx_trxdate >= $3::timestamp
+          AND trx_trxdate < ($4::timestamp + INTERVAL '1 day')
           AND trx_trxtype = 1
           ${whereClause}
       )
@@ -231,27 +236,29 @@ export async function GET(request: NextRequest) {
       FROM mtd_summary m, lmtd_summary l
     `
 
-    // OPTIMIZED daily trend query with separate CTEs for MTD and LMTD
+    // ULTRA-OPTIMIZED daily trend query with timestamp ranges (works with indexes)
     const dailyTrendQueryText = `
       WITH mtd_trend AS (
         SELECT
-          EXTRACT(DAY FROM DATE(trx_trxdate))::int as day,
+          EXTRACT(DAY FROM trx_trxdate)::int as day,
           SUM(CASE WHEN trx_totalamount > 0 THEN trx_totalamount ELSE 0 END) as revenue
         FROM ${SALES_TABLE}
-        WHERE DATE(trx_trxdate) BETWEEN $1::date AND $2::date
+        WHERE trx_trxdate >= $1::timestamp
+          AND trx_trxdate < ($2::timestamp + INTERVAL '1 day')
           AND trx_trxtype = 1
           ${whereClause}
-        GROUP BY EXTRACT(DAY FROM DATE(trx_trxdate))
+        GROUP BY EXTRACT(DAY FROM trx_trxdate)
       ),
       lmtd_trend AS (
         SELECT
-          EXTRACT(DAY FROM DATE(trx_trxdate))::int as day,
+          EXTRACT(DAY FROM trx_trxdate)::int as day,
           SUM(CASE WHEN trx_totalamount > 0 THEN trx_totalamount ELSE 0 END) as revenue
         FROM ${SALES_TABLE}
-        WHERE DATE(trx_trxdate) BETWEEN $3::date AND $4::date
+        WHERE trx_trxdate >= $3::timestamp
+          AND trx_trxdate < ($4::timestamp + INTERVAL '1 day')
           AND trx_trxtype = 1
           ${whereClause}
-        GROUP BY EXTRACT(DAY FROM DATE(trx_trxdate))
+        GROUP BY EXTRACT(DAY FROM trx_trxdate)
       )
       SELECT
         COALESCE(m.day, l.day) as day,
@@ -263,7 +270,7 @@ export async function GET(request: NextRequest) {
       ORDER BY day
     `
 
-    // OPTIMIZED top products query - Get top 10 MTD products and their LMTD data
+    // ULTRA-OPTIMIZED top products query with timestamp ranges (works with indexes)
     const topProductsQueryText = `
       WITH mtd_products AS (
         SELECT
@@ -271,7 +278,8 @@ export async function GET(request: NextRequest) {
           MAX(line_itemdescription) as product_name,
           SUM(CASE WHEN trx_totalamount > 0 THEN trx_totalamount ELSE 0 END) as mtd_revenue
         FROM ${SALES_TABLE}
-        WHERE DATE(trx_trxdate) BETWEEN $1::date AND $2::date
+        WHERE trx_trxdate >= $1::timestamp
+          AND trx_trxdate < ($2::timestamp + INTERVAL '1 day')
           AND trx_trxtype = 1
           AND line_itemcode IS NOT NULL
           ${whereClause}
@@ -287,7 +295,8 @@ export async function GET(request: NextRequest) {
           SELECT SUM(CASE WHEN trx_totalamount > 0 THEN trx_totalamount ELSE 0 END)
           FROM ${SALES_TABLE}
           WHERE line_itemcode = m.product_code
-            AND DATE(trx_trxdate) BETWEEN $3::date AND $4::date
+            AND trx_trxdate >= $3::timestamp
+            AND trx_trxdate < ($4::timestamp + INTERVAL '1 day')
             AND trx_trxtype = 1
             ${whereClause}
         ), 0) as lmtd_revenue

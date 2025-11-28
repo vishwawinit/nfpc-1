@@ -177,8 +177,8 @@ export function LMTDSecondaryReport() {
         ...(userCode && { userCode }),
         ...(storeCode && { storeCode }),
         ...(chainName && { chainName }),
-        ...(productCode && { productCode }),
-        limit: '999999' // Fetch all data without limit
+        ...(productCode && { productCode })
+        // No limit - fetch all data
       })
 
       console.log('LMTD Report - API Request URL:', `/api/lmtd-secondary?${params.toString()}`)
