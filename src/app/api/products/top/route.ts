@@ -129,12 +129,12 @@ const buildWhereClause = (params: any) => {
   // Always filter for sales transactions
   conditions.push(`trx_trxtype = 1`)
 
-  // Date conditions
+  // Date conditions - use DATE() to compare date-only, ignoring time
   if (params.startDate) {
-    conditions.push(`trx_trxdate >= '${params.startDate}'::timestamp`)
+    conditions.push(`DATE(trx_trxdate) >= '${params.startDate}'::date`)
   }
   if (params.endDate) {
-    conditions.push(`trx_trxdate < ('${params.endDate}'::timestamp + INTERVAL '1 day')`)
+    conditions.push(`DATE(trx_trxdate) <= '${params.endDate}'::date`)
   }
 
   // Area filter (support both old regionCode and new areaCode)
@@ -235,6 +235,7 @@ export async function GET(request: NextRequest) {
     })
 
     // Query to get top products with all metrics
+    // Note: line_baseprice is stored in fils (1/100 AED), so we divide by 100 to convert to AED
     const topProductsQuery = `
       SELECT
         line_itemcode as "productCode",
@@ -242,16 +243,16 @@ export async function GET(request: NextRequest) {
         COALESCE(MAX(item_grouplevel1), 'Unknown') as "categoryName",
         COALESCE(MAX(line_uom), 'PCS') as "baseUom",
         SUM(ABS(COALESCE(line_quantitybu, 0))) as "quantitySold",
-        COALESCE(SUM(CASE
-          WHEN (line_baseprice * line_quantitybu) > 0 THEN (line_baseprice * line_quantitybu)
+        COALESCE(CAST(SUM(CASE
+          WHEN (line_baseprice * line_quantitybu) > 0 THEN (line_baseprice * line_quantitybu) / 100.0
           ELSE 0
-        END), 0) as "salesAmount",
+        END) AS NUMERIC(15,2)), 0) as "salesAmount",
         CASE
           WHEN SUM(ABS(COALESCE(line_quantitybu, 0))) > 0
-          THEN COALESCE(SUM(CASE
-            WHEN (line_baseprice * line_quantitybu) > 0 THEN (line_baseprice * line_quantitybu)
+          THEN COALESCE(CAST(SUM(CASE
+            WHEN (line_baseprice * line_quantitybu) > 0 THEN (line_baseprice * line_quantitybu) / 100.0
             ELSE 0
-          END), 0) / SUM(ABS(COALESCE(line_quantitybu, 0)))
+          END) / SUM(ABS(COALESCE(line_quantitybu, 0))) AS NUMERIC(15,2)), 0)
           ELSE 0
         END as "averagePrice",
         COUNT(DISTINCT trx_trxcode) as "totalOrders",
@@ -262,7 +263,7 @@ export async function GET(request: NextRequest) {
       ${whereClause}
       GROUP BY line_itemcode
       ORDER BY COALESCE(SUM(CASE
-        WHEN (line_baseprice * line_quantitybu) > 0 THEN (line_baseprice * line_quantitybu)
+        WHEN (line_baseprice * line_quantitybu) > 0 THEN (line_baseprice * line_quantitybu) / 100.0
         ELSE 0
       END), 0) DESC
       LIMIT ${limit}

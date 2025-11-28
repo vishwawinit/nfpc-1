@@ -29,17 +29,17 @@ const buildWhereClause = (filters: any, params: any[], startParamIndex: number =
   // Transaction type filter (1 = Sales)
   conditions.push(`trx_trxtype = 1`)
 
-  // Region filter
-  if (filters.regionCode) {
-    conditions.push(`customer_regioncode = $${paramCount}`)
-    params.push(filters.regionCode)
+  // Area filter (support both old regionCode and new areaCode)
+  if (filters.areaCode || filters.regionCode) {
+    conditions.push(`route_areacode = $${paramCount}`)
+    params.push(filters.areaCode || filters.regionCode)
     paramCount++
   }
 
-  // City filter
-  if (filters.cityCode) {
-    conditions.push(`(customer_citycode = $${paramCount} OR city_description = $${paramCount})`)
-    params.push(filters.cityCode)
+  // Sub Area filter (support both old cityCode and new subAreaCode)
+  if (filters.subAreaCode || filters.cityCode) {
+    conditions.push(`route_subareacode = $${paramCount}`)
+    params.push(filters.subAreaCode || filters.cityCode)
     paramCount++
   }
 
@@ -134,12 +134,14 @@ export async function GET(request: NextRequest) {
   try {
     const searchParams = request.nextUrl.searchParams
 
-    // Build filters object
+    // Build filters object - support both old (region/city) and new (area/subArea) parameter names
     const filters: any = {
       startDate: searchParams.get('startDate') || undefined,
       endDate: searchParams.get('endDate') || undefined,
-      regionCode: searchParams.get('regionCode') || undefined,
-      cityCode: searchParams.get('cityCode') || undefined,
+      areaCode: searchParams.get('areaCode') || undefined,
+      subAreaCode: searchParams.get('subAreaCode') || undefined,
+      regionCode: searchParams.get('regionCode') || undefined, // backward compatibility
+      cityCode: searchParams.get('cityCode') || undefined, // backward compatibility
       teamLeaderCode: searchParams.get('teamLeaderCode') || undefined,
       fieldUserRole: searchParams.get('fieldUserRole') || undefined,
       userCode: searchParams.get('userCode') || undefined,
@@ -210,6 +212,8 @@ export async function GET(request: NextRequest) {
       filters: {
         startDate: filters.startDate || null,
         endDate: filters.endDate || null,
+        areaCode: filters.areaCode || null,
+        subAreaCode: filters.subAreaCode || null,
         regionCode: filters.regionCode || null,
         cityCode: filters.cityCode || null,
         teamLeaderCode: filters.teamLeaderCode || null,

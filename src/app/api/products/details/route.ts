@@ -6,6 +6,7 @@ import { getAssetBaseUrl } from '@/lib/utils'
 export const dynamic = 'force-dynamic'
 
 const SALES_TABLE = 'flat_daily_sales_report'
+// Updated to remove item_imagepath column reference
 
 // Helper function to parse date range string
 const getDateRangeFromString = (dateRange: string) => {
@@ -148,7 +149,7 @@ export async function GET(request: NextRequest) {
           COALESCE(MAX(item_grouplevel2), 'No Subcategory') as subcategory,
           COALESCE(MAX(item_brand_description), 'No Brand') as brand,
           COALESCE(MAX(line_uom), 'PCS') as base_uom,
-          COALESCE(MAX(item_imagepath), '') as image_path,
+          '' as image_path,
           SUM(CASE WHEN trx_totalamount > 0 THEN trx_totalamount ELSE 0 END) as total_sales,
           SUM(ABS(COALESCE(line_quantitybu, 0))) as total_quantity,
           COUNT(DISTINCT trx_trxcode) as total_orders,

@@ -86,12 +86,12 @@ const buildWhereClause = (params: any) => {
   // Always filter for sales transactions
   conditions.push(`trx_trxtype = 1`)
 
-  // Date conditions
+  // Date conditions - use DATE() to compare date-only, ignoring time
   if (params.startDate) {
-    conditions.push(`trx_trxdate >= '${params.startDate}'::timestamp`)
+    conditions.push(`DATE(trx_trxdate) >= '${params.startDate}'::date`)
   }
   if (params.endDate) {
-    conditions.push(`trx_trxdate < ('${params.endDate}'::timestamp + INTERVAL '1 day')`)
+    conditions.push(`DATE(trx_trxdate) <= '${params.endDate}'::date`)
   }
 
   // Area filter (support both old regionCode and new areaCode)
@@ -164,6 +164,15 @@ async function fetchKPIDataInternal(params: {
     endDate: toLocalDateString(endDate)
   }
 
+  // Debug logging to verify date range
+  console.log('📅 KPI Date Range Calculation:', {
+    dateRange: params.dateRange,
+    currentDate: new Date().toISOString(),
+    startDate: filterParams.startDate,
+    endDate: filterParams.endDate,
+    customDates: params.customStartDate && params.customEndDate ? 'Yes' : 'No'
+  })
+
   const whereClause = buildWhereClause(filterParams)
 
   // Calculate previous period dates (UTC-safe)
@@ -174,48 +183,48 @@ async function fetchKPIDataInternal(params: {
   // OPTIMIZED: Single query for both current and previous periods using CASE statements
   const optimizedKpiQuery = `
     SELECT
-      -- Current period metrics
+      -- Current period metrics (using DATE() for timezone-safe comparison)
       COALESCE(SUM(CASE
-        WHEN trx_trxdate >= '${filterParams.startDate}'::timestamp
-        AND trx_trxdate < ('${filterParams.endDate}'::timestamp + INTERVAL '1 day')
+        WHEN DATE(trx_trxdate) >= '${filterParams.startDate}'::date
+        AND DATE(trx_trxdate) <= '${filterParams.endDate}'::date
         AND trx_totalamount >= 0 THEN trx_totalamount ELSE 0 END), 0) as current_total_sales,
       COALESCE(SUM(CASE
-        WHEN trx_trxdate >= '${filterParams.startDate}'::timestamp
-        AND trx_trxdate < ('${filterParams.endDate}'::timestamp + INTERVAL '1 day')
+        WHEN DATE(trx_trxdate) >= '${filterParams.startDate}'::date
+        AND DATE(trx_trxdate) <= '${filterParams.endDate}'::date
         AND trx_totalamount < 0 THEN ABS(trx_totalamount) ELSE 0 END), 0) as current_return_sales,
       COALESCE(SUM(CASE
-        WHEN trx_trxdate >= '${filterParams.startDate}'::timestamp
-        AND trx_trxdate < ('${filterParams.endDate}'::timestamp + INTERVAL '1 day')
+        WHEN DATE(trx_trxdate) >= '${filterParams.startDate}'::date
+        AND DATE(trx_trxdate) <= '${filterParams.endDate}'::date
         THEN trx_totalamount ELSE 0 END), 0) as current_net_sales,
       COUNT(DISTINCT CASE
-        WHEN trx_trxdate >= '${filterParams.startDate}'::timestamp
-        AND trx_trxdate < ('${filterParams.endDate}'::timestamp + INTERVAL '1 day')
+        WHEN DATE(trx_trxdate) >= '${filterParams.startDate}'::date
+        AND DATE(trx_trxdate) <= '${filterParams.endDate}'::date
         AND trx_totalamount >= 0 THEN trx_trxcode END) as current_total_orders,
       COUNT(DISTINCT CASE
-        WHEN trx_trxdate >= '${filterParams.startDate}'::timestamp
-        AND trx_trxdate < ('${filterParams.endDate}'::timestamp + INTERVAL '1 day')
+        WHEN DATE(trx_trxdate) >= '${filterParams.startDate}'::date
+        AND DATE(trx_trxdate) <= '${filterParams.endDate}'::date
         THEN customer_code END) as current_unique_customers,
       COALESCE(SUM(CASE
-        WHEN trx_trxdate >= '${filterParams.startDate}'::timestamp
-        AND trx_trxdate < ('${filterParams.endDate}'::timestamp + INTERVAL '1 day')
+        WHEN DATE(trx_trxdate) >= '${filterParams.startDate}'::date
+        AND DATE(trx_trxdate) <= '${filterParams.endDate}'::date
         THEN ABS(line_quantitybu) ELSE 0 END), 0) as current_total_quantity,
 
-      -- Previous period metrics
+      -- Previous period metrics (using DATE() for timezone-safe comparison)
       COALESCE(SUM(CASE
-        WHEN trx_trxdate >= '${toLocalDateString(prevStartDate)}'::timestamp
-        AND trx_trxdate < ('${toLocalDateString(prevEndDate)}'::timestamp + INTERVAL '1 day')
+        WHEN DATE(trx_trxdate) >= '${toLocalDateString(prevStartDate)}'::date
+        AND DATE(trx_trxdate) <= '${toLocalDateString(prevEndDate)}'::date
         THEN trx_totalamount ELSE 0 END), 0) as prev_net_sales,
       COUNT(DISTINCT CASE
-        WHEN trx_trxdate >= '${toLocalDateString(prevStartDate)}'::timestamp
-        AND trx_trxdate < ('${toLocalDateString(prevEndDate)}'::timestamp + INTERVAL '1 day')
+        WHEN DATE(trx_trxdate) >= '${toLocalDateString(prevStartDate)}'::date
+        AND DATE(trx_trxdate) <= '${toLocalDateString(prevEndDate)}'::date
         AND trx_totalamount >= 0 THEN trx_trxcode END) as prev_total_orders,
       COUNT(DISTINCT CASE
-        WHEN trx_trxdate >= '${toLocalDateString(prevStartDate)}'::timestamp
-        AND trx_trxdate < ('${toLocalDateString(prevEndDate)}'::timestamp + INTERVAL '1 day')
+        WHEN DATE(trx_trxdate) >= '${toLocalDateString(prevStartDate)}'::date
+        AND DATE(trx_trxdate) <= '${toLocalDateString(prevEndDate)}'::date
         THEN customer_code END) as prev_unique_customers,
       COALESCE(SUM(CASE
-        WHEN trx_trxdate >= '${toLocalDateString(prevStartDate)}'::timestamp
-        AND trx_trxdate < ('${toLocalDateString(prevEndDate)}'::timestamp + INTERVAL '1 day')
+        WHEN DATE(trx_trxdate) >= '${toLocalDateString(prevStartDate)}'::date
+        AND DATE(trx_trxdate) <= '${toLocalDateString(prevEndDate)}'::date
         THEN ABS(line_quantitybu) ELSE 0 END), 0) as prev_total_quantity,
 
       COALESCE(MAX(trx_currencycode), 'AED') as currency_code
@@ -324,12 +333,16 @@ export async function GET(request: NextRequest) {
     const searchParams = request.nextUrl.searchParams
     const dateRange = searchParams.get('range') || 'thisMonth'
 
+    // Support both old (regionCode/cityCode) and new (areaCode/subAreaCode) parameter names
+    const areaCode = searchParams.get('areaCode') || searchParams.get('regionCode')
+    const subAreaCode = searchParams.get('subAreaCode') || searchParams.get('cityCode')
+
     const filterParams = {
       dateRange,
-      areaCode: searchParams.get('areaCode') || searchParams.get('regionCode'),
-      subAreaCode: searchParams.get('subAreaCode') || searchParams.get('cityCode'),
-      regionCode: searchParams.get('regionCode'), // Keep for backward compatibility in WHERE clause
-      cityCode: searchParams.get('cityCode'), // Keep for backward compatibility in WHERE clause
+      areaCode: areaCode,
+      subAreaCode: subAreaCode,
+      regionCode: areaCode, // Pass as regionCode for backward compatibility with internal function
+      cityCode: subAreaCode, // Pass as cityCode for backward compatibility with internal function
       teamLeaderCode: searchParams.get('teamLeaderCode'),
       routeCode: searchParams.get('routeCode'),
       userCode: searchParams.get('userCode') || searchParams.get('salesmanCode'),

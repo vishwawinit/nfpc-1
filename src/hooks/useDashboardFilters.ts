@@ -283,7 +283,7 @@ export const useDashboardFilters = () => {
     }))
   }, [])
 
-  // Reset all filters - reset to default date range and default SubArea
+  // Reset all filters - reset to default date range and default sub area (ALN)
   const resetFilters = useCallback(() => {
     const defaultDates = getDefaultDateRange()
     setFilters({
