@@ -64,12 +64,31 @@ export function LMTDSecondaryReport() {
   const [error, setError] = useState<string | null>(null)
   const [periods, setPeriods] = useState<any>(null)
   
-  // Filters
+  // Filters - Initialize with 1st of current month to today
   const [startDate, setStartDate] = useState(() => {
-    const date = new Date()
-    return new Date(date.getFullYear(), date.getMonth(), 1).toISOString().split('T')[0]
+    const now = new Date()
+    // Explicitly set to 1st of current month
+    const year = now.getFullYear()
+    const month = now.getMonth() // 0-indexed: 0 = Jan, 10 = Nov
+    const firstDayOfMonth = new Date(year, month, 1, 0, 0, 0, 0)
+    const formattedDate = `${year}-${String(month + 1).padStart(2, '0')}-01`
+    console.log('LMTD Report - Initial startDate (1st of month):', {
+      formattedDate,
+      year,
+      month: month + 1,
+      date: firstDayOfMonth
+    })
+    return formattedDate
   })
-  const [endDate, setEndDate] = useState(() => new Date().toISOString().split('T')[0])
+  const [endDate, setEndDate] = useState(() => {
+    const now = new Date()
+    const year = now.getFullYear()
+    const month = now.getMonth() + 1 // 1-indexed for display
+    const day = now.getDate()
+    const formattedDate = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`
+    console.log('LMTD Report - Initial endDate (today):', { formattedDate, year, month, day })
+    return formattedDate
+  })
   const [teamLeaderCode, setTeamLeaderCode] = useState<string | null>(null)
   const [userCode, setUserCode] = useState<string | null>(null)
   const [storeCode, setStoreCode] = useState<string | null>(null)
@@ -149,6 +168,8 @@ export function LMTDSecondaryReport() {
         await new Promise(resolve => setTimeout(resolve, 100))
       }
 
+      console.log('LMTD Report - Fetching data with dates:', { startDate, endDate })
+
       const params = new URLSearchParams({
         startDate,
         endDate,
@@ -157,8 +178,10 @@ export function LMTDSecondaryReport() {
         ...(storeCode && { storeCode }),
         ...(chainName && { chainName }),
         ...(productCode && { productCode }),
-        limit: '999999' // Remove limit to get all data
+        limit: '999999' // Fetch all data without limit
       })
+
+      console.log('LMTD Report - API Request URL:', `/api/lmtd-secondary?${params.toString()}`)
 
       const response = await fetch(`/api/lmtd-secondary?${params}`, {
         headers: {

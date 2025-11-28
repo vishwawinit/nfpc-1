@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { query } from '@/lib/database'
 
-// Force dynamic rendering for routes that use searchParams
+// Force dynamic rendering for routes that use searchParams (Updated: 2025-11-29 03:07)
 export const dynamic = 'force-dynamic'
 
 // Use the flat_daily_sales_report table
@@ -22,10 +22,12 @@ export async function GET(request: NextRequest) {
     const productCategory = searchParams.get('productCategory')
     const productCode = searchParams.get('productCode')
 
-    // Pagination parameters
+    // Pagination parameters - Allow fetching all data
     const page = parseInt(searchParams.get('page') || '1')
-    const limit = Math.min(parseInt(searchParams.get('limit') || '100'), 10000)
+    const limit = Math.min(parseInt(searchParams.get('limit') || '100'), 999999) // Allow fetching all data
     const offset = (page - 1) * limit
+
+    console.log('LMTD Secondary - Pagination:', { page, limit, offset })
 
     // Calculate date ranges for MTD and LMTD
     // MTD: Use provided startDate (defaults to 1st of current month) to endDate
@@ -49,8 +51,15 @@ export async function GET(request: NextRequest) {
     const lmtdStart = `${prevYear}-${String(prevMonth).padStart(2, '0')}-01`
     const lmtdEnd = `${prevYear}-${String(prevMonth).padStart(2, '0')}-${String(adjustedDay).padStart(2, '0')}`
 
-    console.log('LMTD Secondary Sales API - Date Ranges:', {
+    console.log('LMTD Secondary Sales API - Request Details:', {
       receivedParams: { startDate, endDate, currentDate },
+      filters: {
+        teamLeaderCode: teamLeaderCode || null,
+        userCode: userCode || null,
+        storeCode: storeCode || null,
+        chainName: chainName || null,
+        productCode: productCode || null
+      },
       mtdPeriod: { start: mtdStart, end: mtdEnd },
       lmtdPeriod: { start: lmtdStart, end: lmtdEnd }
     })
@@ -105,192 +114,212 @@ export async function GET(request: NextRequest) {
       ? ' AND ' + filterConditions.join(' AND ')
       : ''
 
-    // Optimized main query - aggregate by user/store/product only (not by date)
+    console.log('LMTD Secondary - Filter SQL:', {
+      whereClause: whereClause || 'No additional filters',
+      filterParams,
+      filterConditionsCount: filterConditions.length
+    })
+
+    // OPTIMIZED main query with separate CTEs for MTD and LMTD
     const mainQueryText = `
-      WITH combined_sales AS (
+      WITH mtd_data AS (
         SELECT
-          trx_usercode as field_user_code,
-          customer_code as store_code,
-          line_itemcode as product_code,
-          MAX(route_salesmancode) as tl_code,
+          trx_usercode,
+          customer_code,
+          line_itemcode,
+          COALESCE(MAX(route_salesmancode), '') as tl_code,
           MAX(customer_description) as store_name,
           MAX(customer_channel_description) as chain_name,
           MAX(line_itemdescription) as product_name,
-          SUM(CASE
-            WHEN trx_trxdate::date >= $1::date AND trx_trxdate::date <= $2::date
-            THEN ABS(COALESCE(line_quantitybu, 0))
-            ELSE 0
-          END) as mtd_quantity,
-          SUM(CASE
-            WHEN trx_trxdate::date >= $1::date AND trx_trxdate::date <= $2::date AND trx_totalamount > 0
-            THEN trx_totalamount
-            ELSE 0
-          END) as mtd_amount,
-          SUM(CASE
-            WHEN trx_trxdate::date >= $3::date AND trx_trxdate::date <= $4::date
-            THEN ABS(COALESCE(line_quantitybu, 0))
-            ELSE 0
-          END) as lmtd_quantity,
-          SUM(CASE
-            WHEN trx_trxdate::date >= $3::date AND trx_trxdate::date <= $4::date AND trx_totalamount > 0
-            THEN trx_totalamount
-            ELSE 0
-          END) as lmtd_amount,
-          MAX(CASE
-            WHEN trx_trxdate::date >= $1::date AND trx_trxdate::date <= $2::date
-            THEN trx_trxdate::date
-          END) as mtd_last_date,
-          MAX(CASE
-            WHEN trx_trxdate::date >= $3::date AND trx_trxdate::date <= $4::date
-            THEN trx_trxdate::date
-          END) as lmtd_last_date
+          SUM(ABS(COALESCE(line_quantitybu, 0))) as mtd_quantity,
+          SUM(CASE WHEN trx_totalamount > 0 THEN trx_totalamount ELSE 0 END) as mtd_revenue
         FROM ${SALES_TABLE}
-        WHERE ((trx_trxdate::date >= $1::date AND trx_trxdate::date <= $2::date)
-           OR (trx_trxdate::date >= $3::date AND trx_trxdate::date <= $4::date))
+        WHERE DATE(trx_trxdate) BETWEEN $1::date AND $2::date
           AND trx_trxtype = 1
           ${whereClause}
         GROUP BY trx_usercode, customer_code, line_itemcode
-        HAVING SUM(CASE
-            WHEN trx_trxdate::date >= $1::date AND trx_trxdate::date <= $2::date AND trx_totalamount > 0
-            THEN trx_totalamount ELSE 0 END) > 0
-           OR SUM(CASE
-            WHEN trx_trxdate::date >= $3::date AND trx_trxdate::date <= $4::date AND trx_totalamount > 0
-            THEN trx_totalamount ELSE 0 END) > 0
+      ),
+      lmtd_data AS (
+        SELECT
+          trx_usercode,
+          customer_code,
+          line_itemcode,
+          SUM(ABS(COALESCE(line_quantitybu, 0))) as lmtd_quantity,
+          SUM(CASE WHEN trx_totalamount > 0 THEN trx_totalamount ELSE 0 END) as lmtd_revenue
+        FROM ${SALES_TABLE}
+        WHERE DATE(trx_trxdate) BETWEEN $3::date AND $4::date
+          AND trx_trxtype = 1
+          ${whereClause}
+        GROUP BY trx_usercode, customer_code, line_itemcode
       )
       SELECT
-        COALESCE(mtd_last_date, lmtd_last_date) as "date",
-        COALESCE(tl_code, '') as "tlCode",
-        COALESCE(tl_code, '') as "tlName",
-        COALESCE(field_user_code, '') as "fieldUserCode",
-        COALESCE(field_user_code, '') as "fieldUserName",
-        COALESCE(store_code, '') as "storeCode",
-        COALESCE(store_name, '') as "storeName",
-        COALESCE(chain_name, '') as "chainName",
-        COALESCE(product_code, '') as "productCode",
-        COALESCE(product_name, '') as "productName",
-        mtd_quantity as "secondarySalesCurrentMonth",
-        mtd_amount as "secondarySalesRevenueCurrentMonth",
-        lmtd_quantity as "secondarySalesLastMonth",
-        lmtd_amount as "secondarySalesRevenueLastMonth",
-        (mtd_quantity - lmtd_quantity) as "secondarySalesDiff",
-        (mtd_amount - lmtd_amount) as "secondarySalesRevenueDiff",
+        $2::date as "date",
+        COALESCE(m.tl_code, '') as "tlCode",
+        COALESCE(m.tl_code, '') as "tlName",
+        COALESCE(m.trx_usercode, l.trx_usercode) as "fieldUserCode",
+        COALESCE(m.trx_usercode, l.trx_usercode) as "fieldUserName",
+        COALESCE(m.customer_code, l.customer_code) as "storeCode",
+        COALESCE(m.store_name, '') as "storeName",
+        COALESCE(m.chain_name, '') as "chainName",
+        COALESCE(m.line_itemcode, l.line_itemcode) as "productCode",
+        COALESCE(m.product_name, '') as "productName",
+        COALESCE(m.mtd_quantity, 0) as "secondarySalesCurrentMonth",
+        COALESCE(m.mtd_revenue, 0) as "secondarySalesRevenueCurrentMonth",
+        COALESCE(l.lmtd_quantity, 0) as "secondarySalesLastMonth",
+        COALESCE(l.lmtd_revenue, 0) as "secondarySalesRevenueLastMonth",
+        COALESCE(m.mtd_quantity, 0) - COALESCE(l.lmtd_quantity, 0) as "secondarySalesDiff",
+        COALESCE(m.mtd_revenue, 0) - COALESCE(l.lmtd_revenue, 0) as "secondarySalesRevenueDiff",
         CASE
-          WHEN lmtd_amount = 0 THEN CASE WHEN mtd_amount > 0 THEN 100 ELSE 0 END
-          ELSE ROUND(((mtd_amount - lmtd_amount) / lmtd_amount * 100)::numeric, 2)
+          WHEN COALESCE(l.lmtd_revenue, 0) > 0
+          THEN ((COALESCE(m.mtd_revenue, 0) - COALESCE(l.lmtd_revenue, 0)) / l.lmtd_revenue * 100)
+          WHEN COALESCE(m.mtd_revenue, 0) > 0 THEN 100
+          ELSE 0
         END as "revenueVariancePercent",
         CASE
-          WHEN lmtd_quantity = 0 THEN CASE WHEN mtd_quantity > 0 THEN 100 ELSE 0 END
-          ELSE ROUND(((mtd_quantity - lmtd_quantity) / lmtd_quantity * 100)::numeric, 2)
+          WHEN COALESCE(l.lmtd_quantity, 0) > 0
+          THEN ((COALESCE(m.mtd_quantity, 0) - COALESCE(l.lmtd_quantity, 0)) / l.lmtd_quantity * 100)
+          WHEN COALESCE(m.mtd_quantity, 0) > 0 THEN 100
+          ELSE 0
         END as "quantityVariancePercent"
-      FROM combined_sales
-      ORDER BY mtd_amount DESC
-      LIMIT $${paramIndex} OFFSET $${paramIndex + 1}
+      FROM mtd_data m
+      FULL OUTER JOIN lmtd_data l
+        ON m.trx_usercode = l.trx_usercode
+        AND m.customer_code = l.customer_code
+        AND m.line_itemcode = l.line_itemcode
+      WHERE COALESCE(m.mtd_revenue, 0) > 0 OR COALESCE(l.lmtd_revenue, 0) > 0
+      ORDER BY COALESCE(m.mtd_revenue, 0) DESC
+      LIMIT ${limit}
     `
 
-    // Optimized summary query - single table scan
+    // OPTIMIZED summary query with separate CTEs for MTD and LMTD
     const summaryQueryText = `
+      WITH mtd_summary AS (
+        SELECT
+          SUM(ABS(COALESCE(line_quantitybu, 0))) as quantity,
+          SUM(CASE WHEN trx_totalamount > 0 THEN trx_totalamount ELSE 0 END) as revenue,
+          COUNT(DISTINCT customer_code) as stores,
+          COUNT(DISTINCT line_itemcode) as products,
+          COUNT(DISTINCT trx_usercode) as users,
+          COUNT(DISTINCT route_salesmancode) as team_leaders
+        FROM ${SALES_TABLE}
+        WHERE DATE(trx_trxdate) BETWEEN $1::date AND $2::date
+          AND trx_trxtype = 1
+          ${whereClause}
+      ),
+      lmtd_summary AS (
+        SELECT
+          SUM(ABS(COALESCE(line_quantitybu, 0))) as quantity,
+          SUM(CASE WHEN trx_totalamount > 0 THEN trx_totalamount ELSE 0 END) as revenue,
+          COUNT(DISTINCT customer_code) as stores,
+          COUNT(DISTINCT line_itemcode) as products,
+          COUNT(DISTINCT trx_usercode) as users,
+          COUNT(DISTINCT route_salesmancode) as team_leaders
+        FROM ${SALES_TABLE}
+        WHERE DATE(trx_trxdate) BETWEEN $3::date AND $4::date
+          AND trx_trxtype = 1
+          ${whereClause}
+      )
       SELECT
-        SUM(CASE
-          WHEN trx_trxdate::date >= $1::date AND trx_trxdate::date <= $2::date
-          THEN ABS(COALESCE(line_quantitybu, 0))
-          ELSE 0
-        END) as total_mtd_quantity,
-        SUM(CASE
-          WHEN trx_trxdate::date >= $1::date AND trx_trxdate::date <= $2::date AND trx_totalamount > 0
-          THEN trx_totalamount
-          ELSE 0
-        END) as total_mtd_revenue,
-        SUM(CASE
-          WHEN trx_trxdate::date >= $3::date AND trx_trxdate::date <= $4::date
-          THEN ABS(COALESCE(line_quantitybu, 0))
-          ELSE 0
-        END) as total_lmtd_quantity,
-        SUM(CASE
-          WHEN trx_trxdate::date >= $3::date AND trx_trxdate::date <= $4::date AND trx_totalamount > 0
-          THEN trx_totalamount
-          ELSE 0
-        END) as total_lmtd_revenue,
-        COUNT(DISTINCT customer_code) as unique_stores,
-        COUNT(DISTINCT line_itemcode) as unique_products,
-        COUNT(DISTINCT trx_usercode) as unique_users,
-        COUNT(DISTINCT route_salesmancode) as unique_team_leaders
-      FROM ${SALES_TABLE}
-      WHERE ((trx_trxdate::date >= $1::date AND trx_trxdate::date <= $2::date)
-         OR (trx_trxdate::date >= $3::date AND trx_trxdate::date <= $4::date))
-        AND trx_trxtype = 1
-        ${whereClause}
+        COALESCE(m.quantity, 0) as total_mtd_quantity,
+        COALESCE(m.revenue, 0) as total_mtd_revenue,
+        COALESCE(l.quantity, 0) as total_lmtd_quantity,
+        COALESCE(l.revenue, 0) as total_lmtd_revenue,
+        GREATEST(COALESCE(m.stores, 0), COALESCE(l.stores, 0)) as unique_stores,
+        GREATEST(COALESCE(m.products, 0), COALESCE(l.products, 0)) as unique_products,
+        GREATEST(COALESCE(m.users, 0), COALESCE(l.users, 0)) as unique_users,
+        GREATEST(COALESCE(m.team_leaders, 0), COALESCE(l.team_leaders, 0)) as unique_team_leaders
+      FROM mtd_summary m, lmtd_summary l
     `
 
-    // Optimized daily trend query - single table scan with conditional aggregation
+    // OPTIMIZED daily trend query with separate CTEs for MTD and LMTD
     const dailyTrendQueryText = `
+      WITH mtd_trend AS (
+        SELECT
+          EXTRACT(DAY FROM DATE(trx_trxdate))::int as day,
+          SUM(CASE WHEN trx_totalamount > 0 THEN trx_totalamount ELSE 0 END) as revenue
+        FROM ${SALES_TABLE}
+        WHERE DATE(trx_trxdate) BETWEEN $1::date AND $2::date
+          AND trx_trxtype = 1
+          ${whereClause}
+        GROUP BY EXTRACT(DAY FROM DATE(trx_trxdate))
+      ),
+      lmtd_trend AS (
+        SELECT
+          EXTRACT(DAY FROM DATE(trx_trxdate))::int as day,
+          SUM(CASE WHEN trx_totalamount > 0 THEN trx_totalamount ELSE 0 END) as revenue
+        FROM ${SALES_TABLE}
+        WHERE DATE(trx_trxdate) BETWEEN $3::date AND $4::date
+          AND trx_trxtype = 1
+          ${whereClause}
+        GROUP BY EXTRACT(DAY FROM DATE(trx_trxdate))
+      )
       SELECT
-        EXTRACT(DAY FROM trx_trxdate::date)::int as day,
-        SUM(CASE
-          WHEN trx_trxdate::date >= $1::date AND trx_trxdate::date <= $2::date AND trx_totalamount > 0
-          THEN trx_totalamount
-          ELSE 0
-        END) as mtd_revenue,
-        SUM(CASE
-          WHEN trx_trxdate::date >= $3::date AND trx_trxdate::date <= $4::date AND trx_totalamount > 0
-          THEN trx_totalamount
-          ELSE 0
-        END) as lmtd_revenue
-      FROM ${SALES_TABLE}
-      WHERE ((trx_trxdate::date >= $1::date AND trx_trxdate::date <= $2::date)
-         OR (trx_trxdate::date >= $3::date AND trx_trxdate::date <= $4::date))
-        AND trx_trxtype = 1
-        ${whereClause}
-      GROUP BY EXTRACT(DAY FROM trx_trxdate::date)
-      HAVING SUM(CASE
-          WHEN trx_trxdate::date >= $1::date AND trx_trxdate::date <= $2::date AND trx_totalamount > 0
-          THEN trx_totalamount ELSE 0 END) > 0
-         OR SUM(CASE
-          WHEN trx_trxdate::date >= $3::date AND trx_trxdate::date <= $4::date AND trx_totalamount > 0
-          THEN trx_totalamount ELSE 0 END) > 0
+        COALESCE(m.day, l.day) as day,
+        COALESCE(m.revenue, 0) as mtd_revenue,
+        COALESCE(l.revenue, 0) as lmtd_revenue
+      FROM mtd_trend m
+      FULL OUTER JOIN lmtd_trend l ON m.day = l.day
+      WHERE COALESCE(m.day, l.day) IS NOT NULL
       ORDER BY day
     `
 
-    // Optimized top products query - single table scan
+    // OPTIMIZED top products query - Get top 10 MTD products and their LMTD data
     const topProductsQueryText = `
+      WITH mtd_products AS (
+        SELECT
+          line_itemcode as product_code,
+          MAX(line_itemdescription) as product_name,
+          SUM(CASE WHEN trx_totalamount > 0 THEN trx_totalamount ELSE 0 END) as mtd_revenue
+        FROM ${SALES_TABLE}
+        WHERE DATE(trx_trxdate) BETWEEN $1::date AND $2::date
+          AND trx_trxtype = 1
+          AND line_itemcode IS NOT NULL
+          ${whereClause}
+        GROUP BY line_itemcode
+        ORDER BY mtd_revenue DESC
+        LIMIT 10
+      )
       SELECT
-        line_itemcode as product_code,
-        MAX(line_itemdescription) as product_name,
-        SUM(CASE
-          WHEN trx_trxdate::date >= $1::date AND trx_trxdate::date <= $2::date AND trx_totalamount > 0
-          THEN trx_totalamount
-          ELSE 0
-        END) as mtd_revenue,
-        SUM(CASE
-          WHEN trx_trxdate::date >= $3::date AND trx_trxdate::date <= $4::date AND trx_totalamount > 0
-          THEN trx_totalamount
-          ELSE 0
-        END) as lmtd_revenue
-      FROM ${SALES_TABLE}
-      WHERE ((trx_trxdate::date >= $1::date AND trx_trxdate::date <= $2::date)
-         OR (trx_trxdate::date >= $3::date AND trx_trxdate::date <= $4::date))
-        AND trx_trxtype = 1
-        AND line_itemcode IS NOT NULL
-        ${whereClause}
-      GROUP BY line_itemcode
-      HAVING SUM(CASE
-          WHEN trx_trxdate::date >= $1::date AND trx_trxdate::date <= $2::date AND trx_totalamount > 0
-          THEN trx_totalamount ELSE 0 END) > 0
-         OR SUM(CASE
-          WHEN trx_trxdate::date >= $3::date AND trx_trxdate::date <= $4::date AND trx_totalamount > 0
-          THEN trx_totalamount ELSE 0 END) > 0
-      ORDER BY mtd_revenue DESC
-      LIMIT 10
+        m.product_code,
+        m.product_name,
+        m.mtd_revenue,
+        COALESCE((
+          SELECT SUM(CASE WHEN trx_totalamount > 0 THEN trx_totalamount ELSE 0 END)
+          FROM ${SALES_TABLE}
+          WHERE line_itemcode = m.product_code
+            AND DATE(trx_trxdate) BETWEEN $3::date AND $4::date
+            AND trx_trxtype = 1
+            ${whereClause}
+        ), 0) as lmtd_revenue
+      FROM mtd_products m
+      ORDER BY m.mtd_revenue DESC
     `
 
-    // Execute queries
+    // Execute queries with timing - Both MTD and LMTD data
     const allParams = [mtdStart, mtdEnd, lmtdStart, lmtdEnd, ...filterParams]
 
+    console.log('LMTD Secondary - Starting optimized MTD vs LMTD queries...', {
+      timestamp: new Date().toISOString(),
+      limit,
+      filterCount: filterParams.length,
+      mtdPeriod: { start: mtdStart, end: mtdEnd },
+      lmtdPeriod: { start: lmtdStart, end: lmtdEnd }
+    })
+    const startTime = Date.now()
+
     const [dataResult, summaryResult, dailyTrendResult, topProductsResult] = await Promise.all([
-      query(mainQueryText, [...allParams, limit, offset]),
+      query(mainQueryText, allParams),
       query(summaryQueryText, allParams),
       query(dailyTrendQueryText, allParams),
       query(topProductsQueryText, allParams)
     ])
+
+    const queryTime = Date.now() - startTime
+    console.log('LMTD Secondary - Queries completed:', {
+      totalTime: `${queryTime}ms`,
+      totalTimeSeconds: `${(queryTime / 1000).toFixed(2)}s`,
+      timestamp: new Date().toISOString()
+    })
 
     // Parse results
     const detailedData = dataResult.rows.map(row => ({
