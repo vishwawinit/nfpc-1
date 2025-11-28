@@ -74,17 +74,15 @@ export function LMTDSecondaryReport() {
   const [userCode, setUserCode] = useState<string | null>(null)
   const [storeCode, setStoreCode] = useState<string | null>(null)
   const [chainName, setChainName] = useState<string | null>(null)
-  const [productCategory, setProductCategory] = useState<string | null>(null)
   const [productCode, setProductCode] = useState<string | null>(null)
   const [showFilters, setShowFilters] = useState(false)
-  
+
   // Filter options
   const [filterOptions, setFilterOptions] = useState<any>({
     teamLeaders: [],
     users: [],
     chains: [],
     stores: [],
-    categories: [],
     products: []
   })
   
@@ -104,7 +102,7 @@ export function LMTDSecondaryReport() {
   // Load data when filters change
   useEffect(() => {
     fetchData()
-  }, [startDate, endDate, teamLeaderCode, userCode, storeCode, chainName, productCategory, productCode])
+  }, [startDate, endDate, teamLeaderCode, userCode, storeCode, chainName, productCode])
 
   const fetchFilterOptions = async () => {
     try {
@@ -114,8 +112,7 @@ export function LMTDSecondaryReport() {
         ...(teamLeaderCode && { teamLeaderCode }),
         ...(userCode && { userCode }),
         ...(chainName && { chainName }),
-        ...(storeCode && { storeCode }),
-        ...(productCategory && { productCategory })
+        ...(storeCode && { storeCode })
       })
 
       const response = await fetch(`/api/lmtd-secondary/filters?${params}`)
@@ -138,7 +135,6 @@ export function LMTDSecondaryReport() {
         users: [],
         chains: [],
         stores: [],
-        categories: [],
         products: []
       })
     }
@@ -160,7 +156,6 @@ export function LMTDSecondaryReport() {
         ...(userCode && { userCode }),
         ...(storeCode && { storeCode }),
         ...(chainName && { chainName }),
-        ...(productCategory && { productCategory }),
         ...(productCode && { productCode }),
         limit: '999999' // Remove limit to get all data
       })
@@ -423,7 +418,6 @@ export function LMTDSecondaryReport() {
                 setUserCode(null)
                 setStoreCode(null)
                 setChainName(null)
-                setProductCategory(null)
                 setProductCode(null)
               }}
               className="text-xs font-medium text-slate-600 hover:text-slate-800"
@@ -477,14 +471,6 @@ export function LMTDSecondaryReport() {
               placeholder={`All Stores (Available: ${filterOptions.stores.length})`}
               icon={<Store className="w-4 h-4 text-gray-500" />}
               label="Store"
-            />
-            <SearchableSelect
-              value={productCategory}
-              onChange={setProductCategory}
-              options={filterOptions.categories}
-              placeholder={`All Categories (Available: ${filterOptions.categories.length})`}
-              icon={<Package className="w-4 h-4 text-gray-500" />}
-              label="Product Category"
             />
             <SearchableSelect
               value={productCode}
