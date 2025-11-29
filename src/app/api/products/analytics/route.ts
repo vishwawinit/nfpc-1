@@ -65,12 +65,21 @@ const getDateRangeFromString = (dateRange: string) => {
 
 export async function GET(request: NextRequest) {
   try {
+    console.log('📊 Products Analytics API - Starting request...')
     const { searchParams } = new URL(request.url)
     const dateRange = searchParams.get('range') || 'thisMonth'
     const customStartDate = searchParams.get('startDate')
     const customEndDate = searchParams.get('endDate')
-    const categoryFilter = searchParams.get('category')
+    const channelFilter = searchParams.get('channel')
     const productCodeFilter = searchParams.get('productCode')
+
+    console.log('📊 Products Analytics - Params:', {
+      dateRange,
+      customStartDate,
+      customEndDate,
+      channelFilter,
+      productCodeFilter
+    })
 
     // Get date range
     let startDate: string, endDate: string
@@ -88,21 +97,21 @@ export async function GET(request: NextRequest) {
     const params: any[] = []
     let paramIndex = 1
 
-    // Date conditions
-    conditions.push(`trx_trxdate >= $${paramIndex}::timestamp`)
+    // Date conditions - optimized for index usage
+    conditions.push(`trx_trxdate >= $${paramIndex}::date`)
     params.push(startDate)
     paramIndex++
-    conditions.push(`trx_trxdate < ($${paramIndex}::timestamp + INTERVAL '1 day')`)
+    conditions.push(`trx_trxdate <= $${paramIndex}::date`)
     params.push(endDate)
     paramIndex++
 
     // Only include invoices/sales (TrxType = 1)
     conditions.push(`trx_trxtype = 1`)
 
-    // Category filter
-    if (categoryFilter) {
-      conditions.push(`item_grouplevel1 = $${paramIndex}`)
-      params.push(categoryFilter)
+    // Channel filter
+    if (channelFilter) {
+      conditions.push(`customer_channel_description = $${paramIndex}`)
+      params.push(channelFilter)
       paramIndex++
     }
 
@@ -119,44 +128,99 @@ export async function GET(request: NextRequest) {
 
     const whereClause = `WHERE ${conditions.join(' AND ')}`
 
-    // Get product summary data
-    const productSummaryQuery = `
+    // OPTIMIZED QUERIES - Simpler aggregation without CTE for better performance
+    const kpiQuery = `
       SELECT
-        line_itemcode as product_code,
-        MAX(line_itemdescription) as product_name,
-        COALESCE(MAX(item_grouplevel1), 'Uncategorized') as category,
-        COALESCE(MAX(item_brand_description), 'No Brand') as brand,
-        COALESCE(MAX(line_uom), 'PCS') as base_uom,
-        SUM(CASE WHEN trx_totalamount > 0 THEN trx_totalamount ELSE 0 END) as total_sales,
-        SUM(ABS(COALESCE(line_quantitybu, 0))) as total_quantity,
+        COALESCE(SUM(CASE WHEN trx_totalamount > 0 THEN trx_totalamount ELSE 0 END), 0) as total_revenue,
         COUNT(DISTINCT trx_trxcode) as total_orders,
-        CASE WHEN SUM(ABS(COALESCE(line_quantitybu, 0))) > 0
-             THEN SUM(CASE WHEN trx_totalamount > 0 THEN trx_totalamount ELSE 0 END) / SUM(ABS(COALESCE(line_quantitybu, 0)))
-             ELSE 0 END as avg_price,
-        CASE
-          WHEN SUM(ABS(COALESCE(line_quantitybu, 0))) > 1000 THEN 'Fast'
-          WHEN SUM(ABS(COALESCE(line_quantitybu, 0))) > 100 THEN 'Medium'
-          WHEN SUM(ABS(COALESCE(line_quantitybu, 0))) > 0 THEN 'Slow'
-          ELSE 'No Sales'
-        END as movement_status,
+        COALESCE(SUM(ABS(COALESCE(line_quantitybu, 0))), 0) as total_quantity,
+        COUNT(DISTINCT customer_code) as unique_customers,
+        COUNT(DISTINCT line_itemcode) as unique_products,
         COALESCE(MAX(trx_currencycode), 'AED') as currency_code
       FROM ${SALES_TABLE}
       ${whereClause}
-      GROUP BY line_itemcode
-      ORDER BY SUM(CASE WHEN trx_totalamount > 0 THEN trx_totalamount ELSE 0 END) DESC
     `
 
-    const productResult = await query(productSummaryQuery, params)
-    const products = productResult.rows
+    // Only fetch top 50 products for summary - much faster
+    // Removed - we don't need product details for the summary tab anymore
+    const productSummaryQuery = null
 
-    // Calculate overall metrics
-    const totalProducts = products.length
-    const activeProducts = products.length
-    const totalSales = products.reduce((sum, p) => sum + parseFloat(p.total_sales || '0'), 0)
-    const totalQuantity = products.reduce((sum, p) => sum + parseFloat(p.total_quantity || '0'), 0)
-    const fastMoving = products.filter(p => p.movement_status === 'Fast').length
-    const slowMoving = products.filter(p => p.movement_status === 'Slow').length
-    const noSales = products.filter(p => p.movement_status === 'No Sales').length
+    // Channel analysis - Simple aggregation query
+    const channelQuery = `
+      SELECT
+        COALESCE(customer_channel_description, 'Unknown Channel') as channel,
+        COALESCE(SUM(CASE WHEN trx_totalamount > 0 THEN trx_totalamount ELSE 0 END), 0) as sales,
+        COUNT(DISTINCT line_itemcode) as products,
+        COALESCE(SUM(ABS(COALESCE(line_quantitybu, 0))), 0) as quantity
+      FROM ${SALES_TABLE}
+      ${whereClause}
+      GROUP BY customer_channel_description
+      ORDER BY sales DESC
+      LIMIT 10
+    `
+
+    // Brand distribution query using item_category_description
+    const brandDistributionQuery = `
+      SELECT
+        COALESCE(item_category_description, 'Unknown Brand') as brand,
+        COALESCE(SUM(CASE WHEN trx_totalamount > 0 THEN trx_totalamount ELSE 0 END), 0) as sales,
+        COUNT(DISTINCT line_itemcode) as products,
+        COALESCE(SUM(ABS(COALESCE(line_quantitybu, 0))), 0) as quantity
+      FROM ${SALES_TABLE}
+      ${whereClause}
+        AND item_category_description IS NOT NULL
+        AND item_category_description != ''
+      GROUP BY item_category_description
+      ORDER BY sales DESC
+      LIMIT 15
+    `
+
+    // Execute all queries in parallel for speed
+    console.log('📊 Products Analytics - Executing queries in parallel...')
+    const queryStart = Date.now()
+
+    const [kpiResult, channelResult, brandResult] = await Promise.all([
+      query(kpiQuery, params),
+      query(channelQuery, params),
+      query(brandDistributionQuery, params)
+    ])
+
+    const queryDuration = Date.now() - queryStart
+    console.log(`📊 Products Analytics - Queries completed in ${queryDuration}ms`)
+
+    const kpiData = kpiResult.rows[0] || {}
+    const salesByChannel = channelResult.rows.map((row: any) => ({
+      channel: row.channel,
+      sales: parseFloat(row.sales || '0'),
+      products: parseInt(row.products || '0'),
+      quantity: parseFloat(row.quantity || '0')
+    }))
+
+    // Brand distribution data
+    const brandDistribution = brandResult.rows.map((row: any) => ({
+      brand: row.brand,
+      sales: parseFloat(row.sales || '0'),
+      products: parseInt(row.products || '0'),
+      quantity: parseFloat(row.quantity || '0')
+    }))
+
+    console.log(`📊 Products Analytics - Found ${brandDistribution.length} brands`)
+
+    // Calculate overall metrics from KPI query
+    const totalRevenue = parseFloat(kpiData.total_revenue || '0')
+    const totalOrders = parseInt(kpiData.total_orders || '0')
+    const totalQuantity = parseFloat(kpiData.total_quantity || '0')
+    const uniqueCustomers = parseInt(kpiData.unique_customers || '0')
+    const uniqueProducts = parseInt(kpiData.unique_products || '0')
+    const avgOrderValue = totalOrders > 0 ? totalRevenue / totalOrders : 0
+
+    // Product-level metrics from KPI query
+    const totalProducts = uniqueProducts
+    const activeProducts = uniqueProducts
+    const totalSales = totalRevenue
+    const fastMoving = 0 // Placeholder - would need separate query
+    const slowMoving = 0 // Placeholder - would need separate query
+    const noSales = 0 // Placeholder - would need separate query
 
     // Helper function to check if value is valid
     const isValidValue = (value: string | null | undefined): boolean => {
@@ -170,73 +234,39 @@ export async function GET(request: NextRequest) {
              normalized !== 'uncategorized'
     }
 
-    // Brand/Category analysis
-    const categoryData = products.reduce((acc: any, product) => {
-      const category = product.category
-      if (!isValidValue(category)) return acc
+    // Brand distribution with percentages (using item_category_description)
+    const brandSalesDistribution = brandDistribution.map(brand => ({
+      brand: brand.brand,
+      sales: brand.sales,
+      products: brand.products,
+      quantity: brand.quantity,
+      percentage: totalSales > 0 ? (brand.sales / totalSales * 100) : 0
+    }))
 
-      if (!acc[category]) {
-        acc[category] = {
-          products: 0,
-          sales: 0,
-          quantity: 0
-        }
-      }
-      acc[category].products++
-      acc[category].sales += parseFloat(product.total_sales || '0')
-      acc[category].quantity += parseFloat(product.total_quantity || '0')
-      return acc
-    }, {})
-
-    const salesByBrand = Object.entries(categoryData)
-      .map(([brand, data]: [string, any]) => ({
-        brand,
-        sales: data.sales,
-        products: data.products,
-        quantity: data.quantity
-      }))
-      .sort((a, b) => b.sales - a.sales)
-      .slice(0, 10)
-
-    const categorySalesDistribution = Object.entries(categoryData)
-      .map(([category, data]: [string, any]) => ({
-        category,
-        sales: data.sales,
-        products: data.products,
-        quantity: data.quantity,
-        percentage: totalSales > 0 ? (data.sales / totalSales * 100) : 0
-      }))
-      .sort((a, b) => b.sales - a.sales)
-
-    // Top products
-    const topProducts = products
-      .filter(p => parseFloat(p.total_sales || '0') > 0)
-      .slice(0, 20)
-      .map(product => ({
-        productCode: product.product_code,
-        productName: product.product_name || 'N/A',
-        category: isValidValue(product.category) ? product.category : 'Uncategorized',
-        brand: isValidValue(product.brand) ? product.brand : 'No Brand',
-        sales: parseFloat(product.total_sales || '0'),
-        quantity: parseFloat(product.total_quantity || '0'),
-        avgPrice: parseFloat(product.avg_price || '0'),
-        movementStatus: product.movement_status,
-        currencyCode: product.currency_code || 'AED'
-      }))
+    // Top products - empty array for now (not needed on summary tab)
+    const topProducts: any[] = []
 
     const data = {
       metrics: {
+        // Comprehensive KPIs
+        totalRevenue,
+        totalOrders,
+        totalQuantity,
+        uniqueCustomers,
+        uniqueProducts,
+        avgOrderValue,
+
+        // Product-specific metrics
         totalProducts,
         activeProducts,
         totalSales,
-        totalQuantity,
         fastMoving,
         slowMoving,
         noSales,
-        currencyCode: 'AED'
+        currencyCode: kpiData.currency_code || 'AED'
       },
-      salesByBrand,
-      categorySalesDistribution,
+      salesByChannel,
+      brandSalesDistribution,
       topProducts
     }
 

@@ -121,9 +121,9 @@ export async function GET(request: NextRequest) {
       filterConditionsCount: filterConditions.length
     })
 
-    // ULTRA-OPTIMIZED main query with timestamp ranges (works with indexes)
+    // HYPER-OPTIMIZED main query with materialized CTEs for better performance
     const mainQueryText = `
-      WITH mtd_data AS (
+      WITH mtd_data AS MATERIALIZED (
         SELECT
           trx_usercode,
           customer_code,
@@ -135,13 +135,13 @@ export async function GET(request: NextRequest) {
           SUM(ABS(COALESCE(line_quantitybu, 0))) as mtd_quantity,
           SUM(CASE WHEN trx_totalamount > 0 THEN trx_totalamount ELSE 0 END) as mtd_revenue
         FROM ${SALES_TABLE}
-        WHERE trx_trxdate >= $1::timestamp
-          AND trx_trxdate < ($2::timestamp + INTERVAL '1 day')
+        WHERE trx_trxdate >= $1::date
+          AND trx_trxdate <= $2::date
           AND trx_trxtype = 1
           ${whereClause}
         GROUP BY trx_usercode, customer_code, line_itemcode
       ),
-      lmtd_data AS (
+      lmtd_data AS MATERIALIZED (
         SELECT
           trx_usercode,
           customer_code,
@@ -149,8 +149,8 @@ export async function GET(request: NextRequest) {
           SUM(ABS(COALESCE(line_quantitybu, 0))) as lmtd_quantity,
           SUM(CASE WHEN trx_totalamount > 0 THEN trx_totalamount ELSE 0 END) as lmtd_revenue
         FROM ${SALES_TABLE}
-        WHERE trx_trxdate >= $3::timestamp
-          AND trx_trxdate < ($4::timestamp + INTERVAL '1 day')
+        WHERE trx_trxdate >= $3::date
+          AND trx_trxdate <= $4::date
           AND trx_trxtype = 1
           ${whereClause}
         GROUP BY trx_usercode, customer_code, line_itemcode
@@ -194,9 +194,9 @@ export async function GET(request: NextRequest) {
       LIMIT ${limit}
     `
 
-    // ULTRA-OPTIMIZED summary query with timestamp ranges (works with indexes)
+    // HYPER-OPTIMIZED summary query with materialized CTEs
     const summaryQueryText = `
-      WITH mtd_summary AS (
+      WITH mtd_summary AS MATERIALIZED (
         SELECT
           SUM(ABS(COALESCE(line_quantitybu, 0))) as quantity,
           SUM(CASE WHEN trx_totalamount > 0 THEN trx_totalamount ELSE 0 END) as revenue,
@@ -205,12 +205,12 @@ export async function GET(request: NextRequest) {
           COUNT(DISTINCT trx_usercode) as users,
           COUNT(DISTINCT route_salesmancode) as team_leaders
         FROM ${SALES_TABLE}
-        WHERE trx_trxdate >= $1::timestamp
-          AND trx_trxdate < ($2::timestamp + INTERVAL '1 day')
+        WHERE trx_trxdate >= $1::date
+          AND trx_trxdate <= $2::date
           AND trx_trxtype = 1
           ${whereClause}
       ),
-      lmtd_summary AS (
+      lmtd_summary AS MATERIALIZED (
         SELECT
           SUM(ABS(COALESCE(line_quantitybu, 0))) as quantity,
           SUM(CASE WHEN trx_totalamount > 0 THEN trx_totalamount ELSE 0 END) as revenue,
@@ -219,8 +219,8 @@ export async function GET(request: NextRequest) {
           COUNT(DISTINCT trx_usercode) as users,
           COUNT(DISTINCT route_salesmancode) as team_leaders
         FROM ${SALES_TABLE}
-        WHERE trx_trxdate >= $3::timestamp
-          AND trx_trxdate < ($4::timestamp + INTERVAL '1 day')
+        WHERE trx_trxdate >= $3::date
+          AND trx_trxdate <= $4::date
           AND trx_trxtype = 1
           ${whereClause}
       )
@@ -236,26 +236,26 @@ export async function GET(request: NextRequest) {
       FROM mtd_summary m, lmtd_summary l
     `
 
-    // ULTRA-OPTIMIZED daily trend query with timestamp ranges (works with indexes)
+    // HYPER-OPTIMIZED daily trend query with materialized CTEs
     const dailyTrendQueryText = `
-      WITH mtd_trend AS (
+      WITH mtd_trend AS MATERIALIZED (
         SELECT
           EXTRACT(DAY FROM trx_trxdate)::int as day,
           SUM(CASE WHEN trx_totalamount > 0 THEN trx_totalamount ELSE 0 END) as revenue
         FROM ${SALES_TABLE}
-        WHERE trx_trxdate >= $1::timestamp
-          AND trx_trxdate < ($2::timestamp + INTERVAL '1 day')
+        WHERE trx_trxdate >= $1::date
+          AND trx_trxdate <= $2::date
           AND trx_trxtype = 1
           ${whereClause}
         GROUP BY EXTRACT(DAY FROM trx_trxdate)
       ),
-      lmtd_trend AS (
+      lmtd_trend AS MATERIALIZED (
         SELECT
           EXTRACT(DAY FROM trx_trxdate)::int as day,
           SUM(CASE WHEN trx_totalamount > 0 THEN trx_totalamount ELSE 0 END) as revenue
         FROM ${SALES_TABLE}
-        WHERE trx_trxdate >= $3::timestamp
-          AND trx_trxdate < ($4::timestamp + INTERVAL '1 day')
+        WHERE trx_trxdate >= $3::date
+          AND trx_trxdate <= $4::date
           AND trx_trxtype = 1
           ${whereClause}
         GROUP BY EXTRACT(DAY FROM trx_trxdate)
@@ -270,37 +270,42 @@ export async function GET(request: NextRequest) {
       ORDER BY day
     `
 
-    // ULTRA-OPTIMIZED top products query with timestamp ranges (works with indexes)
+    // HYPER-OPTIMIZED top products query with materialized CTEs
     const topProductsQueryText = `
-      WITH mtd_products AS (
+      WITH mtd_products AS MATERIALIZED (
         SELECT
           line_itemcode as product_code,
           MAX(line_itemdescription) as product_name,
           SUM(CASE WHEN trx_totalamount > 0 THEN trx_totalamount ELSE 0 END) as mtd_revenue
         FROM ${SALES_TABLE}
-        WHERE trx_trxdate >= $1::timestamp
-          AND trx_trxdate < ($2::timestamp + INTERVAL '1 day')
+        WHERE trx_trxdate >= $1::date
+          AND trx_trxdate <= $2::date
           AND trx_trxtype = 1
           AND line_itemcode IS NOT NULL
           ${whereClause}
         GROUP BY line_itemcode
         ORDER BY mtd_revenue DESC
         LIMIT 10
+      ),
+      lmtd_products AS MATERIALIZED (
+        SELECT
+          line_itemcode as product_code,
+          SUM(CASE WHEN trx_totalamount > 0 THEN trx_totalamount ELSE 0 END) as lmtd_revenue
+        FROM ${SALES_TABLE}
+        WHERE trx_trxdate >= $3::date
+          AND trx_trxdate <= $4::date
+          AND trx_trxtype = 1
+          AND line_itemcode IN (SELECT product_code FROM mtd_products)
+          ${whereClause}
+        GROUP BY line_itemcode
       )
       SELECT
         m.product_code,
         m.product_name,
         m.mtd_revenue,
-        COALESCE((
-          SELECT SUM(CASE WHEN trx_totalamount > 0 THEN trx_totalamount ELSE 0 END)
-          FROM ${SALES_TABLE}
-          WHERE line_itemcode = m.product_code
-            AND trx_trxdate >= $3::timestamp
-            AND trx_trxdate < ($4::timestamp + INTERVAL '1 day')
-            AND trx_trxtype = 1
-            ${whereClause}
-        ), 0) as lmtd_revenue
+        COALESCE(l.lmtd_revenue, 0) as lmtd_revenue
       FROM mtd_products m
+      LEFT JOIN lmtd_products l ON m.product_code = l.product_code
       ORDER BY m.mtd_revenue DESC
     `
 

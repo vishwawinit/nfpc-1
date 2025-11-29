@@ -71,7 +71,7 @@ export async function GET(request: NextRequest) {
     const dateRange = searchParams.get('range') || 'thisMonth'
     const customStartDate = searchParams.get('startDate')
     const customEndDate = searchParams.get('endDate')
-    const categoryFilter = searchParams.get('category')
+    const channelFilter = searchParams.get('channel')
     const productCodeFilter = searchParams.get('productCode')
     const page = parseInt(searchParams.get('page') || '1')
     const limit = parseInt(searchParams.get('limit') || '25')
@@ -94,21 +94,21 @@ export async function GET(request: NextRequest) {
     const params: any[] = []
     let paramIndex = 1
 
-    // Date conditions
-    conditions.push(`trx_trxdate >= $${paramIndex}::timestamp`)
+    // Date conditions - optimized for index usage
+    conditions.push(`trx_trxdate >= $${paramIndex}::date`)
     params.push(startDate)
     paramIndex++
-    conditions.push(`trx_trxdate < ($${paramIndex}::timestamp + INTERVAL '1 day')`)
+    conditions.push(`trx_trxdate <= $${paramIndex}::date`)
     params.push(endDate)
     paramIndex++
 
     // Only include invoices/sales (TrxType = 1)
     conditions.push(`trx_trxtype = 1`)
 
-    // Category filter
-    if (categoryFilter) {
-      conditions.push(`item_grouplevel1 = $${paramIndex}`)
-      params.push(categoryFilter)
+    // Channel filter
+    if (channelFilter) {
+      conditions.push(`customer_channel_description = $${paramIndex}`)
+      params.push(channelFilter)
       paramIndex++
     }
 
@@ -139,9 +139,9 @@ export async function GET(request: NextRequest) {
     // Calculate offset for pagination
     const offset = (page - 1) * limit
 
-    // Get product details
+    // Get product details - OPTIMIZED with materialized CTE
     const productDetailsQuery = `
-      WITH product_aggregates AS (
+      WITH product_aggregates AS MATERIALIZED (
         SELECT
           line_itemcode as product_code,
           MAX(line_itemdescription) as product_name,
@@ -164,7 +164,7 @@ export async function GET(request: NextRequest) {
             WHEN SUM(ABS(COALESCE(line_quantitybu, 0))) > 0 THEN 'Slow'
             ELSE 'No Sales'
           END as movement_status,
-          BOOL_OR(COALESCE(item_isactive, false)) as is_active,
+          true as is_active,
           false as is_delist,
           COALESCE(MAX(trx_currencycode), 'AED') as currency_code
         FROM ${SALES_TABLE}

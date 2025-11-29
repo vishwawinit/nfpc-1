@@ -10,7 +10,7 @@ import { Badge } from '@/components/ui/badge'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Input } from '@/components/ui/input'
 import { SearchableSelect } from '@/components/ui/SearchableSelect'
-import { Package, TrendingUp, TrendingDown, DollarSign, RefreshCw, ChevronDown, Download, X, Search, Filter, AlertTriangle, BarChart3 } from 'lucide-react'
+import { Package, TrendingUp, TrendingDown, DollarSign, RefreshCw, ChevronDown, Download, X, Search, Filter, AlertTriangle, BarChart3, Users } from 'lucide-react'
 import ExcelJS from 'exceljs'
 import { formatCurrency, formatNumber, formatPercentage } from '@/lib/utils'
 import { CustomDatePicker } from '@/components/ui/CustomDatePicker'
@@ -20,25 +20,33 @@ const CHART_COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#A28DFF', '#F
 
 // --- Interfaces ---
 interface ProductMetric {
+  // Comprehensive KPIs
+  totalRevenue: number
+  totalOrders: number
+  totalQuantity: number
+  uniqueCustomers: number
+  uniqueProducts: number
+  avgOrderValue: number
+
+  // Product-specific metrics
   totalProducts: number
   activeProducts: number
   totalSales: number
-  totalQuantity: number
   fastMoving: number
   slowMoving: number
   noSales: number
   currencyCode: string
 }
 
-interface SalesByBrand {
-  brand: string
+interface SalesByChannel {
+  channel: string
   sales: number
   products: number
   quantity: number
 }
 
-interface CategorySalesDistribution {
-  category: string
+interface BrandSalesDistribution {
+  brand: string
   sales: number
   products: number
   quantity: number
@@ -59,8 +67,8 @@ interface TopProduct {
 
 interface ProductAnalyticsData {
   metrics: ProductMetric
-  salesByBrand: SalesByBrand[]
-  categorySalesDistribution: CategorySalesDistribution[]
+  salesByChannel: SalesByChannel[]
+  brandSalesDistribution: BrandSalesDistribution[]
   topProducts: TopProduct[]
 }
 
@@ -86,9 +94,7 @@ interface DetailedProduct {
 }
 
 interface FilterOptions {
-  categories: Array<{ code: string; name: string }>
-  brands: Array<{ code: string; name: string }>
-  subcategories: Array<{ code: string; name: string }>
+  channels: Array<{ code: string; name: string }>
   products?: Array<{ code: string; name: string }>
 }
 
@@ -97,14 +103,15 @@ export function ProductsReport() {
   const [activeTab, setActiveTab] = useState('summary')
   const [analytics, setAnalytics] = useState<ProductAnalyticsData | null>(null)
   const [filterOptions, setFilterOptions] = useState<FilterOptions | null>(null)
-  const [loading, setLoading] = useState(true)
+  const [analyticsLoading, setAnalyticsLoading] = useState(true)
+  const [detailsLoading, setDetailsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [isExpanded, setIsExpanded] = useState(true)
 
   // Filters state
   const [filters, setFilters] = useState({
     dateRange: 'thisMonth',
-    category: 'all',
+    channel: 'all',
     searchTerm: 'all'
   })
 
@@ -120,18 +127,19 @@ export function ProductsReport() {
   const [detailedProducts, setDetailedProducts] = useState<DetailedProduct[]>([])
   const [currentPage, setCurrentPage] = useState(1)
   const [totalProducts, setTotalProducts] = useState(0)
+  const [pageSize, setPageSize] = useState(25)
   const [sortBy, setSortBy] = useState('total_sales')
   const [sortOrder, setSortOrder] = useState<'ASC' | 'DESC'>('DESC')
 
   // Fetch analytics data
   const fetchAnalytics = async () => {
     try {
-      setLoading(true)
+      setAnalyticsLoading(true)
       const params = new URLSearchParams({
         range: appliedFilters.dateRange,
         ...(appliedCustomDates.start && { startDate: appliedCustomDates.start }),
         ...(appliedCustomDates.end && { endDate: appliedCustomDates.end }),
-        ...(appliedFilters.category !== 'all' && { category: appliedFilters.category }),
+        ...(appliedFilters.channel !== 'all' && { channel: appliedFilters.channel }),
         ...(appliedFilters.searchTerm !== 'all' && { productCode: appliedFilters.searchTerm }),
       })
 
@@ -148,14 +156,22 @@ export function ProductsReport() {
       setError('Failed to fetch analytics')
       console.error('Error fetching analytics:', err)
     } finally {
-      setLoading(false)
+      setAnalyticsLoading(false)
     }
   }
 
   // Fetch filter options
   const fetchFilterOptions = async () => {
     try {
-      const response = await fetch(`/api/products/filters?range=${appliedFilters.dateRange}&includeProducts=true`)
+      const params = new URLSearchParams({
+        range: appliedFilters.dateRange,
+        includeProducts: 'true',
+        ...(appliedCustomDates.start && { startDate: appliedCustomDates.start }),
+        ...(appliedCustomDates.end && { endDate: appliedCustomDates.end }),
+        ...(appliedFilters.channel !== 'all' && { channel: appliedFilters.channel }),
+      })
+
+      const response = await fetch(`/api/products/filters?${params}`)
       const result = await response.json()
 
       if (result.success) {
@@ -169,16 +185,16 @@ export function ProductsReport() {
   // Fetch detailed products
   const fetchDetailedProducts = async () => {
     try {
-      setLoading(true)
+      setDetailsLoading(true)
       const params = new URLSearchParams({
         range: appliedFilters.dateRange,
         page: currentPage.toString(),
-        limit: '25',
+        limit: pageSize.toString(),
         sortBy,
         sortOrder,
         ...(appliedCustomDates.start && { startDate: appliedCustomDates.start }),
         ...(appliedCustomDates.end && { endDate: appliedCustomDates.end }),
-        ...(appliedFilters.category !== 'all' && { category: appliedFilters.category }),
+        ...(appliedFilters.channel !== 'all' && { channel: appliedFilters.channel }),
         ...(appliedFilters.searchTerm !== 'all' && { productCode: appliedFilters.searchTerm }),
       })
 
@@ -195,7 +211,7 @@ export function ProductsReport() {
       console.error('Error fetching detailed products:', err)
       setError('Failed to load product details')
     } finally {
-      setLoading(false)
+      setDetailsLoading(false)
     }
   }
 
@@ -208,7 +224,7 @@ export function ProductsReport() {
   const resetFilters = () => {
     const initialFilters = {
       dateRange: 'lastMonth',
-      category: 'all',
+      channel: 'all',
       searchTerm: 'all'
     }
     setFilters(initialFilters)
@@ -217,6 +233,7 @@ export function ProductsReport() {
     setAppliedFilters(initialFilters)
     setAppliedCustomDates({ start: '', end: '' })
     setCurrentPage(1)
+    setPageSize(25)
   }
 
   // Count active filters
@@ -227,13 +244,14 @@ export function ProductsReport() {
   useEffect(() => {
     fetchAnalytics()
     fetchFilterOptions()
-  }, [appliedFilters.dateRange, appliedFilters.category])
+  }, [appliedFilters.dateRange, appliedFilters.channel, appliedFilters.searchTerm, appliedCustomDates.start, appliedCustomDates.end])
 
   useEffect(() => {
+    // Only fetch detailed products when on detailed tab
     if (activeTab === 'detailed') {
       fetchDetailedProducts()
     }
-  }, [activeTab, currentPage, sortBy, sortOrder, appliedFilters])
+  }, [activeTab, currentPage, pageSize, sortBy, sortOrder, appliedFilters.dateRange, appliedFilters.channel, appliedFilters.searchTerm, appliedCustomDates.start, appliedCustomDates.end])
 
   // Export to Excel
   const exportToExcel = async () => {
@@ -245,7 +263,7 @@ export function ProductsReport() {
         sortOrder,
         ...(appliedCustomDates.start && { startDate: appliedCustomDates.start }),
         ...(appliedCustomDates.end && { endDate: appliedCustomDates.end }),
-        ...(appliedFilters.category !== 'all' && { category: appliedFilters.category }),
+        ...(appliedFilters.channel !== 'all' && { channel: appliedFilters.channel }),
         ...(appliedFilters.searchTerm !== 'all' && { productCode: appliedFilters.searchTerm }),
       })
 
@@ -259,23 +277,17 @@ export function ProductsReport() {
       worksheet.columns = [
         { header: 'Product Code', key: 'productCode', width: 15 },
         { header: 'Product Name', key: 'productName', width: 40 },
-        { header: 'Product Group', key: 'category', width: 20 },
-        { header: 'UOM', key: 'baseUom', width: 10 },
-        { header: 'Sales Amount', key: 'totalSales', width: 15 },
-        { header: 'Qty Sold', key: 'totalQuantity', width: 12 },
-        { header: 'Avg Price', key: 'avgPrice', width: 12 },
-        { header: 'Image URL', key: 'imageUrl', width: 50 },
+        { header: 'Quantity', key: 'totalQuantity', width: 15 },
+        { header: 'Avg Price', key: 'avgPrice', width: 15 },
+        { header: 'Total Amount', key: 'totalSales', width: 18 },
       ]
 
       worksheet.addRows(allProducts.map((p: DetailedProduct) => ({
         productCode: p.productCode,
         productName: p.productName,
-        category: p.category,
-        baseUom: p.baseUom,
-        totalSales: parseFloat(p.totalSales.toFixed(2)),
         totalQuantity: p.totalQuantity,
         avgPrice: parseFloat(p.avgPrice.toFixed(2)),
-        imageUrl: p.imageUrl,
+        totalSales: parseFloat(p.totalSales.toFixed(2)),
       })))
 
       const buffer = await workbook.xlsx.writeBuffer()
@@ -314,11 +326,11 @@ export function ProductsReport() {
       case 'Fast':
         return <Badge className="bg-green-500 text-white">Fast Moving</Badge>
       case 'Medium':
-        return <Badge variant="secondary">Medium</Badge>
+        return <Badge variant="secondary">Medium Velocity</Badge>
       case 'Slow':
-        return <Badge className="bg-orange-500 text-white">Slow Moving</Badge>
+        return <Badge className="bg-orange-500 text-white">Low Velocity</Badge>
       case 'No Sales':
-        return <Badge variant="destructive">No Sales</Badge>
+        return <Badge variant="destructive">Inactive</Badge>
       default:
         return <Badge variant="outline">{status}</Badge>
     }
@@ -331,7 +343,7 @@ export function ProductsReport() {
     return `AED${value}`
   }
 
-  const totalPages = Math.ceil(totalProducts / 25)
+  const totalPages = Math.ceil(totalProducts / pageSize)
   const metrics = analytics?.metrics
 
   return (
@@ -345,8 +357,8 @@ export function ProductsReport() {
           </p>
         </div>
         <div className="flex items-center gap-3">
-          <Button variant="outline" onClick={fetchAnalytics} disabled={loading}>
-            <RefreshCw className={`h-4 w-4 mr-2 ${loading ? 'animate-spin' : ''}`} />
+          <Button variant="outline" onClick={fetchAnalytics} disabled={analyticsLoading}>
+            <RefreshCw className={`h-4 w-4 mr-2 ${analyticsLoading ? 'animate-spin' : ''}`} />
             Refresh
           </Button>
         </div>
@@ -439,18 +451,18 @@ export function ProductsReport() {
 
             {/* Main Filters */}
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {/* Product Group Filter */}
+              {/* Channel Filter */}
               <SearchableSelect
-                value={filters.category === 'all' ? '' : filters.category}
-                onChange={(value) => setFilters({ ...filters, category: value || 'all' })}
+                value={filters.channel === 'all' ? '' : filters.channel}
+                onChange={(value) => setFilters({ ...filters, channel: value || 'all' })}
                 options={[
-                  ...(filterOptions?.categories || []).map(c => ({
+                  ...(filterOptions?.channels || []).map(c => ({
                     value: c.code,
                     label: c.name
                   }))
                 ]}
-                placeholder="All Product Groups"
-                label="Product Group"
+                placeholder="All Channels"
+                label="Channel"
               />
 
               {/* Product Search Filter */}
@@ -532,7 +544,7 @@ export function ProductsReport() {
       <Tabs value={activeTab} onValueChange={setActiveTab}>
         {/* Summary Tab */}
         <TabsContent value="summary" className="mt-0 space-y-6">
-          {/* KPI Cards */}
+          {/* Product-Specific KPIs */}
           <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
             <Card>
               <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
@@ -540,22 +552,9 @@ export function ProductsReport() {
                 <Package className="h-4 w-4 text-blue-500" />
               </CardHeader>
               <CardContent>
-                <div className="text-2xl font-bold">{loading ? '...' : formatNumber(metrics?.totalProducts || 0)}</div>
+                <div className="text-2xl font-bold">{analyticsLoading ? '...' : formatNumber(metrics?.totalProducts || 0)}</div>
                 <p className="text-xs text-muted-foreground mt-1">
                   {formatNumber(metrics?.activeProducts || 0)} active
-                </p>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <CardTitle className="text-sm font-medium">Total Sales</CardTitle>
-                <DollarSign className="h-4 w-4 text-green-500" />
-              </CardHeader>
-              <CardContent>
-                <div className="text-2xl font-bold">{loading ? '...' : formatCurrency(metrics?.totalSales || 0, 'INR')}</div>
-                <p className="text-xs text-muted-foreground mt-1">
-                  {formatNumber(metrics?.totalQuantity || 0)} units sold
                 </p>
               </CardContent>
             </Card>
@@ -566,7 +565,7 @@ export function ProductsReport() {
                 <TrendingUp className="h-4 w-4 text-green-500" />
               </CardHeader>
               <CardContent>
-                <div className="text-2xl font-bold text-green-600">{loading ? '...' : formatNumber(metrics?.fastMoving || 0)}</div>
+                <div className="text-2xl font-bold text-green-600">{analyticsLoading ? '...' : formatNumber(metrics?.fastMoving || 0)}</div>
                 <p className="text-xs text-muted-foreground mt-1">
                   High demand products
                 </p>
@@ -575,15 +574,28 @@ export function ProductsReport() {
 
             <Card>
               <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <CardTitle className="text-sm font-medium">Slow/No Sales</CardTitle>
-                <AlertTriangle className="h-4 w-4 text-orange-500" />
+                <CardTitle className="text-sm font-medium">Slow Moving Products</CardTitle>
+                <TrendingDown className="h-4 w-4 text-orange-500" />
               </CardHeader>
               <CardContent>
-                <div className="text-2xl font-bold text-orange-600">
-                  {loading ? '...' : formatNumber((metrics?.slowMoving || 0) + (metrics?.noSales || 0))}
+                <div className="text-2xl font-bold text-orange-600">{analyticsLoading ? '...' : formatNumber(metrics?.slowMoving || 0)}</div>
+                <p className="text-xs text-muted-foreground mt-1">
+                  Low sales velocity
+                </p>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                <CardTitle className="text-sm font-medium">Inactive Products</CardTitle>
+                <AlertTriangle className="h-4 w-4 text-red-500" />
+              </CardHeader>
+              <CardContent>
+                <div className="text-2xl font-bold text-red-600">
+                  {analyticsLoading ? '...' : formatNumber(metrics?.noSales || 0)}
                 </div>
                 <p className="text-xs text-muted-foreground mt-1">
-                  {formatNumber(metrics?.slowMoving || 0)} slow, {formatNumber(metrics?.noSales || 0)} no sales
+                  No recent sales
                 </p>
               </CardContent>
             </Card>
@@ -591,23 +603,23 @@ export function ProductsReport() {
 
           {/* Charts */}
           <div className="grid gap-6 lg:grid-cols-2">
-            {/* Sales by Product Group Bar Chart */}
+            {/* Sales by Channel Bar Chart */}
             <Card>
               <CardHeader>
-                <CardTitle>Top Product Groups by Sales</CardTitle>
+                <CardTitle>Products by Channel</CardTitle>
               </CardHeader>
               <CardContent>
-                {loading ? (
+                {analyticsLoading ? (
                   <div className="h-[300px] flex items-center justify-center text-gray-500">Loading...</div>
-                ) : analytics?.salesByBrand.length === 0 ? (
+                ) : analytics?.salesByChannel.length === 0 ? (
                   <div className="h-[300px] flex items-center justify-center text-gray-500">No data available</div>
                 ) : (
                   <ResponsiveContainer width="100%" height={300}>
-                    <BarChart data={analytics?.salesByBrand.slice(0, 10)}>
+                    <BarChart data={analytics?.salesByChannel.slice(0, 10)}>
                       <CartesianGrid strokeDasharray="3 3" />
-                      <XAxis dataKey="brand" angle={-45} textAnchor="end" height={100} />
+                      <XAxis dataKey="channel" angle={-45} textAnchor="end" height={100} />
                       <YAxis tickFormatter={formatYAxis} />
-                      <Tooltip formatter={(value: number) => formatCurrency(value, 'INR')} />
+                      <Tooltip formatter={(value: number) => formatCurrency(value, 'AED')} />
                       <Bar dataKey="sales" fill="#0088FE" name="Sales" />
                     </BarChart>
                   </ResponsiveContainer>
@@ -615,15 +627,15 @@ export function ProductsReport() {
               </CardContent>
             </Card>
 
-            {/* Product Group Distribution - Pie Chart & List Combined */}
+            {/* Product Brand Distribution - Pie Chart & List Combined */}
             <Card>
               <CardHeader>
-                <CardTitle>Product Group Distribution</CardTitle>
+                <CardTitle>Product Brand Distribution</CardTitle>
               </CardHeader>
               <CardContent>
-                {loading ? (
+                {analyticsLoading ? (
                   <div className="h-[300px] flex items-center justify-center text-gray-500">Loading...</div>
-                ) : analytics?.categorySalesDistribution.length === 0 ? (
+                ) : analytics?.brandSalesDistribution.length === 0 ? (
                   <div className="h-[300px] flex items-center justify-center text-gray-500">No data available</div>
                 ) : (
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -632,29 +644,29 @@ export function ProductsReport() {
                       <ResponsiveContainer width="100%" height={280}>
                         <PieChart>
                           <Pie
-                            data={analytics?.categorySalesDistribution.slice(0, 6)}
+                            data={analytics?.brandSalesDistribution.slice(0, 8)}
                             cx="50%"
                             cy="50%"
                             outerRadius={90}
                             fill="#8884d8"
                             dataKey="sales"
-                            nameKey="category"
-                            label={({ category, percentage }) => percentage > 5 ? `${formatPercentage(percentage)}` : ''}
+                            nameKey="brand"
+                            label={({ brand, percentage }) => percentage > 5 ? `${formatPercentage(percentage)}` : ''}
                           >
-                            {analytics?.categorySalesDistribution.slice(0, 6).map((entry, index) => (
+                            {analytics?.brandSalesDistribution.slice(0, 8).map((entry, index) => (
                               <Cell key={`cell-${index}`} fill={CHART_COLORS[index % CHART_COLORS.length]} />
                             ))}
                           </Pie>
-                          <Tooltip formatter={(value: number) => formatCurrency(value, 'INR')} />
+                          <Tooltip formatter={(value: number) => formatCurrency(value, 'AED')} />
                         </PieChart>
                       </ResponsiveContainer>
                     </div>
 
                     {/* List */}
                     <div className="space-y-2">
-                      {analytics?.categorySalesDistribution.slice(0, 6).map((category, index) => (
+                      {analytics?.brandSalesDistribution.slice(0, 8).map((brand, index) => (
                         <div
-                          key={category.category}
+                          key={brand.brand}
                           className="flex items-center justify-between p-2 border rounded hover:bg-gray-50 transition-colors"
                         >
                           <div className="flex items-center space-x-2">
@@ -663,18 +675,18 @@ export function ProductsReport() {
                               style={{ backgroundColor: CHART_COLORS[index % CHART_COLORS.length] }}
                             />
                             <div>
-                              <div className="font-medium text-sm text-gray-900">{category.category}</div>
+                              <div className="font-medium text-sm text-gray-900">{brand.brand}</div>
                               <div className="text-xs text-muted-foreground">
-                                {formatNumber(category.products)} products
+                                {formatNumber(brand.products)} products
                               </div>
                             </div>
                           </div>
                           <div className="text-right">
                             <div className="font-bold text-sm text-gray-900">
-                              {formatCurrency(category.sales, 'INR')}
+                              {formatCurrency(brand.sales, 'AED')}
                             </div>
                             <div className="text-xs text-muted-foreground">
-                              {formatPercentage(category.percentage)}
+                              {formatPercentage(brand.percentage)}
                             </div>
                           </div>
                         </div>
@@ -692,7 +704,7 @@ export function ProductsReport() {
               <CardTitle>Top 10 Products by Sales</CardTitle>
             </CardHeader>
             <CardContent>
-              {loading ? (
+              {analyticsLoading ? (
                 <div className="text-center py-8 text-gray-500">Loading products...</div>
               ) : analytics?.topProducts.length === 0 ? (
                 <div className="text-center py-8 text-gray-500">No products found</div>
@@ -748,7 +760,7 @@ export function ProductsReport() {
                       </div>
                       <div className="text-right">
                         <div className="font-bold text-gray-900">
-                          {formatCurrency(product.sales, 'INR')}
+                          {formatCurrency(product.sales, 'AED')}
                         </div>
                         <div className="text-sm text-muted-foreground">
                           {formatNumber(product.quantity)} units
@@ -769,7 +781,7 @@ export function ProductsReport() {
               <div>
                 <h2 className="text-lg font-bold text-gray-800">Product Details</h2>
                 <p className="text-sm text-gray-600">
-                  Showing {detailedProducts.length > 0 ? ((currentPage - 1) * 25) + 1 : 0} to {Math.min(currentPage * 25, totalProducts)} of {totalProducts} products
+                  Showing {detailedProducts.length > 0 ? ((currentPage - 1) * pageSize) + 1 : 0} to {Math.min(currentPage * pageSize, totalProducts)} of {totalProducts} products
                 </p>
               </div>
               <div className="flex gap-2 flex-wrap">
@@ -783,57 +795,48 @@ export function ProductsReport() {
               <table className="w-full">
                 <thead className="bg-gray-50 border-b-2 border-gray-300 sticky top-0 z-10 shadow-sm">
                   <tr>
-                    <th 
+                    <th
                       className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider cursor-pointer hover:bg-gray-100 transition-colors min-w-[140px]"
                       onClick={() => handleSort('product_code')}
                     >
-                      Code{getSortIndicator('product_code')}
+                      Product Code{getSortIndicator('product_code')}
                     </th>
-                    <th 
+                    <th
                       className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider cursor-pointer hover:bg-gray-100 transition-colors min-w-[300px]"
                       onClick={() => handleSort('product_name')}
                     >
                       Product Name{getSortIndicator('product_name')}
                     </th>
-                    <th 
-                      className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider cursor-pointer hover:bg-gray-100 transition-colors min-w-[180px]"
-                      onClick={() => handleSort('category')}
-                    >
-                      Product Group{getSortIndicator('category')}
-                    </th>
-                    <th 
-                      className="px-4 py-3 text-right text-xs font-semibold text-gray-700 uppercase tracking-wider cursor-pointer hover:bg-gray-100 transition-colors min-w-[140px]"
-                      onClick={() => handleSort('total_sales')}
-                    >
-                      Sales{getSortIndicator('total_sales')}
-                    </th>
-                    <th 
+                    <th
                       className="px-4 py-3 text-right text-xs font-semibold text-gray-700 uppercase tracking-wider cursor-pointer hover:bg-gray-100 transition-colors min-w-[120px]"
                       onClick={() => handleSort('total_quantity')}
                     >
-                      Qty Sold{getSortIndicator('total_quantity')}
+                      Quantity{getSortIndicator('total_quantity')}
                     </th>
-                    <th 
+                    <th
                       className="px-4 py-3 text-right text-xs font-semibold text-gray-700 uppercase tracking-wider cursor-pointer hover:bg-gray-100 transition-colors min-w-[140px]"
                       onClick={() => handleSort('avg_price')}
                     >
                       Avg Price{getSortIndicator('avg_price')}
                     </th>
-                    <th className="px-4 py-3 text-center text-xs font-semibold text-gray-700 uppercase tracking-wider min-w-[100px]">
-                      Image
+                    <th
+                      className="px-4 py-3 text-right text-xs font-semibold text-gray-700 uppercase tracking-wider cursor-pointer hover:bg-gray-100 transition-colors min-w-[160px]"
+                      onClick={() => handleSort('total_sales')}
+                    >
+                      Total Amount{getSortIndicator('total_sales')}
                     </th>
                   </tr>
                 </thead>
                 <tbody className="bg-white divide-y divide-gray-200">
                   {loading ? (
                     <tr>
-                      <td colSpan={7} className="px-4 py-8 text-center text-sm text-gray-500">
+                      <td colSpan={5} className="px-4 py-8 text-center text-sm text-gray-500">
                         Loading products...
                       </td>
                     </tr>
                   ) : detailedProducts.length === 0 ? (
                     <tr>
-                      <td colSpan={7} className="px-4 py-8 text-center text-sm text-gray-500">
+                      <td colSpan={5} className="px-4 py-8 text-center text-sm text-gray-500">
                         No products found
                       </td>
                     </tr>
@@ -846,44 +849,14 @@ export function ProductsReport() {
                         <td className="px-4 py-3 text-sm text-gray-900">
                           <div className="font-medium">{product.productName}</div>
                         </td>
-                        <td className="px-4 py-3 text-sm text-gray-900">
-                          <span className={product.category === 'Uncategorized' ? 'text-gray-400 italic' : 'font-medium'}>
-                            {product.category}
-                          </span>
-                        </td>
-                        <td className="px-4 py-3 text-sm text-right font-medium text-gray-900 whitespace-nowrap">
-                          {product.totalSales > 0 ? formatCurrency(product.totalSales, 'INR') : '-'}
-                        </td>
                         <td className="px-4 py-3 text-sm text-right text-gray-900 whitespace-nowrap">
                           {product.totalQuantity > 0 ? formatNumber(product.totalQuantity) : '-'}
                         </td>
                         <td className="px-4 py-3 text-sm text-right text-gray-900 whitespace-nowrap">
-                          {product.avgPrice > 0 ? formatCurrency(product.avgPrice, 'INR') : '-'}
+                          {product.avgPrice > 0 ? formatCurrency(product.avgPrice, 'AED') : '-'}
                         </td>
-                        <td className="px-4 py-3 text-sm text-center">
-                          {product.imageUrl ? (
-                            <a 
-                              href={product.imageUrl} 
-                              target="_blank" 
-                              rel="noopener noreferrer"
-                              className="inline-block cursor-pointer hover:opacity-80 transition-opacity"
-                              title="Click to view full image"
-                            >
-                              <img 
-                                src={product.imageUrl} 
-                                alt={product.productName}
-                                className="w-12 h-12 object-cover rounded border mx-auto"
-                                onError={(e) => {
-                                  const target = e.target as HTMLImageElement
-                                  target.style.display = 'none'
-                                }}
-                              />
-                            </a>
-                          ) : (
-                            <div className="w-12 h-12 bg-gray-100 rounded border flex items-center justify-center mx-auto">
-                              <Package className="w-6 h-6 text-gray-400" />
-                            </div>
-                          )}
+                        <td className="px-4 py-3 text-sm text-right font-bold text-gray-900 whitespace-nowrap">
+                          {product.totalSales > 0 ? formatCurrency(product.totalSales, 'AED') : '-'}
                         </td>
                       </tr>
                     ))
@@ -893,31 +866,115 @@ export function ProductsReport() {
             </div>
 
             {/* Pagination */}
-            {totalPages > 1 && (
-              <div className="px-6 py-4 border-t border-gray-200 flex items-center justify-between">
-                <div className="text-sm text-gray-600">
-                  Showing {((currentPage - 1) * 25) + 1} to {Math.min(currentPage * 25, totalProducts)} of {totalProducts} products
-                </div>
-                <div className="flex items-center gap-2">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
-                    disabled={currentPage === 1 || loading}
-                  >
-                    Previous
-                  </Button>
-                  <span className="text-sm text-gray-600">
-                    Page {currentPage} of {totalPages}
-                  </span>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
-                    disabled={currentPage === totalPages || loading}
-                  >
-                    Next
-                  </Button>
+            {totalPages > 0 && (
+              <div className="px-6 py-4 border-t border-gray-200">
+                <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
+                  {/* Items per page selector */}
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm text-gray-600">Show:</span>
+                    <Select
+                      value={pageSize.toString()}
+                      onValueChange={(value) => {
+                        setPageSize(parseInt(value))
+                        setCurrentPage(1)
+                      }}
+                    >
+                      <SelectTrigger className="w-20">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="10">10</SelectItem>
+                        <SelectItem value="25">25</SelectItem>
+                        <SelectItem value="50">50</SelectItem>
+                        <SelectItem value="100">100</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <span className="text-sm text-gray-600">
+                      items (Showing {((currentPage - 1) * pageSize) + 1} to {Math.min(currentPage * pageSize, totalProducts)} of {totalProducts})
+                    </span>
+                  </div>
+
+                  {/* Page navigation */}
+                  {totalPages > 1 && (
+                    <div className="flex items-center gap-1">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setCurrentPage(1)}
+                        disabled={currentPage === 1 || loading}
+                      >
+                        First
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
+                        disabled={currentPage === 1 || loading}
+                      >
+                        Previous
+                      </Button>
+
+                      {/* Page number buttons */}
+                      <div className="flex items-center gap-1">
+                        {(() => {
+                          const pages = []
+                          const maxPagesToShow = 5
+                          let startPage = Math.max(1, currentPage - Math.floor(maxPagesToShow / 2))
+                          let endPage = Math.min(totalPages, startPage + maxPagesToShow - 1)
+
+                          if (endPage - startPage + 1 < maxPagesToShow) {
+                            startPage = Math.max(1, endPage - maxPagesToShow + 1)
+                          }
+
+                          if (startPage > 1) {
+                            pages.push(
+                              <span key="ellipsis-start" className="px-2 text-gray-600">...</span>
+                            )
+                          }
+
+                          for (let i = startPage; i <= endPage; i++) {
+                            pages.push(
+                              <Button
+                                key={i}
+                                variant={currentPage === i ? "default" : "outline"}
+                                size="sm"
+                                onClick={() => setCurrentPage(i)}
+                                disabled={loading}
+                                className="min-w-[40px]"
+                              >
+                                {i}
+                              </Button>
+                            )
+                          }
+
+                          if (endPage < totalPages) {
+                            pages.push(
+                              <span key="ellipsis-end" className="px-2 text-gray-600">...</span>
+                            )
+                          }
+
+                          return pages
+                        })()}
+                      </div>
+
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
+                        disabled={currentPage === totalPages || loading}
+                      >
+                        Next
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setCurrentPage(totalPages)}
+                        disabled={currentPage === totalPages || loading}
+                      >
+                        Last
+                      </Button>
+                    </div>
+                  )}
                 </div>
               </div>
             )}

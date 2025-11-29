@@ -120,6 +120,7 @@ async function fetchLMTDFiltersInternal(params: {
 
   // Fetch all filter options in parallel with error handling
   // Each query returns empty result on error instead of throwing
+  // OPTIMIZED: Use LIMIT 50 and simpler queries for speed
   const [
     teamLeadersResult,
     usersResult,
@@ -129,215 +130,174 @@ async function fetchLMTDFiltersInternal(params: {
     productsResult
   ] = await Promise.all([
     (async () => {
-      const whereClause = buildWhereClause('teamLeader')
-      
       const query = `
         SELECT DISTINCT
           route_salesmancode as "value",
-          route_salesmancode as "label",
-          COUNT(*) as "count"
+          route_salesmancode as "label"
         FROM ${SALES_TABLE}
-        ${whereClause.clause}
-        AND route_salesmancode IS NOT NULL
-        AND UPPER(COALESCE(route_salesmancode, '')) NOT LIKE '%DEMO%'
-        GROUP BY route_salesmancode
+        WHERE trx_trxdate >= $1::date
+          AND trx_trxdate <= $2::date
+          AND trx_trxtype = 1
+          AND route_salesmancode IS NOT NULL
+          AND route_salesmancode != ''
         ORDER BY route_salesmancode
-        LIMIT 100
+        LIMIT 50
       `
-      const params = [...whereClause.params]
+      const params = [lmtdStart, mtdEnd]
       try {
         return await dbQuery(query, params)
       } catch (error) {
         console.error('Error fetching team leaders:', error)
-        console.error('Query:', query.substring(0, 200))
-        console.error('Params:', params)
-        // Return empty result instead of throwing to allow other filters to load
         return { rows: [] }
       }
     })(),
-    
+
     (async () => {
-      const whereClause = buildWhereClause('user')
-      
       const query = `
         SELECT DISTINCT
           trx_usercode as "value",
-          trx_usercode || ' (' || trx_usercode || ')' as "label",
-          'Field User' as "role",
-          COUNT(*) as "count"
+          trx_usercode as "label"
         FROM ${SALES_TABLE}
-        ${whereClause.clause}
-        AND trx_usercode IS NOT NULL
-        AND UPPER(trx_usercode) NOT LIKE '%DEMO%'
-        GROUP BY trx_usercode
+        WHERE trx_trxdate >= $1::date
+          AND trx_trxdate <= $2::date
+          AND trx_trxtype = 1
+          AND trx_usercode IS NOT NULL
+          AND trx_usercode != ''
         ORDER BY trx_usercode
-        LIMIT 200
+        LIMIT 100
       `
-      const params = [...whereClause.params]
+      const params = [lmtdStart, mtdEnd]
       try {
         return await dbQuery(query, params)
       } catch (error) {
         console.error('Error fetching users:', error)
-        console.error('Query:', query.substring(0, 200))
-        console.error('Params:', params)
         return { rows: [] }
       }
     })(),
-    
+
     (async () => {
-      const whereClause = buildWhereClause('chain')
-      
       const query = `
         SELECT DISTINCT
           customer_channel_description as "value",
-          customer_channel_description as "label",
-          COUNT(*) as "count"
+          customer_channel_description as "label"
         FROM ${SALES_TABLE}
-        ${whereClause.clause}
-        AND customer_channel_description IS NOT NULL
-        AND UPPER(customer_channel_description) NOT LIKE '%DEMO%'
-        GROUP BY customer_channel_description
+        WHERE trx_trxdate >= $1::date
+          AND trx_trxdate <= $2::date
+          AND trx_trxtype = 1
+          AND customer_channel_description IS NOT NULL
+          AND customer_channel_description != ''
         ORDER BY customer_channel_description
         LIMIT 50
       `
-      const params = [...whereClause.params]
+      const params = [lmtdStart, mtdEnd]
       try {
         return await dbQuery(query, params)
       } catch (error) {
         console.error('Error fetching chains:', error)
-        console.error('Query:', query.substring(0, 200))
-        console.error('Params:', params)
         return { rows: [] }
       }
     })(),
-    
+
     (async () => {
-      const whereClause = buildWhereClause('store')
-      
       const query = `
-        SELECT
+        SELECT DISTINCT
           customer_code as "value",
-          COALESCE(MAX(customer_description), customer_code) || ' (' || customer_code || ')' as "label",
-          COUNT(*) as "count"
+          COALESCE(customer_description, customer_code) as "label"
         FROM ${SALES_TABLE}
-        ${whereClause.clause}
-        AND customer_code IS NOT NULL
-        AND UPPER(customer_code) NOT LIKE '%DEMO%'
-        GROUP BY customer_code
+        WHERE trx_trxdate >= $1::date
+          AND trx_trxdate <= $2::date
+          AND trx_trxtype = 1
+          AND customer_code IS NOT NULL
+          AND customer_code != ''
         ORDER BY customer_code
-        LIMIT 200
+        LIMIT 100
       `
-      const params = [...whereClause.params]
+      const params = [lmtdStart, mtdEnd]
       try {
         return await dbQuery(query, params)
       } catch (error) {
         console.error('Error fetching stores:', error)
-        console.error('Query:', query.substring(0, 200))
-        console.error('Params:', params)
         return { rows: [] }
       }
     })(),
-    
+
     (async () => {
-      const whereClause = buildWhereClause('category')
-      
       const query = `
         SELECT DISTINCT
           item_grouplevel1 as "value",
-          item_grouplevel1 as "label",
-          COUNT(*) as "count"
+          item_grouplevel1 as "label"
         FROM ${SALES_TABLE}
-        ${whereClause.clause}
-        AND item_grouplevel1 IS NOT NULL
-        GROUP BY item_grouplevel1
+        WHERE trx_trxdate >= $1::date
+          AND trx_trxdate <= $2::date
+          AND trx_trxtype = 1
+          AND item_grouplevel1 IS NOT NULL
+          AND item_grouplevel1 != ''
         ORDER BY item_grouplevel1
         LIMIT 50
       `
-      const params = [...whereClause.params]
+      const params = [lmtdStart, mtdEnd]
       try {
         return await dbQuery(query, params)
       } catch (error) {
         console.error('Error fetching categories:', error)
-        console.error('Query:', query.substring(0, 200))
-        console.error('Params:', params)
         return { rows: [] }
       }
     })(),
-    
+
     (async () => {
-      const whereClause = buildWhereClause()
       const query = `
         SELECT DISTINCT
           line_itemcode as "value",
-          line_itemcode || ' - ' || COALESCE(MAX(line_itemdescription), 'Unknown Product') as "label",
-          SUM(CASE WHEN trx_totalamount > 0 THEN trx_totalamount ELSE 0 END) as "totalAmount"
+          COALESCE(line_itemdescription, line_itemcode) as "label"
         FROM ${SALES_TABLE}
-        ${whereClause.clause}
-        GROUP BY line_itemcode
-        HAVING line_itemcode IS NOT NULL
-        ORDER BY "totalAmount" DESC
+        WHERE trx_trxdate >= $1::date
+          AND trx_trxdate <= $2::date
+          AND trx_trxtype = 1
+          AND line_itemcode IS NOT NULL
+          AND line_itemcode != ''
+        ORDER BY line_itemcode
         LIMIT 100
       `
+      const params = [lmtdStart, mtdEnd]
       try {
-        return await dbQuery(query, whereClause.params)
+        return await dbQuery(query, params)
       } catch (error) {
         console.error('Error fetching products:', error)
-        console.error('Query:', query.substring(0, 200))
-        console.error('Params:', whereClause.params)
         return { rows: [] }
       }
     })()
   ])
 
-  // Format results
-  const teamLeaders = teamLeadersResult.rows
-    .map(row => ({
-      value: row.value,
-      label: row.label,
-      available: parseInt(row.count) || 0
-    }))
-    .filter(tl => tl.available > 0 || tl.value === selectedTeamLeader)
+  // Format results - simplified without counts
+  const teamLeaders = teamLeadersResult.rows.map(row => ({
+    value: row.value,
+    label: row.label
+  }))
 
-  const users = usersResult.rows
-    .map(row => ({
-      value: row.value,
-      label: row.label,
-      role: row.role,
-      available: parseInt(row.count) || 0
-    }))
-    .filter(u => u.available > 0 || u.value === selectedUser)
+  const users = usersResult.rows.map(row => ({
+    value: row.value,
+    label: row.label
+  }))
 
-  const chains = chainsResult.rows
-    .map(row => ({
-      value: row.value,
-      label: row.label,
-      available: parseInt(row.count) || 0
-    }))
-    .filter(c => c.available > 0 || c.value === selectedChain)
+  const chains = chainsResult.rows.map(row => ({
+    value: row.value,
+    label: row.label
+  }))
 
-  const stores = storesResult.rows
-    .map(row => ({
-      value: row.value,
-      label: row.label,
-      available: parseInt(row.count) || 0
-    }))
-    .filter(s => s.available > 0 || s.value === selectedStore)
+  const stores = storesResult.rows.map(row => ({
+    value: row.value,
+    label: row.label
+  }))
 
-  const categories = categoriesResult.rows
-    .map(row => ({
-      value: row.value,
-      label: row.label,
-      available: parseInt(row.count) || 0
-    }))
-    .filter(c => c.available > 0 || c.value === selectedCategory)
+  const categories = categoriesResult.rows.map(row => ({
+    value: row.value,
+    label: row.label
+  }))
 
-  const products = productsResult.rows
-    .map(row => ({
-      value: row.value,
-      label: row.label,
-      available: parseFloat(row.totalAmount) || 0
-    }))
-    .slice(0, 100)
+  const products = productsResult.rows.map(row => ({
+    value: row.value,
+    label: row.label
+  }))
 
   return {
     filters: {
