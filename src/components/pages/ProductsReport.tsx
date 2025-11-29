@@ -828,7 +828,7 @@ export function ProductsReport() {
                   </tr>
                 </thead>
                 <tbody className="bg-white divide-y divide-gray-200">
-                  {loading ? (
+                  {detailsLoading ? (
                     <tr>
                       <td colSpan={5} className="px-4 py-8 text-center text-sm text-gray-500">
                         Loading products...
