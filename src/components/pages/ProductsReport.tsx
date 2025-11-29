@@ -146,10 +146,15 @@ export function ProductsReport() {
       const response = await fetch(`/api/products/analytics?${params}`)
       const result = await response.json()
 
+      console.log('📊 Products Analytics Response:', result)
+
       if (result.success) {
+        console.log('📊 Setting analytics data:', result.data)
+        console.log('📊 Metrics:', result.data?.metrics)
         setAnalytics(result.data)
         setError(null)
       } else {
+        console.error('📊 Analytics fetch failed:', result.error)
         setError(result.error || 'Failed to fetch analytics')
       }
     } catch (err) {
@@ -346,6 +351,10 @@ export function ProductsReport() {
   const totalPages = Math.ceil(totalProducts / pageSize)
   const metrics = analytics?.metrics
 
+  console.log('📊 Rendering - Analytics:', analytics)
+  console.log('📊 Rendering - Metrics:', metrics)
+  console.log('📊 Rendering - analyticsLoading:', analyticsLoading)
+
   return (
     <div className="p-6 space-y-6">
       {/* Header */}
@@ -378,7 +387,7 @@ export function ProductsReport() {
                 {activeFilterCount} active
               </span>
             )}
-            {loading && (
+            {(analyticsLoading || detailsLoading) && (
               <RefreshCw className="w-4 h-4 text-gray-500 animate-spin" />
             )}
           </div>
@@ -494,7 +503,7 @@ export function ProductsReport() {
                   onClick={resetFilters}
                   variant="outline"
                   className="flex items-center gap-2"
-                  disabled={activeFilterCount === 0 || loading}
+                  disabled={activeFilterCount === 0 || analyticsLoading || detailsLoading}
                 >
                   <X className="w-4 h-4" />
                   Reset All Filters
@@ -502,7 +511,7 @@ export function ProductsReport() {
                 <Button
                   onClick={applyFilters}
                   className="flex items-center gap-2"
-                  disabled={loading}
+                  disabled={analyticsLoading || detailsLoading}
                 >
                   <Filter className="w-4 h-4" />
                   Apply Filters
@@ -544,7 +553,62 @@ export function ProductsReport() {
       <Tabs value={activeTab} onValueChange={setActiveTab}>
         {/* Summary Tab */}
         <TabsContent value="summary" className="mt-0 space-y-6">
-          {/* Product-Specific KPIs */}
+          {/* Comprehensive KPIs Row 1 */}
+          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+            <Card>
+              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                <CardTitle className="text-sm font-medium">Total Revenue</CardTitle>
+                <DollarSign className="h-4 w-4 text-emerald-500" />
+              </CardHeader>
+              <CardContent>
+                <div className="text-2xl font-bold">{analyticsLoading ? '...' : formatCurrency(metrics?.totalRevenue || 0, metrics?.currencyCode || 'AED')}</div>
+                <p className="text-xs text-muted-foreground mt-1">
+                  {formatNumber(metrics?.totalOrders || 0)} orders
+                </p>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                <CardTitle className="text-sm font-medium">Total Quantity Sold</CardTitle>
+                <Package className="h-4 w-4 text-blue-500" />
+              </CardHeader>
+              <CardContent>
+                <div className="text-2xl font-bold">{analyticsLoading ? '...' : formatNumber(metrics?.totalQuantity || 0)}</div>
+                <p className="text-xs text-muted-foreground mt-1">
+                  Units sold
+                </p>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                <CardTitle className="text-sm font-medium">Unique Customers</CardTitle>
+                <Users className="h-4 w-4 text-purple-500" />
+              </CardHeader>
+              <CardContent>
+                <div className="text-2xl font-bold">{analyticsLoading ? '...' : formatNumber(metrics?.uniqueCustomers || 0)}</div>
+                <p className="text-xs text-muted-foreground mt-1">
+                  Active buyers
+                </p>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                <CardTitle className="text-sm font-medium">Avg Order Value</CardTitle>
+                <TrendingUp className="h-4 w-4 text-green-500" />
+              </CardHeader>
+              <CardContent>
+                <div className="text-2xl font-bold">{analyticsLoading ? '...' : formatCurrency(metrics?.avgOrderValue || 0, metrics?.currencyCode || 'AED')}</div>
+                <p className="text-xs text-muted-foreground mt-1">
+                  Per transaction
+                </p>
+              </CardContent>
+            </Card>
+          </div>
+
+          {/* Product-Specific KPIs Row 2 */}
           <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
             <Card>
               <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
@@ -901,7 +965,7 @@ export function ProductsReport() {
                         variant="outline"
                         size="sm"
                         onClick={() => setCurrentPage(1)}
-                        disabled={currentPage === 1 || loading}
+                        disabled={currentPage === 1 || detailsLoading}
                       >
                         First
                       </Button>
@@ -909,7 +973,7 @@ export function ProductsReport() {
                         variant="outline"
                         size="sm"
                         onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
-                        disabled={currentPage === 1 || loading}
+                        disabled={currentPage === 1 || detailsLoading}
                       >
                         Previous
                       </Button>
@@ -939,7 +1003,7 @@ export function ProductsReport() {
                                 variant={currentPage === i ? "default" : "outline"}
                                 size="sm"
                                 onClick={() => setCurrentPage(i)}
-                                disabled={loading}
+                                disabled={detailsLoading}
                                 className="min-w-[40px]"
                               >
                                 {i}
@@ -961,7 +1025,7 @@ export function ProductsReport() {
                         variant="outline"
                         size="sm"
                         onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
-                        disabled={currentPage === totalPages || loading}
+                        disabled={currentPage === totalPages || detailsLoading}
                       >
                         Next
                       </Button>
@@ -969,7 +1033,7 @@ export function ProductsReport() {
                         variant="outline"
                         size="sm"
                         onClick={() => setCurrentPage(totalPages)}
-                        disabled={currentPage === totalPages || loading}
+                        disabled={currentPage === totalPages || detailsLoading}
                       >
                         Last
                       </Button>

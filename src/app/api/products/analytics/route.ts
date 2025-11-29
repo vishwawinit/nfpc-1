@@ -175,14 +175,62 @@ export async function GET(request: NextRequest) {
       LIMIT 15
     `
 
+    // Top 10 products by sales - optimized query
+    const topProductsQuery = `
+      SELECT
+        line_itemcode as product_code,
+        MAX(line_itemdescription) as product_name,
+        COALESCE(MAX(item_grouplevel1), 'Uncategorized') as category,
+        COALESCE(MAX(item_category_description), 'No Brand') as brand,
+        COALESCE(SUM(CASE WHEN trx_totalamount > 0 THEN trx_totalamount ELSE 0 END), 0) as sales,
+        COALESCE(SUM(ABS(COALESCE(line_quantitybu, 0))), 0) as quantity,
+        CASE
+          WHEN SUM(ABS(COALESCE(line_quantitybu, 0))) > 0
+          THEN SUM(CASE WHEN trx_totalamount > 0 THEN trx_totalamount ELSE 0 END) / SUM(ABS(COALESCE(line_quantitybu, 0)))
+          ELSE 0
+        END as avg_price,
+        CASE
+          WHEN SUM(ABS(COALESCE(line_quantitybu, 0))) > 1000 THEN 'Fast'
+          WHEN SUM(ABS(COALESCE(line_quantitybu, 0))) > 100 THEN 'Medium'
+          WHEN SUM(ABS(COALESCE(line_quantitybu, 0))) > 0 THEN 'Slow'
+          ELSE 'No Sales'
+        END as movement_status,
+        COALESCE(MAX(trx_currencycode), 'AED') as currency_code
+      FROM ${SALES_TABLE}
+      ${whereClause}
+        AND line_itemcode IS NOT NULL
+      GROUP BY line_itemcode
+      ORDER BY sales DESC
+      LIMIT 10
+    `
+
+    // Movement status counts - counts products by sales velocity
+    const movementStatusQuery = `
+      SELECT
+        COUNT(CASE WHEN total_quantity > 1000 THEN 1 END) as fast_moving,
+        COUNT(CASE WHEN total_quantity > 0 AND total_quantity <= 100 THEN 1 END) as slow_moving,
+        COUNT(CASE WHEN total_quantity = 0 THEN 1 END) as no_sales
+      FROM (
+        SELECT
+          line_itemcode,
+          SUM(ABS(COALESCE(line_quantitybu, 0))) as total_quantity
+        FROM ${SALES_TABLE}
+        ${whereClause}
+          AND line_itemcode IS NOT NULL
+        GROUP BY line_itemcode
+      ) product_quantities
+    `
+
     // Execute all queries in parallel for speed
     console.log('📊 Products Analytics - Executing queries in parallel...')
     const queryStart = Date.now()
 
-    const [kpiResult, channelResult, brandResult] = await Promise.all([
+    const [kpiResult, channelResult, brandResult, topProductsResult, movementResult] = await Promise.all([
       query(kpiQuery, params),
       query(channelQuery, params),
-      query(brandDistributionQuery, params)
+      query(brandDistributionQuery, params),
+      query(topProductsQuery, params),
+      query(movementStatusQuery, params)
     ])
 
     const queryDuration = Date.now() - queryStart
@@ -206,6 +254,29 @@ export async function GET(request: NextRequest) {
 
     console.log(`📊 Products Analytics - Found ${brandDistribution.length} brands`)
 
+    // Top products data
+    const topProductsData = topProductsResult.rows.map((row: any) => ({
+      productCode: row.product_code,
+      productName: row.product_name || 'Unnamed Product',
+      category: row.category,
+      brand: row.brand,
+      sales: parseFloat(row.sales || '0'),
+      quantity: parseFloat(row.quantity || '0'),
+      avgPrice: parseFloat(row.avg_price || '0'),
+      movementStatus: row.movement_status,
+      currencyCode: row.currency_code || 'AED'
+    }))
+
+    console.log(`📊 Products Analytics - Found ${topProductsData.length} top products`)
+
+    // Movement status data
+    const movementData = movementResult.rows[0] || {}
+    const fastMovingCount = parseInt(movementData.fast_moving || '0')
+    const slowMovingCount = parseInt(movementData.slow_moving || '0')
+    const noSalesCount = parseInt(movementData.no_sales || '0')
+
+    console.log(`📊 Products Analytics - Movement Status: Fast=${fastMovingCount}, Slow=${slowMovingCount}, NoSales=${noSalesCount}`)
+
     // Calculate overall metrics from KPI query
     const totalRevenue = parseFloat(kpiData.total_revenue || '0')
     const totalOrders = parseInt(kpiData.total_orders || '0')
@@ -218,9 +289,9 @@ export async function GET(request: NextRequest) {
     const totalProducts = uniqueProducts
     const activeProducts = uniqueProducts
     const totalSales = totalRevenue
-    const fastMoving = 0 // Placeholder - would need separate query
-    const slowMoving = 0 // Placeholder - would need separate query
-    const noSales = 0 // Placeholder - would need separate query
+    const fastMoving = fastMovingCount
+    const slowMoving = slowMovingCount
+    const noSales = noSalesCount
 
     // Helper function to check if value is valid
     const isValidValue = (value: string | null | undefined): boolean => {
@@ -243,9 +314,6 @@ export async function GET(request: NextRequest) {
       percentage: totalSales > 0 ? (brand.sales / totalSales * 100) : 0
     }))
 
-    // Top products - empty array for now (not needed on summary tab)
-    const topProducts: any[] = []
-
     const data = {
       metrics: {
         // Comprehensive KPIs
@@ -267,7 +335,7 @@ export async function GET(request: NextRequest) {
       },
       salesByChannel,
       brandSalesDistribution,
-      topProducts
+      topProducts: topProductsData
     }
 
     return NextResponse.json({

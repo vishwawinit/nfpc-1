@@ -67,6 +67,7 @@ const getDateRangeFromString = (dateRange: string) => {
 
 export async function GET(request: NextRequest) {
   try {
+    console.log('📦 Products Details API - Starting request...')
     const { searchParams } = new URL(request.url)
     const dateRange = searchParams.get('range') || 'thisMonth'
     const customStartDate = searchParams.get('startDate')
@@ -88,6 +89,19 @@ export async function GET(request: NextRequest) {
       startDate = dateRangeResult.startDate
       endDate = dateRangeResult.endDate
     }
+
+    console.log('📦 Products Details - Params:', {
+      dateRange,
+      customStartDate,
+      customEndDate,
+      channelFilter,
+      productCodeFilter,
+      page,
+      limit,
+      sortBy,
+      sortOrder,
+      dateFilter: { startDate, endDate }
+    })
 
     // Build WHERE conditions
     const conditions: string[] = []
@@ -139,39 +153,36 @@ export async function GET(request: NextRequest) {
     // Calculate offset for pagination
     const offset = (page - 1) * limit
 
-    // Get product details - OPTIMIZED with materialized CTE
+    // Get product details - Simple direct query without expensive COUNT
     const productDetailsQuery = `
-      WITH product_aggregates AS MATERIALIZED (
-        SELECT
-          line_itemcode as product_code,
-          MAX(line_itemdescription) as product_name,
-          COALESCE(MAX(item_grouplevel1), 'Uncategorized') as category,
-          COALESCE(MAX(item_grouplevel2), 'No Subcategory') as subcategory,
-          COALESCE(MAX(item_brand_description), 'No Brand') as brand,
-          COALESCE(MAX(line_uom), 'PCS') as base_uom,
-          '' as image_path,
-          SUM(CASE WHEN trx_totalamount > 0 THEN trx_totalamount ELSE 0 END) as total_sales,
-          SUM(ABS(COALESCE(line_quantitybu, 0))) as total_quantity,
-          COUNT(DISTINCT trx_trxcode) as total_orders,
-          CASE WHEN SUM(ABS(COALESCE(line_quantitybu, 0))) > 0
-               THEN SUM(CASE WHEN trx_totalamount > 0 THEN trx_totalamount ELSE 0 END) / SUM(ABS(COALESCE(line_quantitybu, 0)))
-               ELSE 0 END as avg_price,
-          MAX(line_baseprice) as max_price,
-          MIN(CASE WHEN line_baseprice > 0 THEN line_baseprice ELSE NULL END) as min_price,
-          CASE
-            WHEN SUM(ABS(COALESCE(line_quantitybu, 0))) > 1000 THEN 'Fast'
-            WHEN SUM(ABS(COALESCE(line_quantitybu, 0))) > 100 THEN 'Medium'
-            WHEN SUM(ABS(COALESCE(line_quantitybu, 0))) > 0 THEN 'Slow'
-            ELSE 'No Sales'
-          END as movement_status,
-          true as is_active,
-          false as is_delist,
-          COALESCE(MAX(trx_currencycode), 'AED') as currency_code
-        FROM ${SALES_TABLE}
-        ${whereClause}
-        GROUP BY line_itemcode
-      )
-      SELECT * FROM product_aggregates
+      SELECT
+        line_itemcode as product_code,
+        MAX(line_itemdescription) as product_name,
+        COALESCE(MAX(item_grouplevel1), 'Uncategorized') as category,
+        COALESCE(MAX(item_grouplevel2), 'No Subcategory') as subcategory,
+        COALESCE(MAX(item_brand_description), 'No Brand') as brand,
+        COALESCE(MAX(line_uom), 'PCS') as base_uom,
+        '' as image_path,
+        SUM(CASE WHEN trx_totalamount > 0 THEN trx_totalamount ELSE 0 END) as total_sales,
+        SUM(ABS(COALESCE(line_quantitybu, 0))) as total_quantity,
+        COUNT(DISTINCT trx_trxcode) as total_orders,
+        CASE WHEN SUM(ABS(COALESCE(line_quantitybu, 0))) > 0
+             THEN SUM(CASE WHEN trx_totalamount > 0 THEN trx_totalamount ELSE 0 END) / SUM(ABS(COALESCE(line_quantitybu, 0)))
+             ELSE 0 END as avg_price,
+        MAX(line_baseprice) as max_price,
+        MIN(CASE WHEN line_baseprice > 0 THEN line_baseprice ELSE NULL END) as min_price,
+        CASE
+          WHEN SUM(ABS(COALESCE(line_quantitybu, 0))) > 1000 THEN 'Fast'
+          WHEN SUM(ABS(COALESCE(line_quantitybu, 0))) > 100 THEN 'Medium'
+          WHEN SUM(ABS(COALESCE(line_quantitybu, 0))) > 0 THEN 'Slow'
+          ELSE 'No Sales'
+        END as movement_status,
+        true as is_active,
+        false as is_delist,
+        COALESCE(MAX(trx_currencycode), 'AED') as currency_code
+      FROM ${SALES_TABLE}
+      ${whereClause}
+      GROUP BY line_itemcode
       ORDER BY ${orderByColumn} ${sortOrder}
       LIMIT $${paramIndex} OFFSET $${paramIndex + 1}
     `
@@ -179,17 +190,20 @@ export async function GET(request: NextRequest) {
     params.push(limit)
     params.push(offset)
 
+    // Execute product details query
+    console.log('📦 Products Details - Executing query...')
+    const queryStart = Date.now()
+
     const productResult = await query(productDetailsQuery, params)
 
-    // Get total count for pagination
-    const countQuery = `
-      SELECT COUNT(DISTINCT line_itemcode) as total_count
-      FROM ${SALES_TABLE}
-      ${whereClause}
-    `
+    const queryDuration = Date.now() - queryStart
+    console.log(`📦 Products Details - Query completed in ${queryDuration}ms, returned ${productResult.rows.length} products`)
 
-    const countResult = await query(countQuery, params.slice(0, paramIndex - 1))
-    const totalCount = parseInt(countResult.rows[0].total_count || '0')
+    // For pagination, we estimate total based on whether we got a full page
+    // This avoids the expensive COUNT(DISTINCT) query
+    const hasMore = productResult.rows.length === limit
+    const estimatedTotal = hasMore ? (page * limit) + limit : ((page - 1) * limit) + productResult.rows.length
+    const totalCount = estimatedTotal
 
     // Helper function to clean values
     const cleanValue = (value: any, defaultValue: string = '-'): string => {
