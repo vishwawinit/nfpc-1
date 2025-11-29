@@ -4,10 +4,7 @@ import { useState, Suspense, useEffect } from 'react'
 import { DynamicWorkingDashboard } from '../components/pages/DynamicWorkingDashboard'
 import { DailyStockSaleReport } from '../components/pages/DailyStockSaleReport'
 import { StoreUserVisitReport } from '../components/pages/StoreUserVisitReport'
-import { LowStockReport } from '../components/pages/LowStockReport'
 import { LMTDSecondaryReport } from '../components/pages/LMTDSecondaryReport'
-import { PlanogramReport } from '../components/pages/PlanogramReport'
-import { TargetReport } from '../components/pages/TargetReport'
 import { CustomersReportUpdated as CustomersReport } from '../components/pages/CustomersReportUpdated'
 import { ProductsReport } from '../components/pages/ProductsReport'
 import { OrdersReport } from '../components/pages/OrdersReport'
@@ -16,16 +13,12 @@ import {
   LayoutDashboard,
   Package,
   Users,
-  Grid,
   MapPin,
-  Target,
   TrendingUp,
-  AlertTriangle,
   ChevronLeft,
   ChevronRight,
   ChevronDown,
   X,
-  Store,
   BarChart3,
   ShoppingCart
 } from 'lucide-react'
@@ -34,10 +27,7 @@ type PageType =
   | 'dashboard'
   | 'dailyStockSale'
   | 'storeUserVisit'
-  | 'planogramReport'
-  | 'targetAchievement'
   | 'lmtdSecondary'
-  | 'lowStockCallout'
   | 'customersReport'
   | 'productsReport'
   | 'ordersReport'
@@ -102,7 +92,6 @@ function HomePageContent() {
       items: [
         { id: 'dailyStockSale' as PageType, label: 'Daily Sales Report', icon: TrendingUp },
         { id: 'customersReport' as PageType, label: 'Customers Report', icon: Users },
-        { id: 'targetAchievement' as PageType, label: 'Target Vs Achievement', icon: Target },
         { id: 'lmtdSecondary' as PageType, label: 'LMTD Secondary Sales Vs MTD', icon: BarChart3 },
       ]
     },
@@ -121,15 +110,6 @@ function HomePageContent() {
       items: [
         { id: 'productsReport' as PageType, label: 'Products Report', icon: Package },
         { id: 'ordersReport' as PageType, label: 'Orders Report', icon: ShoppingCart },
-        { id: 'lowStockCallout' as PageType, label: 'Low Stock Callout Report', icon: AlertTriangle },
-      ]
-    },
-    {
-      id: 'store',
-      label: 'Store Management',
-      icon: Store,
-      items: [
-        { id: 'planogramReport' as PageType, label: 'Planogram Report', icon: Grid },
       ]
     },
   ]
@@ -384,10 +364,7 @@ function HomePageContent() {
           {currentPage === 'dashboard' && <DynamicWorkingDashboard />}
           {currentPage === 'dailyStockSale' && <DailyStockSaleReport />}
           {currentPage === 'storeUserVisit' && <StoreUserVisitReport />}
-          {currentPage === 'planogramReport' && <PlanogramReport />}
-          {currentPage === 'targetAchievement' && <TargetReport />}
           {currentPage === 'lmtdSecondary' && <LMTDSecondaryReport />}
-          {currentPage === 'lowStockCallout' && <LowStockReport />}
           {currentPage === 'customersReport' && <CustomersReport />}
           {currentPage === 'productsReport' && <ProductsReport />}
           {currentPage === 'ordersReport' && <OrdersReport />}
