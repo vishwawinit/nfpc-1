@@ -131,7 +131,7 @@ export async function GET(request: NextRequest) {
         v.user_name as "userName",
         v.user_type as "userType",
         v.route_code as "teamLeaderCode",
-        v.route_name as "teamLeaderName",
+        v.sub_area_code as "teamLeaderName",
         v.arrival_time as "arrivalTime",
         v.out_time as "departureTime",
         COALESCE(v.total_time_mins, 0) as "durationMinutes",
