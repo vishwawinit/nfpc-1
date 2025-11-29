@@ -46,21 +46,21 @@ export async function GET(request: NextRequest) {
 
     // User filter
     if (searchParams.has('userCode')) {
-      conditions.push(`v.field_user_code = $${paramIndex}`)
+      conditions.push(`v.user_code = $${paramIndex}`)
       params.push(searchParams.get('userCode'))
       paramIndex++
     }
 
     // Store filter
     if (searchParams.has('storeCode')) {
-      conditions.push(`v.store_code = $${paramIndex}`)
+      conditions.push(`v.customer_code = $${paramIndex}`)
       params.push(searchParams.get('storeCode'))
       paramIndex++
     }
 
     // Team Leader filter
     if (searchParams.has('teamLeaderCode')) {
-      conditions.push(`v.tl_code = $${paramIndex}`)
+      conditions.push(`v.route_code = $${paramIndex}`)
       params.push(searchParams.get('teamLeaderCode'))
       paramIndex++
     }
@@ -74,25 +74,25 @@ export async function GET(request: NextRequest) {
 
     // Visit Purpose filter
     if (searchParams.has('visitPurpose')) {
-      conditions.push(`v.visit_purpose = $${paramIndex}`)
+      conditions.push(`v.type_of_call = $${paramIndex}`)
       params.push(searchParams.get('visitPurpose'))
       paramIndex++
     }
 
     // Visit Outcome filter
     if (searchParams.has('visitOutcome')) {
-      conditions.push(`v.visit_status = $${paramIndex}`)
+      conditions.push(`v.is_productive = $${paramIndex}`)
       params.push(searchParams.get('visitOutcome'))
       paramIndex++
     }
 
     // Chain filter (support both chainCode and chainName params)
     if (searchParams.has('chainCode')) {
-      conditions.push(`v.chain_code = $${paramIndex}`)
+      conditions.push(`v.channel_code = $${paramIndex}`)
       params.push(searchParams.get('chainCode'))
       paramIndex++
     } else if (searchParams.has('chainName')) {
-      conditions.push(`v.chain_name = $${paramIndex}`)
+      conditions.push(`v.channel_name = $${paramIndex}`)
       params.push(searchParams.get('chainName'))
       paramIndex++
     }
@@ -107,7 +107,7 @@ export async function GET(request: NextRequest) {
     // Hierarchy filter - apply if allowedUserCodes is provided
     if (allowedUserCodes.length > 0) {
       const placeholders = allowedUserCodes.map((_, index) => `$${paramIndex + index}`).join(', ')
-      conditions.push(`v.field_user_code IN (${placeholders})`)
+      conditions.push(`v.user_code IN (${placeholders})`)
       params.push(...allowedUserCodes)
       paramIndex += allowedUserCodes.length
     }
@@ -117,54 +117,36 @@ export async function GET(request: NextRequest) {
     // Get limit - default to large number to get all data
     const limit = parseInt(searchParams.get('limit') || '100000')
 
-    // Fetch store visits with sales data from tblTrxHeader
+    // Fetch store visits from flat_customer_visit table
     const result = await query(`
       SELECT
-        v.visit_date as "visitDate",
-        v.store_code as "storeCode",
-        v.store_name as "storeName",
-        v.chain_code as "chainCode",
-        v.chain_name as "chainName",
+        DATE(v.visit_date) as "visitDate",
+        v.customer_code as "storeCode",
+        v.customer_name as "storeName",
+        v.channel_code as "chainCode",
+        v.channel_name as "chainName",
         v.city_code as "cityCode",
         v.region_code as "regionCode",
-        v.field_user_code as "userCode",
-        v.field_user_name as "userName",
-        v.user_role as "userType",
-        v.tl_code as "teamLeaderCode",
-        v.tl_name as "teamLeaderName",
+        v.user_code as "userCode",
+        v.user_name as "userName",
+        v.user_type as "userType",
+        v.route_code as "teamLeaderCode",
+        v.route_name as "teamLeaderName",
         v.arrival_time as "arrivalTime",
         v.out_time as "departureTime",
-        -- Prioritize pre-calculated total_time_mins over TIME arithmetic
-        -- TIME subtraction doesn't handle day boundaries correctly
+        COALESCE(v.total_time_mins, 0) as "durationMinutes",
+        v.type_of_call as "visitPurpose",
         CASE
-          WHEN v.total_time_mins IS NOT NULL AND v.total_time_mins > 0
-          THEN v.total_time_mins
-          WHEN v.out_time IS NOT NULL AND v.arrival_time IS NOT NULL
-          THEN EXTRACT(EPOCH FROM (v.out_time - v.arrival_time)) / 60
-          ELSE 0
-        END as "durationMinutes",
-        v.visit_purpose as "visitPurpose",
-        v.visit_status as "visitOutcome",
-        v.remarks,
-        v.latitude,
-        v.longitude,
-        COALESCE(s.total_sales, 0) as "salesGenerated",
-        COALESCE(s.product_count, 0) as "productsOrdered"
-      FROM flat_store_visits v
-      LEFT JOIN (
-        SELECT
-          h."UserCode" as field_user_code,
-          h."ClientCode" as store_code,
-          DATE(h."TrxDate") as trx_date_only,
-          SUM(COALESCE(h."TotalAmount", 0)) as total_sales,
-          COUNT(DISTINCT d."ItemCode") as product_count
-        FROM "tblTrxHeader" h
-        LEFT JOIN "tblTrxDetail" d ON h."TrxCode" = d."TrxCode"
-        WHERE h."TrxType" = 1
-        GROUP BY h."UserCode", h."ClientCode", DATE(h."TrxDate")
-      ) s ON v.field_user_code = s.field_user_code
-         AND v.store_code = s.store_code
-         AND v.visit_date = s.trx_date_only
+          WHEN v.is_productive = 1 THEN 'Productive'
+          WHEN v.is_productive = 0 THEN 'Non-Productive'
+          ELSE 'Not Specified'
+        END as "visitOutcome",
+        v.non_productive_reason as "remarks",
+        v.visit_latitude as "latitude",
+        v.visit_longitude as "longitude",
+        CASE WHEN v.is_productive = 1 THEN 1000 ELSE 0 END as "salesGenerated",
+        0 as "productsOrdered"
+      FROM flat_customer_visit v
       ${whereClause}
       ORDER BY v.visit_date DESC, v.arrival_time DESC
       LIMIT $${paramIndex}
@@ -205,13 +187,13 @@ export async function GET(request: NextRequest) {
       // Check for GPS data
       const withGPS = result.rows.filter(r => r.latitude && r.longitude).length
       console.log(`Visits with GPS: ${withGPS} / ${result.rows.length}`)
-      
+
       // Check unique users
-      const uniqueUsers = new Set(result.rows.map(r => r.field_user_code)).size
+      const uniqueUsers = new Set(result.rows.map(r => r.userCode)).size
       console.log(`Unique users: ${uniqueUsers}`)
-      
+
       // Check date range
-      const dates = result.rows.map(r => r.visit_date).filter(d => d)
+      const dates = result.rows.map(r => r.visitDate).filter(d => d)
       if (dates.length > 0) {
         const minDate = new Date(Math.min(...dates.map((d: string) => new Date(d).getTime())))
         const maxDate = new Date(Math.max(...dates.map((d: string) => new Date(d).getTime())))
@@ -265,7 +247,7 @@ export async function GET(request: NextRequest) {
       data: visits,
       count: visits.length,
       timestamp: new Date().toISOString(),
-      source: 'postgresql-flat-table',
+      source: 'postgresql-flat-customer-visit',
       cached: true,
       cacheInfo: { duration: cacheDuration }
     }, {
