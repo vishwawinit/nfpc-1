@@ -19,36 +19,28 @@ export async function GET(
       allowedUserCodes = await getChildUsers(loginUserCode)
     }
     
-    // Get order header information with hierarchy check
+    // Get order header information from flat table for better data availability
     let orderHeaderQuery = `
-      SELECT
-        h."TrxCode" as "orderCode",
-        h."TrxDate" as "orderDate",
-        h."ClientCode" as "customerCode",
-        COALESCE(c."Description", 'Unknown') as "customerName",
-        COALESCE(r."Description", 'Unknown') as "region",
-        COALESCE(ct."Description", 'Unknown') as "city",
-        COALESCE(ch."Description", 'Unknown') as "chain",
-        COALESCE(u."Description", 'Unknown') as "salesman",
-        h."UserCode" as "salesmanCode",
-        COALESCE(tl."Description", 'Unknown') as "teamLeader",
-        u."ReportsTo" as "teamLeaderCode"
-      FROM "tblTrxHeader" h
-      LEFT JOIN "tblCustomer" c ON h."ClientCode" = c."Code"
-      LEFT JOIN "tblRegion" r ON c."RegionCode" = r."Code"
-      LEFT JOIN "tblCity" ct ON c."CityCode" = ct."Code"
-      LEFT JOIN "tblCustomerDetail" cd ON c."Code" = cd."CustomerCode"
-      LEFT JOIN "tblChannel" ch ON cd."ChannelCode" = ch."Code"
-      LEFT JOIN "tblUser" u ON h."UserCode" = u."Code"
-      LEFT JOIN "tblUser" tl ON u."ReportsTo" = tl."Code"
-      WHERE h."TrxCode" = $1
-        AND h."TrxType" = 1
+      SELECT DISTINCT
+        trx_trxcode as "orderCode",
+        DATE(trx_trxdate) as "orderDate",
+        customer_code as "customerCode",
+        COALESCE(customer_description, 'Unknown') as "customerName",
+        COALESCE(route_subareacode, 'Unknown') as "subArea",
+        COALESCE(customer_channel_description, customer_channelcode, 'Unknown') as "chain",
+        COALESCE(user_description, trx_usercode, 'Unknown') as "salesman",
+        trx_usercode as "salesmanCode",
+        COALESCE(route_salesmancode, '') as "teamLeader",
+        COALESCE(route_salesmancode, '') as "teamLeaderCode"
+      FROM flat_daily_sales_report
+      WHERE trx_trxcode = $1
+        AND trx_trxtype = 1
     `
 
     // Add hierarchy filter if not admin
     if (allowedUserCodes.length > 0) {
       const userCodesStr = allowedUserCodes.map(code => `'${code}'`).join(', ')
-      orderHeaderQuery += ` AND h."UserCode" IN (${userCodesStr})`
+      orderHeaderQuery += ` AND trx_usercode IN (${userCodesStr})`
     }
 
     orderHeaderQuery += ` LIMIT 1`
@@ -69,23 +61,22 @@ export async function GET(
     // Get order line items
     const orderItemsQuery = `
       SELECT
-        d."ItemCode" as "productCode",
-        COALESCE(d."ItemDescription", i."Description", 'Unknown') as "productName",
-        COALESCE(i."GroupLevel1", 'Others') as "category",
-        ABS(COALESCE(d."QuantityBU", 0)) as quantity,
-        COALESCE(d."BasePrice", 0) as "unitPrice",
-        (ABS(COALESCE(d."QuantityBU", 0)) * COALESCE(d."BasePrice", 0)) as "grossAmount",
+        line_itemcode as "productCode",
+        COALESCE(line_itemdescription, item_description, 'Unknown') as "productName",
+        COALESCE(item_category_description, item_grouplevel1, 'Others') as "category",
+        ABS(COALESCE(line_quantitybu, 0)) as quantity,
+        COALESCE(line_baseprice, 0) as "unitPrice",
+        (ABS(COALESCE(line_quantitybu, 0)) * COALESCE(line_baseprice, 0)) as "grossAmount",
         0 as "discount",
-        CASE WHEN (d."BasePrice" * d."QuantityBU") > 0
-             THEN (d."BasePrice" * d."QuantityBU")
+        CASE WHEN (line_baseprice * line_quantitybu) > 0
+             THEN (line_baseprice * line_quantitybu)
              ELSE 0 END as "netAmount",
         0 as "tax"
-      FROM "tblTrxDetail" d
-      LEFT JOIN "tblItem" i ON d."ItemCode" = i."Code"
-      WHERE d."TrxCode" = $1
-        AND d."ItemCode" IS NOT NULL
-        AND COALESCE(d."QuantityBU", 0) != 0
-      ORDER BY d."ItemDescription"
+      FROM flat_daily_sales_report
+      WHERE trx_trxcode = $1
+        AND line_itemcode IS NOT NULL
+        AND COALESCE(line_quantitybu, 0) != 0
+      ORDER BY line_itemdescription
     `
 
     const orderItemsResult = await query(orderItemsQuery, [orderCode])
@@ -93,18 +84,18 @@ export async function GET(
     // Calculate order summary
     const summaryQuery = `
       SELECT
-        COUNT(*) as "itemCount",
-        SUM(ABS(COALESCE(d."QuantityBU", 0))) as "totalQuantity",
-        SUM(ABS(COALESCE(d."QuantityBU", 0)) * COALESCE(d."BasePrice", 0)) as "grossAmount",
+        COUNT(DISTINCT line_itemcode) as "itemCount",
+        SUM(ABS(COALESCE(line_quantitybu, 0))) as "totalQuantity",
+        SUM(ABS(COALESCE(line_quantitybu, 0)) * COALESCE(line_baseprice, 0)) as "grossAmount",
         0 as "totalDiscount",
         0 as "totalTax",
-        SUM(CASE WHEN (d."BasePrice" * d."QuantityBU") > 0
-                 THEN (d."BasePrice" * d."QuantityBU")
+        SUM(CASE WHEN (line_baseprice * line_quantitybu) > 0
+                 THEN (line_baseprice * line_quantitybu)
                  ELSE 0 END) as "orderTotal"
-      FROM "tblTrxDetail" d
-      WHERE d."TrxCode" = $1
-        AND d."ItemCode" IS NOT NULL
-        AND COALESCE(d."QuantityBU", 0) != 0
+      FROM flat_daily_sales_report
+      WHERE trx_trxcode = $1
+        AND line_itemcode IS NOT NULL
+        AND COALESCE(line_quantitybu, 0) != 0
     `
 
     const summaryResult = await query(summaryQuery, [orderCode])

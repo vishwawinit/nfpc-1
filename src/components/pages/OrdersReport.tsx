@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useCallback, useEffect } from 'react'
-import { BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
+import { BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
@@ -21,12 +21,10 @@ import { CustomDatePicker } from '@/components/ui/CustomDatePicker'
 const CHART_COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#06b6d4', '#84cc16']
 
 const formatCurrency = (value: number) => {
-  return new Intl.NumberFormat('en-IN', {
-    style: 'currency',
-    currency: 'INR',
+  return `AED ${new Intl.NumberFormat('en-US', {
     minimumFractionDigits: 0,
     maximumFractionDigits: 0
-  }).format(value)
+  }).format(value)}`
 }
 
 const formatNumber = (value: number) => {
@@ -54,13 +52,14 @@ export function OrdersReport() {
   })
   const [customEndDate, setCustomEndDate] = useState(() => new Date().toISOString().split('T')[0])
   
-  // Filters - changed from 'all' to empty string to match customer report
-  const [regionFilter, setRegionFilter] = useState('')
-  const [cityFilter, setCityFilter] = useState('')
-  const [chainFilter, setChainFilter] = useState('')
-  const [customerFilter, setCustomerFilter] = useState('')
-  const [salesmanFilter, setSalesmanFilter] = useState('')
+  // Hierarchical filters - Area → Sub Area → Team Leader → Field User Role → Field User → Channel → Customer
+  const [areaFilter, setAreaFilter] = useState('')
+  const [subAreaFilter, setSubAreaFilter] = useState('')
   const [teamLeaderFilter, setTeamLeaderFilter] = useState('')
+  const [fieldUserRoleFilter, setFieldUserRoleFilter] = useState('')
+  const [fieldUserFilter, setFieldUserFilter] = useState('')
+  const [channelFilter, setChannelFilter] = useState('')
+  const [customerFilter, setCustomerFilter] = useState('')
   const [categoryFilter, setCategoryFilter] = useState('')
   const [searchQuery, setSearchQuery] = useState('')
   
@@ -80,19 +79,27 @@ export function OrdersReport() {
       } else {
         params.append('range', selectedPeriod)
       }
-      
+
+      // Add current filter selections for cascading
+      if (areaFilter) params.append('area', areaFilter)
+      if (subAreaFilter) params.append('subArea', subAreaFilter)
+      if (teamLeaderFilter) params.append('teamLeader', teamLeaderFilter)
+      if (fieldUserRoleFilter) params.append('fieldUserRole', fieldUserRoleFilter)
+      if (fieldUserFilter) params.append('fieldUser', fieldUserFilter)
+      if (channelFilter) params.append('channel', channelFilter)
+
       let url = `/api/orders/filters?${params.toString()}`
-      
+
       const response = await fetch(url)
       const result = await response.json()
-      
+
       if (result.success) {
         setFilterOptions(result.filters)
       }
     } catch (error) {
       console.error('Error fetching filter options:', error)
     }
-  }, [selectedPeriod, dateRangeType, customStartDate, customEndDate])
+  }, [selectedPeriod, dateRangeType, customStartDate, customEndDate, areaFilter, subAreaFilter, teamLeaderFilter, fieldUserRoleFilter, fieldUserFilter, channelFilter])
   
   const fetchOrdersData = useCallback(async () => {
     setLoading(true)
@@ -110,12 +117,13 @@ export function OrdersReport() {
         params.append('range', selectedPeriod)
       }
       
-      if (regionFilter) params.append('region', regionFilter)
-      if (cityFilter) params.append('city', cityFilter)
-      if (chainFilter) params.append('chain', chainFilter)
-      if (customerFilter) params.append('customer', customerFilter)
-      if (salesmanFilter) params.append('salesman', salesmanFilter)
+      if (areaFilter) params.append('area', areaFilter)
+      if (subAreaFilter) params.append('subArea', subAreaFilter)
       if (teamLeaderFilter) params.append('teamLeader', teamLeaderFilter)
+      if (fieldUserRoleFilter) params.append('fieldUserRole', fieldUserRoleFilter)
+      if (fieldUserFilter) params.append('fieldUser', fieldUserFilter)
+      if (channelFilter) params.append('channel', channelFilter)
+      if (customerFilter) params.append('customer', customerFilter)
       if (categoryFilter) params.append('category', categoryFilter)
       if (searchQuery) params.append('search', searchQuery)
       
@@ -134,7 +142,7 @@ export function OrdersReport() {
     } finally {
       setLoading(false)
     }
-  }, [selectedPeriod, dateRangeType, customStartDate, customEndDate, currentPage, customerFilter, regionFilter, cityFilter, chainFilter, salesmanFilter, teamLeaderFilter, categoryFilter, searchQuery, itemsPerPage])
+  }, [selectedPeriod, dateRangeType, customStartDate, customEndDate, currentPage, areaFilter, subAreaFilter, teamLeaderFilter, fieldUserRoleFilter, fieldUserFilter, channelFilter, customerFilter, categoryFilter, searchQuery, itemsPerPage])
   
   const fetchOrderDetails = async (orderCode: string) => {
     setLoadingDetails(true)
@@ -165,12 +173,13 @@ export function OrdersReport() {
   }, [fetchOrdersData])
   
   const resetFilters = () => {
-    setRegionFilter('')
-    setCityFilter('')
-    setChainFilter('')
-    setCustomerFilter('')
-    setSalesmanFilter('')
+    setAreaFilter('')
+    setSubAreaFilter('')
     setTeamLeaderFilter('')
+    setFieldUserRoleFilter('')
+    setFieldUserFilter('')
+    setChannelFilter('')
+    setCustomerFilter('')
     setCategoryFilter('')
     setSearchQuery('')
     setDateRangeType('preset')
@@ -182,9 +191,9 @@ export function OrdersReport() {
     setCurrentPage(1)
   }
   
-  const hasActiveFilters = regionFilter || cityFilter || chainFilter || 
-    customerFilter || salesmanFilter || teamLeaderFilter || 
-    categoryFilter || searchQuery
+  const hasActiveFilters = areaFilter || subAreaFilter || teamLeaderFilter ||
+    fieldUserRoleFilter || fieldUserFilter || channelFilter ||
+    customerFilter || categoryFilter || searchQuery
   
   const exportOrderDetails = async (orderDetails: any) => {
     try {
@@ -202,8 +211,7 @@ export function OrdersReport() {
       })])
       worksheet.addRow(['Customer Code:', orderDetails.header.customerCode])
       worksheet.addRow(['Customer Name:', orderDetails.header.customerName])
-      worksheet.addRow(['Region:', orderDetails.header.region])
-      worksheet.addRow(['City:', orderDetails.header.city])
+      worksheet.addRow(['Sub Area:', orderDetails.header.subArea || orderDetails.header.city || '-'])
       worksheet.addRow(['Chain:', orderDetails.header.chain])
       worksheet.addRow(['Salesman:', orderDetails.header.salesman])
       worksheet.addRow([])
@@ -297,12 +305,13 @@ export function OrdersReport() {
         params.append('range', selectedPeriod)
       }
       
-      if (regionFilter) params.append('region', regionFilter)
-      if (cityFilter) params.append('city', cityFilter)
-      if (chainFilter) params.append('chain', chainFilter)
-      if (customerFilter) params.append('customer', customerFilter)
-      if (salesmanFilter) params.append('salesman', salesmanFilter)
+      if (areaFilter) params.append('area', areaFilter)
+      if (subAreaFilter) params.append('subArea', subAreaFilter)
       if (teamLeaderFilter) params.append('teamLeader', teamLeaderFilter)
+      if (fieldUserRoleFilter) params.append('fieldUserRole', fieldUserRoleFilter)
+      if (fieldUserFilter) params.append('fieldUser', fieldUserFilter)
+      if (channelFilter) params.append('channel', channelFilter)
+      if (customerFilter) params.append('customer', customerFilter)
       if (categoryFilter) params.append('category', categoryFilter)
       
       const response = await fetch(`/api/orders?${params.toString()}`)
@@ -320,8 +329,7 @@ export function OrdersReport() {
         { header: 'Order Date', key: 'orderDate', width: 15 },
         { header: 'Customer Code', key: 'customerCode', width: 15 },
         { header: 'Customer Name', key: 'customerName', width: 30 },
-        { header: 'Region', key: 'region', width: 20 },
-        { header: 'City', key: 'city', width: 20 },
+        { header: 'Sub Area', key: 'subArea', width: 20 },
         { header: 'Chain', key: 'chain', width: 20 },
         { header: 'Salesman', key: 'salesman', width: 20 },
         { header: 'Team Leader', key: 'teamLeader', width: 20 },
@@ -467,60 +475,115 @@ export function OrdersReport() {
                   )}
                 </div>
                 
-                {/* Filter Section */}
+                {/* Hierarchical Filter Section */}
+                {/* Level 1: Area */}
+                <SearchableSelect
+                  value={areaFilter}
+                  onChange={(value) => {
+                    setAreaFilter(value || '')
+                    // Reset child filters when area changes
+                    setSubAreaFilter('')
+                    setTeamLeaderFilter('')
+                    setFieldUserRoleFilter('')
+                    setFieldUserFilter('')
+                    setChannelFilter('')
+                    setCustomerFilter('')
+                  }}
+                  options={filterOptions?.areas || []}
+                  placeholder="All Areas"
+                  label="Area"
+                />
+
+                {/* Level 2: Sub Area */}
+                <SearchableSelect
+                  value={subAreaFilter}
+                  onChange={(value) => {
+                    setSubAreaFilter(value || '')
+                    // Reset child filters when sub area changes
+                    setTeamLeaderFilter('')
+                    setFieldUserRoleFilter('')
+                    setFieldUserFilter('')
+                    setChannelFilter('')
+                    setCustomerFilter('')
+                  }}
+                  options={filterOptions?.subAreas || []}
+                  placeholder="All Sub Areas"
+                  label="Sub Area"
+                />
+
+                {/* Level 3: Team Leader */}
+                <SearchableSelect
+                  value={teamLeaderFilter}
+                  onChange={(value) => {
+                    setTeamLeaderFilter(value || '')
+                    // Reset child filters when team leader changes
+                    setFieldUserRoleFilter('')
+                    setFieldUserFilter('')
+                    setChannelFilter('')
+                    setCustomerFilter('')
+                  }}
+                  options={filterOptions?.teamLeaders || []}
+                  placeholder="All Team Leaders"
+                  label="Team Leader"
+                />
+
+                {/* Level 4: Field User Role */}
+                <SearchableSelect
+                  value={fieldUserRoleFilter}
+                  onChange={(value) => {
+                    setFieldUserRoleFilter(value || '')
+                    // Reset child filters when field user role changes
+                    setFieldUserFilter('')
+                    setChannelFilter('')
+                    setCustomerFilter('')
+                  }}
+                  options={filterOptions?.fieldUserRoles || []}
+                  placeholder="All Roles"
+                  label="Field User Role"
+                />
+
+                {/* Level 5: Field User (Salesman) */}
+                <SearchableSelect
+                  value={fieldUserFilter}
+                  onChange={(value) => {
+                    setFieldUserFilter(value || '')
+                    // Reset child filters when field user changes
+                    setChannelFilter('')
+                    setCustomerFilter('')
+                  }}
+                  options={filterOptions?.fieldUsers || []}
+                  placeholder="All Field Users"
+                  label="Field User"
+                />
+
+                {/* Level 6: Channel */}
+                <SearchableSelect
+                  value={channelFilter}
+                  onChange={(value) => {
+                    setChannelFilter(value || '')
+                    // Reset customer when channel changes
+                    setCustomerFilter('')
+                  }}
+                  options={filterOptions?.channels || []}
+                  placeholder="All Channels"
+                  label="Channel"
+                />
+
+                {/* Level 7: Customer (Store) */}
                 <SearchableSelect
                   value={customerFilter}
                   onChange={(value) => setCustomerFilter(value || '')}
                   options={filterOptions?.customers || []}
-                  placeholder="Select Customer"
+                  placeholder="All Customers"
                   label="Customer"
                 />
-                
-                <SearchableSelect
-                  value={regionFilter}
-                  onChange={(value) => setRegionFilter(value || '')}
-                  options={filterOptions?.regions || []}
-                  placeholder="Select Region"
-                  label="Region"
-                />
-                
-                <SearchableSelect
-                  value={cityFilter}
-                  onChange={(value) => setCityFilter(value || '')}
-                  options={filterOptions?.cities || []}
-                  placeholder="Select City"
-                  label="City"
-                />
-                
-                <SearchableSelect
-                  value={chainFilter}
-                  onChange={(value) => setChainFilter(value || '')}
-                  options={filterOptions?.chains || []}
-                  placeholder="Select Chain"
-                  label="Chain"
-                />
-                
-                <SearchableSelect
-                  value={salesmanFilter}
-                  onChange={(value) => setSalesmanFilter(value || '')}
-                  options={filterOptions?.salesmen || []}
-                  placeholder="Select Salesman"
-                  label="Salesman"
-                />
-                
-                <SearchableSelect
-                  value={teamLeaderFilter}
-                  onChange={(value) => setTeamLeaderFilter(value || '')}
-                  options={filterOptions?.teamLeaders || []}
-                  placeholder="Select Team Leader"
-                  label="Team Leader"
-                />
-                
+
+                {/* Product Category Filter (Independent) */}
                 <SearchableSelect
                   value={categoryFilter}
                   onChange={(value) => setCategoryFilter(value || '')}
                   options={filterOptions?.productCategories || []}
-                  placeholder="Select Category"
+                  placeholder="All Categories"
                   label="Product Category"
                 />
               </div>
@@ -741,8 +804,31 @@ export function OrdersReport() {
       {/* Content based on view mode */}
       {activeView === 'summary' ? (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          {/* Orders by Region */}
-          {data?.charts?.regionWise && (
+          {/* Orders by Area */}
+          {data?.charts?.areaWise && (
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <MapPin className="h-5 w-5" />
+                  Orders by Area
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <ResponsiveContainer width="100%" height={300}>
+                  <BarChart data={data.charts.areaWise.slice(0, 10)}>
+                    <CartesianGrid strokeDasharray="3 3" />
+                    <XAxis dataKey="area" angle={-45} textAnchor="end" height={80} />
+                    <YAxis tickFormatter={(value) => `${(value / 1000).toFixed(0)}K`} />
+                    <Tooltip formatter={(value: any) => formatCurrency(value)} />
+                    <Bar dataKey="totalSales" fill="#3b82f6" />
+                  </BarChart>
+                </ResponsiveContainer>
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Orders by Region (Parent Area) */}
+          {data?.charts?.subAreaWise && (
             <Card>
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
@@ -752,41 +838,18 @@ export function OrdersReport() {
               </CardHeader>
               <CardContent>
                 <ResponsiveContainer width="100%" height={300}>
-                  <BarChart data={data.charts.regionWise.slice(0, 10)}>
+                  <BarChart data={data.charts.subAreaWise.slice(0, 10)}>
                     <CartesianGrid strokeDasharray="3 3" />
-                    <XAxis dataKey="region" angle={-45} textAnchor="end" height={80} />
+                    <XAxis dataKey="subArea" angle={-45} textAnchor="end" height={80} />
                     <YAxis tickFormatter={(value) => `${(value / 1000).toFixed(0)}K`} />
                     <Tooltip formatter={(value: any) => formatCurrency(value)} />
-                    <Bar dataKey="totalSales" fill="#3b82f6" />
+                    <Bar dataKey="totalSales" fill="#8b5cf6" />
                   </BarChart>
                 </ResponsiveContainer>
               </CardContent>
             </Card>
           )}
-          
-          {/* Orders by City */}
-          {data?.charts?.cityWise && (
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <MapPin className="h-5 w-5" />
-                  Orders by City
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <ResponsiveContainer width="100%" height={300}>
-                  <BarChart data={data.charts.cityWise.slice(0, 10)}>
-                    <CartesianGrid strokeDasharray="3 3" />
-                    <XAxis dataKey="city" angle={-45} textAnchor="end" height={80} />
-                    <YAxis tickFormatter={(value) => `${(value / 1000).toFixed(0)}K`} />
-                    <Tooltip formatter={(value: any) => formatCurrency(value)} />
-                    <Bar dataKey="totalSales" fill="#10b981" />
-                  </BarChart>
-                </ResponsiveContainer>
-              </CardContent>
-            </Card>
-          )}
-          
+
           {/* Orders by Chain */}
           {data?.charts?.chainWise && (
             <Card>
@@ -810,45 +873,53 @@ export function OrdersReport() {
             </Card>
           )}
           
-          {/* Orders by Product Group */}
+          {/* Orders by Products Category */}
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
                 <Package className="h-5 w-5" />
-                Orders by Product Group
+                Orders by Products Category
               </CardTitle>
             </CardHeader>
             <CardContent>
               {data?.charts?.categoryWise && data.charts.categoryWise.length > 0 ? (
-                <ResponsiveContainer width="100%" height={300}>
+                <ResponsiveContainer width="100%" height={350}>
                   <PieChart>
                     <Pie
-                      data={data.charts.categoryWise}
-                      cx="50%"
+                      data={[...data.charts.categoryWise].sort((a: any, b: any) => b.totalSales - a.totalSales)}
+                      cx="35%"
                       cy="50%"
                       labelLine={false}
-                      label={(entry: any) => {
-                        const percentage = ((entry.totalSales / metrics.totalSales) * 100).toFixed(1)
-                        return `${entry.category || 'Others'}: ${percentage}%`
-                      }}
-                      outerRadius={80}
+                      outerRadius={100}
                       fill="#8884d8"
                       dataKey="totalSales"
                       nameKey="category"
                     >
-                      {data.charts.categoryWise.map((entry: any, index: number) => (
+                      {[...data.charts.categoryWise].sort((a: any, b: any) => b.totalSales - a.totalSales).map((entry: any, index: number) => (
                         <Cell key={`cell-${index}`} fill={CHART_COLORS[index % CHART_COLORS.length]} />
                       ))}
                     </Pie>
-                    <Tooltip 
+                    <Tooltip
                       formatter={(value: any) => formatCurrency(value)}
-                      labelFormatter={(label) => `Product Group: ${label}`}
+                      labelFormatter={(label) => `Product Category: ${label}`}
+                    />
+                    <Legend
+                      layout="vertical"
+                      align="right"
+                      verticalAlign="middle"
+                      iconType="circle"
+                      formatter={(value: string, entry: any) => {
+                        const sortedData = [...data.charts.categoryWise].sort((a: any, b: any) => b.totalSales - a.totalSales)
+                        const item = sortedData.find((cat: any) => cat.category === value)
+                        const percentage = item ? ((item.totalSales / metrics.totalSales) * 100).toFixed(1) : '0'
+                        return `${value} (${percentage}%)`
+                      }}
                     />
                   </PieChart>
                 </ResponsiveContainer>
               ) : (
                 <div className="flex items-center justify-center h-[300px] text-gray-500">
-                  <p>No product group data available for the selected period</p>
+                  <p>No product category data available for the selected period</p>
                 </div>
               )}
             </CardContent>
@@ -860,26 +931,29 @@ export function OrdersReport() {
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
                   <Users className="h-5 w-5" />
-                  Top 10 Customers
+                  Top 10 Customers by Sales
                 </CardTitle>
               </CardHeader>
               <CardContent>
                 <ResponsiveContainer width="100%" height={300}>
                   <BarChart data={data.charts.topCustomers.slice(0, 10)}>
                     <CartesianGrid strokeDasharray="3 3" />
-                    <XAxis 
-                      dataKey="customerName" 
-                      angle={-45} 
-                      textAnchor="end" 
+                    <XAxis
+                      dataKey="customerName"
+                      angle={-45}
+                      textAnchor="end"
                       height={100}
                       tickFormatter={(value) => truncateName(value, 15)}
                     />
                     <YAxis tickFormatter={(value) => `${(value / 1000).toFixed(0)}K`} />
-                    <Tooltip 
-                      formatter={(value: any) => formatCurrency(value)}
+                    <Tooltip
+                      formatter={(value: any, name: string) => {
+                        if (name === 'totalSales') return formatCurrency(value)
+                        return formatNumber(value)
+                      }}
                       labelFormatter={(label) => label}
                     />
-                    <Bar dataKey="totalSales" fill="#ef4444" />
+                    <Bar dataKey="totalSales" fill="#ef4444" name="Total Sales" />
                   </BarChart>
                 </ResponsiveContainer>
               </CardContent>
@@ -957,8 +1031,7 @@ export function OrdersReport() {
                     <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider min-w-[150px]">Order Code</th>
                     <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider min-w-[120px]">Date</th>
                     <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider min-w-[250px]">Customer</th>
-                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider min-w-[150px]">Region</th>
-                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider min-w-[150px]">City</th>
+                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider min-w-[150px]">Sub Area</th>
                     <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider min-w-[150px]">Chain</th>
                     <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider min-w-[180px]">Salesman</th>
                     <th className="px-4 py-3 text-right text-xs font-semibold text-gray-700 uppercase tracking-wider min-w-[80px]">Items</th>
@@ -980,8 +1053,7 @@ export function OrdersReport() {
                           })}
                         </td>
                         <td className="px-4 py-3 text-sm text-gray-900">{order.customerName}</td>
-                        <td className="px-4 py-3 text-sm text-gray-700">{order.region || '-'}</td>
-                        <td className="px-4 py-3 text-sm text-gray-700">{order.city || '-'}</td>
+                        <td className="px-4 py-3 text-sm text-gray-700">{order.subArea || '-'}</td>
                         <td className="px-4 py-3 text-sm text-gray-700">{order.chain || '-'}</td>
                         <td className="px-4 py-3 text-sm text-gray-700">{order.salesman || '-'}</td>
                         <td className="px-4 py-3 text-sm text-right text-gray-900">{order.itemCount || 0}</td>
@@ -1004,7 +1076,7 @@ export function OrdersReport() {
                     ))
                   ) : (
                     <tr>
-                      <td colSpan={11} className="px-4 py-8 text-center text-sm text-gray-500">
+                      <td colSpan={10} className="px-4 py-8 text-center text-sm text-gray-500">
                         No orders found for the selected filters
                       </td>
                     </tr>
@@ -1064,11 +1136,10 @@ export function OrdersReport() {
             <div className="text-center py-8"><RefreshCw className="h-6 w-6 animate-spin inline" /></div>
           ) : orderDetails ? (
             <div className="space-y-4">
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4 p-4 bg-gray-50 rounded">
+              <div className="grid grid-cols-2 md:grid-cols-3 gap-4 p-4 bg-gray-50 rounded">
                 <div><p className="text-sm text-gray-600">Customer</p><p className="font-semibold">{orderDetails.header.customerName}</p></div>
                 <div><p className="text-sm text-gray-600">Order Date</p><p className="font-semibold">{new Date(orderDetails.header.orderDate).toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' })}</p></div>
-                <div><p className="text-sm text-gray-600">Region</p><p className="font-semibold">{orderDetails.header.region}</p></div>
-                <div><p className="text-sm text-gray-600">City</p><p className="font-semibold">{orderDetails.header.city}</p></div>
+                <div><p className="text-sm text-gray-600">Sub Area</p><p className="font-semibold">{orderDetails.header.subArea || orderDetails.header.city}</p></div>
               </div>
               <Table>
                 <TableHeader>

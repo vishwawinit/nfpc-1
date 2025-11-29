@@ -41,6 +41,33 @@ class DatabaseConnection {
       console.log('Database connection established successfully')
     } catch (error) {
       console.error('Failed to connect to database:', error)
+      console.error(`Database host: ${config.host}:${config.port}`)
+      console.error(`Database name: ${config.database}`)
+
+      // Provide more helpful error messages
+      if (error instanceof Error) {
+        if (error.message.includes('ETIMEDOUT')) {
+          console.error('\n=== DATABASE CONNECTION TIMEOUT ===')
+          console.error(`The database server at ${config.host}:${config.port} is not responding.`)
+          console.error('Possible solutions:')
+          console.error('1. Check if you are connected to the required VPN')
+          console.error('2. Verify the database server is running')
+          console.error('3. Check your .env file for correct database credentials')
+          console.error('4. Ensure firewall is not blocking the connection')
+          console.error('===================================\n')
+        } else if (error.message.includes('ECONNREFUSED')) {
+          console.error('\n=== DATABASE CONNECTION REFUSED ===')
+          console.error(`The database server at ${config.host}:${config.port} refused the connection.`)
+          console.error('The server may be down or not accepting connections.')
+          console.error('===================================\n')
+        } else if (error.message.includes('ENOTFOUND')) {
+          console.error('\n=== DATABASE HOST NOT FOUND ===')
+          console.error(`The hostname ${config.host} could not be resolved.`)
+          console.error('Check your .env file for the correct database host.')
+          console.error('===============================\n')
+        }
+      }
+
       throw error
     }
 
