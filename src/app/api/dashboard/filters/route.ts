@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { query } from '@/lib/database'
+import { apiCache } from '@/lib/apiCache'
 
 // Enable caching with revalidation
-export const dynamic = 'auto'
-export const revalidate = 600 // Fallback: 10 minutes for filters
+export const dynamic = 'force-dynamic' // Must be dynamic to respect query params
+export const revalidate = false // Disable automatic revalidation, use manual caching
 
 // Table name constant
 const SALES_TABLE = 'flat_daily_sales_report'
@@ -311,14 +312,29 @@ export async function GET(request: NextRequest) {
       storeCode: searchParams.get('storeCode')
     }
 
+    // Check cache first - each unique filter combination gets its own cache entry
+    const cachedData = apiCache.get('/api/dashboard/filters', searchParams)
+    if (cachedData) {
+      return NextResponse.json(cachedData)
+    }
+
+    // Fetch from database if not cached
+    console.log('🔄 Fetching fresh filter data from database...')
     const filterData = await fetchDashboardFiltersInternal(params)
 
-    return NextResponse.json({
+    // Prepare response
+    const responseData = {
       success: true,
       data: filterData,
       timestamp: new Date().toISOString(),
-      source: 'flat_daily_sales_report'
-    })
+      source: 'flat_daily_sales_report',
+      cached: false
+    }
+
+    // Store in cache
+    apiCache.set('/api/dashboard/filters', searchParams, responseData)
+
+    return NextResponse.json(responseData)
   } catch (error) {
     console.error('Dashboard Filters API error:', error)
     return NextResponse.json({

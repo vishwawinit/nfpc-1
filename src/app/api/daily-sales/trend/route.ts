@@ -1,11 +1,10 @@
 import { NextResponse } from 'next/server'
 import { getDailyTrend } from '@/services/dailySalesService'
-import { unstable_cache } from 'next/cache'
-import { shouldCacheFilters, generateFilterCacheKey, getCacheControlHeader, getCacheDuration } from '@/lib/cache-utils'
+import { apiCache } from '@/lib/apiCache'
 
 // Enable caching with revalidation
-export const dynamic = 'auto'
-export const revalidate = 300 // Fallback: 5 minutes
+export const dynamic = 'force-dynamic'
+export const revalidate = false // Use manual caching
 
 export async function GET(request: Request) {
   try {
@@ -41,39 +40,24 @@ export async function GET(request: Request) {
     if (productCode) filters.productCode = productCode
     if (productCategory) filters.productCategory = productCategory
 
-    const shouldCache = shouldCacheFilters(dateRange || null, startDate, endDate)
-    const hasCustomDates = !!(startDate && endDate)
-    const cacheDuration = getCacheDuration(dateRange || 'thisMonth', hasCustomDates, startDate, endDate)
-
-    let data
-    if (shouldCache) {
-      const cacheKey = generateFilterCacheKey('daily-sales-trend', filters)
-      const cachedFetchTrend = unstable_cache(
-        async () => getDailyTrend(filters),
-        [cacheKey],
-        {
-          revalidate: cacheDuration,
-          tags: ['daily-sales-trend']
-        }
-      )
-      data = await cachedFetchTrend()
-    } else {
-      data = await getDailyTrend(filters)
+    // Check cache first - each unique filter combination gets its own cache entry
+    const cachedData = apiCache.get('/api/daily-sales/trend', searchParams)
+    if (cachedData) {
+      return NextResponse.json({
+        trend: cachedData,
+        cached: true
+      })
     }
 
-    return NextResponse.json({ 
-      trend: data, 
-      cached: shouldCache, 
-      cacheInfo: { 
-        duration: shouldCache ? cacheDuration : 0,
-        reason: shouldCache ? undefined : (dateRange === 'today' ? 'today' : 'custom-range')
-      } 
-    }, { 
-      headers: { 
-        'Cache-Control': shouldCache 
-          ? getCacheControlHeader(cacheDuration)
-          : 'no-cache, no-store, must-revalidate'
-      } 
+    // Fetch fresh data if not cached
+    const data = await getDailyTrend(filters)
+
+    // Store in cache
+    apiCache.set('/api/daily-sales/trend', searchParams, data)
+
+    return NextResponse.json({
+      trend: data,
+      cached: false
     })
   } catch (error) {
     console.error('Error in daily trend API:', error)

@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { query } from '@/lib/database'
+import { apiCache } from '@/lib/apiCache'
 
 // Enable caching with revalidation based on Cache-Control headers
-export const dynamic = 'auto'
-export const revalidate = 300 // Fallback: 5 minutes
+export const dynamic = 'force-dynamic'
+export const revalidate = false // Use manual caching
 
 const SALES_TABLE = 'flat_daily_sales_report'
 
@@ -201,6 +202,12 @@ export async function GET(request: NextRequest) {
     const customStartDate = searchParams.get('startDate')
     const customEndDate = searchParams.get('endDate')
 
+    // Check cache first - each unique filter combination gets its own cache entry
+    const cachedData = apiCache.get('/api/products/top', searchParams)
+    if (cachedData) {
+      return NextResponse.json(cachedData)
+    }
+
     // Get date range - prioritize custom dates
     let startDate: string, endDate: string
     if (customStartDate && customEndDate) {
@@ -295,26 +302,19 @@ export async function GET(request: NextRequest) {
       currency: String(row.currency || 'AED')
     }))
 
-    // Calculate cache duration
-    const hasCustomDates = !!(customStartDate && customEndDate)
-    const cacheDuration = getCacheDuration(dateRange, hasCustomDates)
-
-    return NextResponse.json({
+    // Prepare response
+    const responseData = {
       success: true,
       data: topProducts,
       timestamp: new Date().toISOString(),
-      cached: true,
-      cacheInfo: {
-        duration: cacheDuration,
-        dateRange,
-        hasCustomDates
-      },
+      cached: false,
       source: 'flat_daily_sales_report'
-    }, {
-      headers: {
-        'Cache-Control': `public, s-maxage=${cacheDuration}, stale-while-revalidate=${cacheDuration * 2}`
-      }
-    })
+    }
+
+    // Store in cache
+    apiCache.set('/api/products/top', searchParams, responseData)
+
+    return NextResponse.json(responseData)
 
   } catch (error) {
     console.error('❌ TOP PRODUCTS API CRITICAL ERROR:', error)

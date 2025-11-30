@@ -14,12 +14,14 @@ interface EnhancedKPICardsProps {
   dateRange?: string
   additionalParams?: URLSearchParams
   onError?: (error: string) => void
+  enabled?: boolean
 }
 
 export const EnhancedKPICards: React.FC<EnhancedKPICardsProps> = ({
   dateRange = 'thisMonth',
   additionalParams,
-  onError
+  onError,
+  enabled = true
 }) => {
   // Memoize params to prevent unnecessary re-renders
   const params = useMemo(() => {
@@ -27,6 +29,7 @@ export const EnhancedKPICards: React.FC<EnhancedKPICardsProps> = ({
   }, [additionalParams])
 
   const { data, loading, error } = useDashboardKPI(dateRange, {
+    enabled,
     onError,
     additionalParams: params
   })
@@ -157,10 +160,6 @@ export const EnhancedKPICards: React.FC<EnhancedKPICardsProps> = ({
                       <span className="font-semibold text-red-600">-{formatNumber(badReturns)}</span>
                     </div>
                   </div>
-                  <div className="flex items-center gap-1 text-xs mt-3 text-green-600">
-                    ↑<span className="font-medium">{Math.abs(salesChange).toFixed(1)}%</span>
-                    <span className="text-gray-500 ml-0.5">{comparisonText}</span>
-                  </div>
                 </>
               )}
             </div>
@@ -212,10 +211,6 @@ export const EnhancedKPICards: React.FC<EnhancedKPICardsProps> = ({
                       <span className="font-semibold text-red-600">-{formatNumber(badReturnOrders)}</span>
                     </div>
                   </div>
-                  <div className="flex items-center gap-1 text-xs mt-3 text-green-600">
-                    ↑<span className="font-medium">{Math.abs(ordersChange).toFixed(1)}%</span>
-                    <span className="text-gray-500 ml-0.5">{comparisonText}</span>
-                  </div>
                 </>
               )}
             </div>
@@ -249,10 +244,6 @@ export const EnhancedKPICards: React.FC<EnhancedKPICardsProps> = ({
                 <>
                   <div className="text-2xl sm:text-3xl font-bold text-gray-900 mb-1">
                     {formatNumber(customers)}
-                  </div>
-                  <div className="flex items-center gap-1 text-xs text-green-600">
-                    ↑<span className="font-medium">{Math.abs(customersChange).toFixed(1)}%</span>
-                    <span className="text-gray-500 ml-0.5">{comparisonText}</span>
                   </div>
                 </>
               )}
@@ -294,10 +285,6 @@ export const EnhancedKPICards: React.FC<EnhancedKPICardsProps> = ({
                         {avgOrderValue.toFixed(2)}
                       </div>
                     </div>
-                  </div>
-                  <div className="flex items-center gap-1 text-xs text-green-600">
-                    ↑<span className="font-medium">{Math.abs(avgOrderChange).toFixed(1)}%</span>
-                    <span className="text-gray-500 ml-0.5">{comparisonText}</span>
                   </div>
                 </>
               )}

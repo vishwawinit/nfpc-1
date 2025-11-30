@@ -66,11 +66,12 @@ export interface HierarchyInfo {
   allowedFieldUserCount: number
 }
 
-// Helper function to get default date range (this month)
+// Helper function to get default date range (last month)
 const getDefaultDateRange = () => {
   const currentDate = new Date()
-  const startDate = new Date(currentDate.getFullYear(), currentDate.getMonth(), 1)
-  const endDate = currentDate
+  // Default to LAST MONTH instead of this month
+  const lastMonthStart = new Date(currentDate.getFullYear(), currentDate.getMonth() - 1, 1)
+  const lastMonthEnd = new Date(currentDate.getFullYear(), currentDate.getMonth(), 0)
 
   // Format date without timezone conversion to avoid off-by-one errors
   const formatDate = (date: Date) => {
@@ -81,13 +82,13 @@ const getDefaultDateRange = () => {
   }
 
   return {
-    startDate: formatDate(startDate),
-    endDate: formatDate(endDate)
+    startDate: formatDate(lastMonthStart),
+    endDate: formatDate(lastMonthEnd)
   }
 }
 
 export const useDashboardFilters = () => {
-  // Initialize with default values - set default date range to this month
+  // Initialize with default values - set default date range to last month
   const defaultDates = getDefaultDateRange()
   const [filters, setFilters] = useState<DashboardFilters>({
     startDate: defaultDates.startDate,

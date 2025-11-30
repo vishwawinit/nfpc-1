@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { query } from '@/lib/database'
+import { apiCache } from '@/lib/apiCache'
 
 // Enable caching with revalidation based on Cache-Control headers
-export const dynamic = 'auto'
-export const revalidate = 300 // Fallback: 5 minutes
+export const dynamic = 'force-dynamic' // Must be dynamic to respect query params
+export const revalidate = false // Use manual caching instead
 
 const SALES_TABLE = 'flat_daily_sales_report'
 
@@ -453,13 +454,30 @@ export async function GET(request: NextRequest) {
       customEndDate: searchParams.get('endDate')
     }
 
+    // Check cache first - each unique filter combination gets its own cache entry
+    const cachedData = apiCache.get('/api/dashboard/kpi', searchParams)
+    if (cachedData) {
+      return NextResponse.json({
+        success: true,
+        data: cachedData,
+        timestamp: new Date().toISOString(),
+        source: 'flat_daily_sales_report',
+        cached: true
+      })
+    }
+
+    // Fetch fresh data if not cached
     const kpiData = await fetchKPIDataInternal(filterParams)
+
+    // Store in cache
+    apiCache.set('/api/dashboard/kpi', searchParams, kpiData)
 
     return NextResponse.json({
       success: true,
       data: kpiData,
       timestamp: new Date().toISOString(),
-      source: 'flat_daily_sales_report'
+      source: 'flat_daily_sales_report',
+      cached: false
     })
 
   } catch (error) {

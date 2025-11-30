@@ -1,10 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { query } from '@/lib/database'
-import { getCacheDuration, getCacheControlHeader } from '@/lib/cache-utils'
+import { apiCache } from '@/lib/apiCache'
 
 // Enable caching with revalidation
-export const dynamic = 'auto'
-export const revalidate = 300 // Fallback: 5 minutes
+export const dynamic = 'force-dynamic'
+export const revalidate = false // Use manual caching
 
 // Table name constant
 const SALES_TABLE = 'flat_daily_sales_report'
@@ -64,9 +64,9 @@ const buildWhereClause = (filters: any, params: any[], startParamIndex: number =
     paramCount++
   }
 
-  // Chain Name filter (using customer_jdecustomertype)
+  // Chain Name filter (using customer_channel_description to match the channel field)
   if (filters.chainName) {
-    conditions.push(`customer_jdecustomertype = $${paramCount}`)
+    conditions.push(`customer_channel_description = $${paramCount}`)
     params.push(filters.chainName)
     paramCount++
   }
@@ -153,6 +153,12 @@ export async function GET(request: NextRequest) {
       channelCode: searchParams.get('channelCode') || undefined
     }
 
+    // Check cache first - each unique filter combination gets its own cache entry
+    const cachedData = apiCache.get('/api/dashboard/sales-by-channel', searchParams)
+    if (cachedData) {
+      return NextResponse.json(cachedData)
+    }
+
     const params: any[] = []
     const { whereClause } = buildWhereClause(filters, params)
 
@@ -200,12 +206,8 @@ export async function GET(request: NextRequest) {
       }
     })
 
-    // Determine cache duration based on date range
-    const hasCustomDates = !!(filters.startDate && filters.endDate)
-    const dateRangeType = hasCustomDates ? 'custom' : 'thisMonth'
-    const cacheDuration = getCacheDuration(dateRangeType, hasCustomDates, filters.startDate, filters.endDate)
-
-    return NextResponse.json({
+    // Prepare response
+    const responseData = {
       success: true,
       data: channelData,
       totalSales: parseFloat(totalSales.toFixed(2)),
@@ -227,17 +229,14 @@ export async function GET(request: NextRequest) {
         channelCode: filters.channelCode || null
       },
       timestamp: new Date().toISOString(),
-      cached: true,
-      cacheInfo: {
-        duration: cacheDuration,
-        dateRange: dateRangeType
-      },
+      cached: false,
       source: 'postgresql-flat-table'
-    }, {
-      headers: {
-        'Cache-Control': getCacheControlHeader(cacheDuration)
-      }
-    })
+    }
+
+    // Store in cache
+    apiCache.set('/api/dashboard/sales-by-channel', searchParams, responseData)
+
+    return NextResponse.json(responseData)
 
   } catch (error) {
     console.error('Sales by channel API error:', error)

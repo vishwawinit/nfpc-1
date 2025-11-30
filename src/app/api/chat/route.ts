@@ -1338,8 +1338,8 @@ ORDER BY trx_trxdate ASC;
 
 **Return Types:**
 - **trx_trxtype = 4**: Returns transactions
-- **trx_collectiontype = '0'**: GOOD returns (saleable/resellable products) - NOTE: String value '0'
-- **trx_collectiontype = '1'**: BAD returns (damaged/expired/waste products) - NOTE: String value '1'
+- **trx_collectiontype = '1'**: GOOD returns (saleable/resellable products) - NOTE: String value '1'
+- **trx_collectiontype = '0'**: BAD returns (damaged/expired/waste products) - NOTE: String value '0'
 
 🚨 **CRITICAL**: trx_collectiontype is stored as VARCHAR/TEXT, so you MUST use STRING values '0' and '1' (with quotes), NOT integers!
 
@@ -1347,13 +1347,13 @@ ORDER BY trx_trxdate ASC;
 \`\`\`sql
 SELECT
     TO_CHAR(trx_trxdate, 'YYYY-MM-DD') as date,
-    SUM(CASE WHEN trx_collectiontype = '0' THEN trx_totalamount ELSE 0 END) as good_returns,
-    SUM(CASE WHEN trx_collectiontype = '1' THEN trx_totalamount ELSE 0 END) as bad_returns,
+    SUM(CASE WHEN trx_collectiontype = '1' THEN trx_totalamount ELSE 0 END) as good_returns,
+    SUM(CASE WHEN trx_collectiontype = '0' THEN trx_totalamount ELSE 0 END) as bad_returns,
     SUM(trx_totalamount) as total_returns,
-    COUNT(DISTINCT CASE WHEN trx_collectiontype = '0' THEN trx_trxcode END) as good_return_transactions,
-    COUNT(DISTINCT CASE WHEN trx_collectiontype = '1' THEN trx_trxcode END) as bad_return_transactions,
-    SUM(CASE WHEN trx_collectiontype = '0' THEN line_quantitybu ELSE 0 END) as good_units_returned,
-    SUM(CASE WHEN trx_collectiontype = '1' THEN line_quantitybu ELSE 0 END) as bad_units_returned
+    COUNT(DISTINCT CASE WHEN trx_collectiontype = '1' THEN trx_trxcode END) as good_return_transactions,
+    COUNT(DISTINCT CASE WHEN trx_collectiontype = '0' THEN trx_trxcode END) as bad_return_transactions,
+    SUM(CASE WHEN trx_collectiontype = '1' THEN line_quantitybu ELSE 0 END) as good_units_returned,
+    SUM(CASE WHEN trx_collectiontype = '0' THEN line_quantitybu ELSE 0 END) as bad_units_returned
 FROM flat_daily_sales_report
 WHERE trx_trxstatus = 200 AND trx_trxtype = 4 AND trx_trxdate >= '2025-10-01' AND trx_trxdate <= '2025-10-31'
 GROUP BY TO_CHAR(trx_trxdate, 'YYYY-MM-DD')
@@ -1363,7 +1363,7 @@ ORDER BY date ASC;
 **🚨 MANDATORY RULES FOR RETURNS:**
 1. ✅ **ALWAYS use trx_trxtype = 4** for returns
 2. ✅ **ALWAYS use STRING values** trx_collectiontype = '0' and '1' (with quotes, NOT integers)
-3. ✅ **ALWAYS separate good ('0') vs bad ('1') returns** using CASE statements
+3. ✅ **ALWAYS separate good ('1') vs bad ('0') returns** using CASE statements
 4. ✅ **ALWAYS show BOTH** good_returns and bad_returns columns
 5. ❌ **NEVER** show only total returns without the breakdown
 6. ❌ **NEVER** omit the collection type breakdown

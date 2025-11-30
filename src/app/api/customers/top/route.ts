@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { query } from '@/lib/database'
+import { apiCache } from '@/lib/apiCache'
 
 // Enable caching with revalidation based on Cache-Control headers
-export const dynamic = 'auto'
-export const revalidate = 300 // Fallback: 5 minutes
+export const dynamic = 'force-dynamic'
+export const revalidate = false // Use manual caching
 
 const SALES_TABLE = 'flat_daily_sales_report'
 
@@ -221,6 +222,12 @@ export async function GET(request: NextRequest) {
       storeCode
     }
 
+    // Check cache first - each unique filter combination gets its own cache entry
+    const cachedData = apiCache.get('/api/customers/top', searchParams)
+    if (cachedData) {
+      return NextResponse.json(cachedData)
+    }
+
     const whereClause = buildWhereClause(filterParams)
 
     console.log('🔍 Top customers query details:', {
@@ -286,27 +293,19 @@ export async function GET(request: NextRequest) {
       currency: String(row.currency || 'AED')
     }))
 
-    // Calculate cache duration
-    const hasCustomDates = !!(customStartDate && customEndDate)
-    const cacheDuration = getCacheDuration(dateRange, hasCustomDates)
-    const staleWhileRevalidate = cacheDuration * 2
-
-    return NextResponse.json({
+    // Prepare response
+    const responseData = {
       success: true,
       data: customers,
       timestamp: new Date().toISOString(),
-      cached: true,
-      cacheInfo: {
-        duration: cacheDuration,
-        dateRange,
-        hasCustomDates
-      },
+      cached: false,
       source: 'flat_daily_sales_report'
-    }, {
-      headers: {
-        'Cache-Control': `public, s-maxage=${cacheDuration}, stale-while-revalidate=${staleWhileRevalidate}`
-      }
-    })
+    }
+
+    // Store in cache
+    apiCache.set('/api/customers/top', searchParams, responseData)
+
+    return NextResponse.json(responseData)
 
   } catch (error) {
     console.error('❌ TOP CUSTOMERS API CRITICAL ERROR:', error)

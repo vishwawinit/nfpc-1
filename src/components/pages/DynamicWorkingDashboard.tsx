@@ -12,7 +12,6 @@ import { DashboardFilters } from '../dashboard/DashboardFilters'
 import { useDashboardFilters } from '@/hooks/useDashboardFilters'
 import { useTopCustomers, useTopProducts, useSalesByChannel } from '@/hooks/useDataService'
 import { useResponsive } from '@/hooks/useResponsive'
-import { CustomerTransactionsModal } from '../CustomerTransactionsModal'
 
 const formatCurrency = (value: number) => {
   return new Intl.NumberFormat('en-IN', {
@@ -28,18 +27,9 @@ const formatNumber = (value: number) => {
 }
 
 export const DynamicWorkingDashboard: React.FC = () => {
-  const [selectedDateRange, setSelectedDateRange] = useState('thisMonth')
-  const [isInitialized, setIsInitialized] = useState(false)
+  const [selectedDateRange, setSelectedDateRange] = useState('lastMonth')
   const { isMobile, styles } = useResponsive()
-  
-  // Initialize on mount
-  useEffect(() => {
-    console.log('Dashboard initialized')
-  }, [])
 
-  // Dialog states for customer details
-  const [showOrdersDialog, setShowOrdersDialog] = useState(false)
-  const [selectedCustomer, setSelectedCustomer] = useState<any>(null)
 
   // Use the dashboard filters hook
   const {
@@ -171,13 +161,10 @@ export const DynamicWorkingDashboard: React.FC = () => {
     setDateRange(startDate, endDate)
   }
 
-  // Initialize date range on mount
+  // Initialize date range on mount - set to last month
   useEffect(() => {
-    if (!isInitialized) {
-      handleDateRangeSelect(selectedDateRange)
-      setIsInitialized(true)
-    }
-  }, [isInitialized, selectedDateRange])
+    handleDateRangeSelect('lastMonth')
+  }, [])
 
   // Memoize query params to prevent infinite re-renders
   const queryParams = useMemo(() => {
@@ -210,9 +197,11 @@ export const DynamicWorkingDashboard: React.FC = () => {
   const CHANNEL_COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#14b8a6', '#f97316']
 
   // Fetch data - Limited to Top 20 for dashboard sections - WITH FILTERS APPLIED
-  const { data: topCustomersData, loading: customersLoading } = useTopCustomers(20, selectedDateRange, { additionalParams: queryParams })
-  const { data: topProductsData, loading: productsLoading } = useTopProducts(20, selectedDateRange, { additionalParams: queryParams })
-  const { data: salesByChannelData, loading: channelLoading } = useSalesByChannel({ additionalParams: queryParams })
+  // Only fetch after filters are loaded and dates are set to prevent showing wrong data
+  const shouldFetch = !filtersLoading && filters.startDate && filters.endDate
+  const { data: topCustomersData, loading: customersLoading } = useTopCustomers(20, selectedDateRange, { enabled: shouldFetch, additionalParams: queryParams })
+  const { data: topProductsData, loading: productsLoading } = useTopProducts(20, selectedDateRange, { enabled: shouldFetch, additionalParams: queryParams })
+  const { data: salesByChannelData, loading: channelLoading } = useSalesByChannel({ enabled: shouldFetch, additionalParams: queryParams })
 
   // Daily Sales Trend Data - using the same API as daily sales report
   const [dailySalesTrendData, setDailySalesTrendData] = useState<any[]>([])
@@ -342,11 +331,6 @@ export const DynamicWorkingDashboard: React.FC = () => {
     })
   }, [dailySalesTrendData, selectedDateRange])
 
-  // View customer orders in dialog
-  const viewCustomerOrders = (customer: any) => {
-    setSelectedCustomer(customer)
-    setShowOrdersDialog(true)
-  }
 
   // Export customer transactions to Excel  
   const exportCustomerTransactions = async (customer: any, customerDetail: any, transactions: any[]) => {
@@ -558,6 +542,7 @@ export const DynamicWorkingDashboard: React.FC = () => {
         <EnhancedKPICards
           dateRange={selectedDateRange}
           additionalParams={queryParams}
+          enabled={shouldFetch}
         />
       </div>
 
@@ -732,8 +717,6 @@ export const DynamicWorkingDashboard: React.FC = () => {
                 {topCustomersData.map((customer, index) => (
                   <div
                     key={`customer-${customer.customerCode}-${index}`}
-                    className="customer-card-hover"
-                    onClick={() => viewCustomerOrders(customer)}
                     style={{
                       display: 'flex',
                       justifyContent: 'space-between',
@@ -742,10 +725,7 @@ export const DynamicWorkingDashboard: React.FC = () => {
                       borderBottom: index < 9 ? '1px solid #e5e7eb' : 'none',
                       backgroundColor: '#fafafa',
                       borderRadius: isMobile ? '4px' : '6px',
-                      marginBottom: '2px',
-                      cursor: 'pointer',
-                      transition: 'background-color 0.2s ease',
-                      WebkitTapHighlightColor: 'transparent'
+                      marginBottom: '2px'
                     }}
                     title={`${customer.customerName} (${customer.customerCode})\nTotal Sales: AED ${((customer.totalSales ?? 0) as number).toLocaleString('en-IN')}`}
                   >
@@ -1024,18 +1004,6 @@ export const DynamicWorkingDashboard: React.FC = () => {
         </Card>
       </div>
 
-      {/* Customer Transactions Modal */}
-      {selectedCustomer && (
-        <CustomerTransactionsModal
-          customer={selectedCustomer}
-          isOpen={showOrdersDialog}
-          onClose={() => {
-            setShowOrdersDialog(false)
-            setSelectedCustomer(null)
-          }}
-          dateRange={selectedDateRange}
-        />
-      )}
       </div>
     </>
   )
