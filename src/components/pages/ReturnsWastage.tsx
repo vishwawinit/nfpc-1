@@ -3733,7 +3733,6 @@ export function ReturnsWastage() {
                       <TableRow>
                         <TableHead className="min-w-[200px]">Product</TableHead>
                         <TableHead className="min-w-[150px]">Category</TableHead>
-                        <TableHead className="text-right min-w-[100px]">Sold</TableHead>
                         <TableHead className="text-right min-w-[100px]">Returned</TableHead>
                         <TableHead className="text-right min-w-[100px]">Return %</TableHead>
                         <TableHead className="text-right min-w-[110px] text-green-700">Good Returns</TableHead>
@@ -3755,7 +3754,6 @@ export function ReturnsWastage() {
                               <div className="text-xs text-slate-500">{item.product_code}</div>
                             </TableCell>
                             <TableCell className="text-sm max-sm:text-xs">{item.category_name}</TableCell>
-                            <TableCell className="text-right text-sm max-sm:text-xs">{formatNumber(item.total_sold)}</TableCell>
                             <TableCell className="text-right text-sm max-sm:text-xs">{formatNumber(item.total_returned)}</TableCell>
                             <TableCell className="text-right">
                               <Badge variant={item.return_percentage > 10 ? 'destructive' : item.return_percentage > 5 ? 'default' : 'secondary'} className="text-xs">

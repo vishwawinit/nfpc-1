@@ -81,7 +81,9 @@ export async function GET(request: NextRequest) {
           ABS(trx_totalamount) as amount,
           line_itemcode,
           line_itemdescription,
-          item_brand_description
+          item_brand_description,
+          item_description,
+          line_quantitybu
         FROM ${SALES_TABLE}
         WHERE trx_trxdate >= '${filterParams.startDate}'::date
           AND trx_trxdate <= '${filterParams.endDate}'::date
@@ -203,7 +205,106 @@ export async function GET(request: NextRequest) {
            ORDER BY return_value DESC
            LIMIT 10
          ) x
-        ) as categories
+        ) as categories,
+
+        -- SKU-wise Return Percentage (using item_description)
+        (SELECT row_to_json(sku_result) FROM (
+          SELECT
+            (SELECT json_agg(y)
+             FROM (
+               SELECT
+                 sales_sku.item_description as sku_name,
+                 sales_sku.line_itemcode as sku_code,
+                 sales_sku.customer_channel as category_name,
+                 sales_sku.sales_value,
+                 sales_sku.sales_count,
+                 COALESCE(ret_sku.return_value, 0) as return_value,
+                 COALESCE(ret_sku.total_returned, 0) as total_returned,
+                 COALESCE(ret_sku.good_return_value, 0) as good_return_value,
+                 COALESCE(ret_sku.good_returned, 0) as good_returned,
+                 COALESCE(ret_sku.bad_return_value, 0) as bad_return_value,
+                 COALESCE(ret_sku.bad_returned, 0) as bad_returned,
+                 CASE
+                   WHEN sales_sku.sales_value > 0
+                   THEN (COALESCE(ret_sku.return_value, 0) / sales_sku.sales_value * 100)
+                   ELSE 0
+                 END as return_percentage
+               FROM (
+                 SELECT
+                   item_description,
+                   line_itemcode,
+                   MAX(customer_channel_description) as customer_channel,
+                   SUM(ABS(trx_totalamount)) as sales_value,
+                   COUNT(DISTINCT trx_trxcode) as sales_count
+                 FROM ${SALES_TABLE}
+                 WHERE trx_trxdate >= '${filterParams.startDate}'::date
+                   AND trx_trxdate <= '${filterParams.endDate}'::date
+                   AND trx_trxtype = 1
+                   ${regionCode && regionCode !== 'all' ? `AND route_areacode = '${regionCode}'` : ''}
+                   ${routeCode && routeCode !== 'all' ? `AND trx_routecode = '${routeCode}'` : ''}
+                   ${salesmanCode && salesmanCode !== 'all' ? `AND trx_usercode = '${salesmanCode}'` : ''}
+                   AND item_description IS NOT NULL
+                   AND item_description != ''
+                 GROUP BY item_description, line_itemcode
+               ) sales_sku
+               LEFT JOIN (
+                 SELECT
+                   item_description,
+                   SUM(amount) as return_value,
+                   SUM(ABS(line_quantitybu)) as total_returned,
+                   SUM(amount) FILTER (WHERE trx_collectiontype = '1') as good_return_value,
+                   SUM(ABS(line_quantitybu)) FILTER (WHERE trx_collectiontype = '1') as good_returned,
+                   SUM(amount) FILTER (WHERE trx_collectiontype = '0') as bad_return_value,
+                   SUM(ABS(line_quantitybu)) FILTER (WHERE trx_collectiontype = '0') as bad_returned
+                 FROM returns
+                 WHERE item_description IS NOT NULL
+                   AND item_description != ''
+                 GROUP BY item_description
+               ) ret_sku ON sales_sku.item_description = ret_sku.item_description
+               WHERE COALESCE(ret_sku.return_value, 0) > 0
+               ORDER BY return_percentage DESC
+               LIMIT 50
+             ) y
+            ) as sku_data,
+            (SELECT row_to_json(s)
+             FROM (
+               SELECT
+                 COALESCE(COUNT(DISTINCT ret_summary.item_description), 0) as total_products_with_returns,
+                 COALESCE(AVG(
+                   CASE
+                     WHEN sales_summary.sales_value > 0
+                     THEN (ret_summary.return_value / sales_summary.sales_value * 100)
+                     ELSE 0
+                   END
+                 ), 0) as avg_return_rate
+               FROM (
+                 SELECT
+                   item_description,
+                   SUM(ABS(trx_totalamount)) as sales_value
+                 FROM ${SALES_TABLE}
+                 WHERE trx_trxdate >= '${filterParams.startDate}'::date
+                   AND trx_trxdate <= '${filterParams.endDate}'::date
+                   AND trx_trxtype = 1
+                   ${regionCode && regionCode !== 'all' ? `AND route_areacode = '${regionCode}'` : ''}
+                   ${routeCode && routeCode !== 'all' ? `AND trx_routecode = '${routeCode}'` : ''}
+                   ${salesmanCode && salesmanCode !== 'all' ? `AND trx_usercode = '${salesmanCode}'` : ''}
+                   AND item_description IS NOT NULL
+                   AND item_description != ''
+                 GROUP BY item_description
+               ) sales_summary
+               INNER JOIN (
+                 SELECT
+                   item_description,
+                   SUM(amount) as return_value
+                 FROM returns
+                 WHERE item_description IS NOT NULL
+                   AND item_description != ''
+                 GROUP BY item_description
+               ) ret_summary ON sales_summary.item_description = ret_summary.item_description
+               WHERE ret_summary.return_value > 0
+             ) s
+            ) as summary
+        ) sku_result) as sku_returns
     `
 
     const startTime = Date.now()
@@ -226,6 +327,13 @@ export async function GET(request: NextRequest) {
       const brandData = data.brands || []
       const productData = data.products || []
       const categoryData = data.categories || []
+      const skuReturns = data.sku_returns || { sku_data: [], summary: { total_products_with_returns: 0, avg_return_rate: 0 } }
+
+      console.log('📦 SKU Returns Data:', {
+        hasData: !!data.sku_returns,
+        skuDataCount: skuReturns.sku_data?.length || 0,
+        summary: skuReturns.summary
+      })
 
       // Extract sales metrics
       const saleValue = parseFloat(salesData.total_sales_value || 0)
@@ -363,11 +471,44 @@ export async function GET(request: NextRequest) {
         },
         skuReturnPercentage: {
           summary: {
-            total_products_with_returns: 0,
-            avg_return_rate: 0,
+            total_products_with_returns: parseInt(skuReturns.summary?.total_products_with_returns || 0),
+            avg_return_rate: parseFloat(skuReturns.summary?.avg_return_rate || 0),
+            // Calculate aggregated KPIs from sku_data
+            total_sales_value: (skuReturns.sku_data || []).reduce((sum: number, sku: any) => sum + parseFloat(sku.sales_value || 0), 0),
+            total_return_value: (skuReturns.sku_data || []).reduce((sum: number, sku: any) => sum + parseFloat(sku.return_value || 0), 0),
+            good_return_value: (skuReturns.sku_data || []).reduce((sum: number, sku: any) => sum + parseFloat(sku.good_return_value || 0), 0),
+            bad_return_value: (skuReturns.sku_data || []).reduce((sum: number, sku: any) => sum + parseFloat(sku.bad_return_value || 0), 0),
+            total_returned: (skuReturns.sku_data || []).reduce((sum: number, sku: any) => sum + parseInt(sku.total_returned || 0), 0),
+            good_returned: (skuReturns.sku_data || []).reduce((sum: number, sku: any) => sum + parseInt(sku.good_returned || 0), 0),
+            bad_returned: (skuReturns.sku_data || []).reduce((sum: number, sku: any) => sum + parseInt(sku.bad_returned || 0), 0),
+            net_sales_value: (() => {
+              const totalSales = (skuReturns.sku_data || []).reduce((sum: number, sku: any) => sum + parseFloat(sku.sales_value || 0), 0)
+              const totalReturns = (skuReturns.sku_data || []).reduce((sum: number, sku: any) => sum + parseFloat(sku.return_value || 0), 0)
+              return totalSales - totalReturns
+            })(),
+            overall_return_percentage: (() => {
+              const totalSales = (skuReturns.sku_data || []).reduce((sum: number, sku: any) => sum + parseFloat(sku.sales_value || 0), 0)
+              const totalReturns = (skuReturns.sku_data || []).reduce((sum: number, sku: any) => sum + parseFloat(sku.return_value || 0), 0)
+              return totalSales > 0 ? ((totalReturns / totalSales) * 100) : 0
+            })(),
             currency_code: 'AED'
           },
-          data: []
+          data: (skuReturns.sku_data || []).map((sku: any) => ({
+            product_name: sku.sku_name,
+            product_code: sku.sku_code,
+            sku_name: sku.sku_name,
+            sku_code: sku.sku_code,
+            category_name: sku.category_name || 'N/A',
+            sales_value: parseFloat(sku.sales_value || 0),
+            sales_count: parseInt(sku.sales_count || 0),
+            total_returned: parseInt(sku.total_returned || 0),
+            return_value: parseFloat(sku.return_value || 0),
+            good_return_value: parseFloat(sku.good_return_value || 0),
+            good_returned: parseInt(sku.good_returned || 0),
+            bad_return_value: parseFloat(sku.bad_return_value || 0),
+            bad_returned: parseInt(sku.bad_returned || 0),
+            return_percentage: parseFloat(sku.return_percentage || 0).toFixed(2)
+          }))
         },
         returnOnSales: {
           summary: {
