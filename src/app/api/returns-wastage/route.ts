@@ -83,7 +83,9 @@ export async function GET(request: NextRequest) {
           line_itemdescription,
           item_brand_description,
           item_description,
-          line_quantitybu
+          line_quantitybu,
+          route_subareacode,
+          trx_routecode
         FROM ${SALES_TABLE}
         WHERE trx_trxdate >= '${filterParams.startDate}'::date
           AND trx_trxdate <= '${filterParams.endDate}'::date
@@ -117,19 +119,42 @@ export async function GET(request: NextRequest) {
           'total_return_count', COUNT(*)
         ) FROM returns) as summary,
 
-        -- Salesman data (from CTE)
+        -- Salesman data (from CTE) with sales and route info
         (SELECT json_agg(x ORDER BY return_value DESC)
          FROM (
            SELECT
-             trx_usercode as salesman_code,
-             MAX(user_description) as salesman_name,
-             SUM(amount) FILTER (WHERE trx_collectiontype = '1') as good_return_value,
-             SUM(amount) FILTER (WHERE trx_collectiontype = '0') as bad_return_value,
-             SUM(amount) as return_value,
+             r.trx_usercode as salesman_code,
+             MAX(r.user_description) as salesman_name,
+             MAX(r.route_subareacode) as route_code,
+             COALESCE(s.sales_value, 0) as total_sales,
+             SUM(r.amount) FILTER (WHERE r.trx_collectiontype = '1') as good_return_value,
+             COUNT(*) FILTER (WHERE r.trx_collectiontype = '1') as good_return_count,
+             SUM(r.amount) FILTER (WHERE r.trx_collectiontype = '0') as bad_return_value,
+             COUNT(*) FILTER (WHERE r.trx_collectiontype = '0') as bad_return_count,
+             SUM(r.amount) as return_value,
              COUNT(*) as return_count,
-             COUNT(DISTINCT customer_code) as customer_count
-           FROM returns
-           GROUP BY trx_usercode
+             COUNT(DISTINCT r.customer_code) as customer_count,
+             COALESCE(s.sales_value, 0) - SUM(r.amount) as net_sales,
+             CASE
+               WHEN COALESCE(s.sales_value, 0) > 0
+               THEN ROUND((SUM(r.amount) / s.sales_value * 100)::numeric, 1)
+               ELSE 0
+             END as return_percentage
+           FROM returns r
+           LEFT JOIN (
+             SELECT
+               trx_usercode,
+               SUM(ABS(trx_totalamount)) as sales_value
+             FROM ${SALES_TABLE}
+             WHERE trx_trxdate >= '${filterParams.startDate}'::date
+               AND trx_trxdate <= '${filterParams.endDate}'::date
+               AND trx_trxtype = 1
+               ${regionCode && regionCode !== 'all' ? `AND route_areacode = '${regionCode}'` : ''}
+               ${routeCode && routeCode !== 'all' ? `AND trx_routecode = '${routeCode}'` : ''}
+               ${salesmanCode && salesmanCode !== 'all' ? `AND trx_usercode = '${salesmanCode}'` : ''}
+             GROUP BY trx_usercode
+           ) s ON r.trx_usercode = s.trx_usercode
+           GROUP BY r.trx_usercode, s.sales_value
          ) x
         ) as salesmen,
 
@@ -513,17 +538,32 @@ export async function GET(request: NextRequest) {
         returnOnSales: {
           summary: {
             total_salesmen: salesmanData.length,
-            total_return_value: returnValue,
+            total_sales: salesmanData.reduce((sum: number, s: any) => sum + parseFloat(s.total_sales || 0), 0),
+            total_returns: returnValue,
+            good_return_value: parseFloat(summary.good_return_value || 0),
+            bad_return_value: parseFloat(summary.bad_return_value || 0),
+            net_sales: salesmanData.reduce((sum: number, s: any) => sum + parseFloat(s.total_sales || 0), 0) - returnValue,
+            return_percentage: (() => {
+              const totalSales = salesmanData.reduce((sum: number, s: any) => sum + parseFloat(s.total_sales || 0), 0)
+              return totalSales > 0 ? ((returnValue / totalSales) * 100).toFixed(1) : '0.0'
+            })(),
             currency_code: 'AED'
           },
           data: salesmanData.map((s: any) => ({
             salesman_code: s.salesman_code,
             salesman_name: s.salesman_name,
+            route_code: s.route_code || 'N/A',
+            total_sales: parseFloat(s.total_sales || 0),
             good_return_value: parseFloat(s.good_return_value || 0),
+            good_return_count: parseInt(s.good_return_count || 0),
             bad_return_value: parseFloat(s.bad_return_value || 0),
+            bad_return_count: parseInt(s.bad_return_count || 0),
             return_value: parseFloat(s.return_value || 0),
+            total_returns: parseFloat(s.return_value || 0),
             return_count: parseInt(s.return_count || 0),
-            customer_count: parseInt(s.customer_count || 0)
+            customer_count: parseInt(s.customer_count || 0),
+            net_sales: parseFloat(s.net_sales || 0),
+            return_percentage: parseFloat(s.return_percentage || 0)
           }))
         },
         goodReturnsDetail: [],

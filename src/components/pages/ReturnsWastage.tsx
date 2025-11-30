@@ -1520,8 +1520,7 @@ export function ReturnsWastage() {
       summarySheet.addRow(['KEY METRICS', '', '', ''])
       summarySheet.addRow(['Total Sales', formatValue(summary?.total_sales || 0), '', ''])
       summarySheet.addRow(['Total Returns', formatValue(summary?.total_returns || 0), '', ''])
-      summarySheet.addRow(['Net Sales', formatValue(summary?.net_sales || 0), '', ''])
-      summarySheet.addRow(['Overall Return Rate', '', `${Number(summary?.return_percentage || 0).toFixed(2)}%`, ''])
+      summarySheet.addRow(['Overall Return Rate', '', `${Number(summary?.return_percentage || 0)}%`, ''])
       summarySheet.addRow(['Salesmen with Returns', '', '', salesmen.length])
       summarySheet.addRow([])
 
@@ -1554,29 +1553,23 @@ export function ReturnsWastage() {
 
       summarySheet.addRow([])
 
-      // Important Note about Negative Net Sales
-      summarySheet.addRow(['IMPORTANT NOTE: UNDERSTANDING NEGATIVE NET SALES', '', '', ''])
+      // Important Note about Returns
+      summarySheet.addRow(['UNDERSTANDING RETURNS BY SALESMAN', '', '', ''])
       summarySheet.addRow([
-        'What does negative net sales mean?',
-        'Negative net sales occur when returns processed in the selected period exceed sales in that same period.',
+        'What does this report show?',
+        'This report shows returns processed in the selected period by each salesman, broken down by Good Returns (sellable) and Bad Returns (wastage).',
         '',
         ''
       ])
       summarySheet.addRow([
-        'Why does this happen?',
-        'This is normal when customers return items that were purchased in previous months.',
+        'Key Focus Areas:',
+        'Identify salesmen with high return percentages or high wastage to address potential issues with product handling, customer education, or operational concerns.',
         '',
         ''
       ])
       summarySheet.addRow([
-        'Example:',
-        `If a salesman had ${currency} 77,936 in sales during September but processed ${currency} 289,043 in returns (from items sold in July/August), their net sales will be -${currency} 211,107.`,
-        '',
-        ''
-      ])
-      summarySheet.addRow([
-        'Key Point:',
-        'This report shows sales and returns PROCESSED in the selected period, not necessarily from items sold in that period.',
+        'Route Column:',
+        'The Route Code column shows the route sub-area code assigned to each salesman.',
         '',
         ''
       ])
@@ -1597,13 +1590,13 @@ export function ReturnsWastage() {
       // Style the Important Note section
       const noteHeaderRow = summarySheet.getRow(13)
       noteHeaderRow.font = { bold: true, size: 12, color: { argb: 'FFFFFF' } }
-      noteHeaderRow.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'F59E0B' } }
+      noteHeaderRow.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: '3B82F6' } }
       summarySheet.mergeCells('A13:D13')
 
-      // Style note content rows with amber background
-      for (let i = 14; i <= 17; i++) {
+      // Style note content rows with blue background
+      for (let i = 14; i <= 16; i++) {
         const row = summarySheet.getRow(i)
-        row.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FEF3C7' } }
+        row.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'DBEAFE' } }
         row.getCell(1).font = { bold: true }
         summarySheet.mergeCells(`B${i}:D${i}`)
         row.getCell(2).alignment = { wrapText: true, vertical: 'top' }
@@ -1614,14 +1607,12 @@ export function ReturnsWastage() {
       dataSheet.columns = [
         { header: 'Salesman Code', key: 'salesman_code', width: 15 },
         { header: 'Salesman Name', key: 'salesman_name', width: 25 },
-        { header: 'Route Code', key: 'route_code', width: 12 },
-        { header: `Total Sales (${currency})`, key: 'total_sales', width: 18 },
+        { header: 'Route Code', key: 'route_code', width: 15 },
         { header: `Good Returns (${currency})`, key: 'good_return_value', width: 18 },
         { header: 'Good Return Count', key: 'good_return_count', width: 18 },
         { header: `Bad Returns (${currency})`, key: 'bad_return_value', width: 18 },
         { header: 'Bad Return Count', key: 'bad_return_count', width: 18 },
         { header: `Total Returns (${currency})`, key: 'total_returns', width: 18 },
-        { header: `Net Sales (${currency})`, key: 'net_sales', width: 18 },
         { header: 'Return %', key: 'return_percentage', width: 12 }
       ]
 
@@ -1630,25 +1621,21 @@ export function ReturnsWastage() {
         dataSheet.addRow({
           salesman_code: salesman.salesman_code || '',
           salesman_name: salesman.salesman_name || '',
-          route_code: salesman.route_code || '',
-          total_sales: Number(salesman.total_sales || 0),
+          route_code: salesman.route_code || 'N/A',
           good_return_value: Number(salesman.good_return_value || 0),
           good_return_count: Number(salesman.good_return_count || 0),
           bad_return_value: Number(salesman.bad_return_value || 0),
           bad_return_count: Number(salesman.bad_return_count || 0),
           total_returns: Number(salesman.total_returns || 0),
-          net_sales: Number(salesman.net_sales || 0),
           return_percentage: Number(salesman.return_percentage || 0)
         })
       })
 
       // Format currency columns
-      dataSheet.getColumn('total_sales').numFmt = '#,##0.00'
       dataSheet.getColumn('good_return_value').numFmt = '#,##0.00'
       dataSheet.getColumn('bad_return_value').numFmt = '#,##0.00'
       dataSheet.getColumn('total_returns').numFmt = '#,##0.00'
-      dataSheet.getColumn('net_sales').numFmt = '#,##0.00'
-      dataSheet.getColumn('return_percentage').numFmt = '0.00"%"'
+      dataSheet.getColumn('return_percentage').numFmt = '0.0"%"'
 
       // Style header row
       const headerRow = dataSheet.getRow(1)
@@ -4046,35 +4033,29 @@ export function ReturnsWastage() {
                       <div className="space-y-2 text-xs">
                         <p><strong>Return on Sales by Salesman Explained:</strong></p>
                         <ul className="list-disc list-inside space-y-1 ml-2">
-                          <li><strong>Sales:</strong> Total sales value in the selected period</li>
+                          <li><strong>Route:</strong> Route sub-area code assigned to the salesman</li>
                           <li><strong>Returns:</strong> Total returns processed in the selected period (Good + Bad)</li>
-                          <li><strong>Net Sales:</strong> Sales minus Returns</li>
-                          <li><strong className="text-green-600">Good Returns:</strong> Sellable returns</li>
-                          <li><strong className="text-red-600">Bad Returns:</strong> Wastage</li>
-                          <li><strong>Return %:</strong> (Returns / Sales) × 100</li>
+                          <li><strong className="text-green-600">Good Returns:</strong> Sellable returns that can be resold</li>
+                          <li><strong className="text-red-600">Bad Returns:</strong> Wastage that cannot be resold</li>
+                          <li><strong>Return %:</strong> Percentage of returns relative to sales</li>
                         </ul>
-                        <div className="mt-2 p-2 bg-amber-50 border border-amber-200 rounded">
-                          <p className="font-semibold text-amber-900">⚠️ About Negative Net Sales:</p>
-                          <p className="mt-1">Negative net sales can occur when returns processed in the period exceed sales in that same period. This happens when customers return items purchased in previous months.</p>
-                          <p className="mt-1"><strong>Example:</strong> If a salesman had {getCurrency()} 50K sales in September but processed {getCurrency()} 100K in returns (from items sold in July/August), their net sales will be -{getCurrency()} 50K.</p>
-                        </div>
-                        <p className="mt-2"><strong>Action:</strong> Identify salesmen with high return rates and investigate the cause</p>
+                        <p className="mt-2"><strong>Action:</strong> Identify salesmen with high return rates and investigate the cause. Focus on reducing wastage (Bad Returns).</p>
                       </div>
                     </TooltipContent>
                   </Tooltip>
                 </div>
 
-                {/* Warning Banner about Negative Net Sales */}
-                <div className="mt-4 p-3 bg-amber-50 border border-amber-200 rounded-lg">
+                {/* Info Banner about Returns */}
+                <div className="mt-4 p-3 bg-blue-50 border border-blue-200 rounded-lg">
                   <div className="flex items-start gap-2">
-                    <AlertCircle className="h-5 w-5 text-amber-600 flex-shrink-0 mt-0.5" />
+                    <AlertCircle className="h-5 w-5 text-blue-600 flex-shrink-0 mt-0.5" />
                     <div className="flex-1 text-xs">
-                      <p className="font-semibold text-amber-900">Understanding Net Sales Values</p>
-                      <p className="text-amber-800 mt-1">
-                        This report shows <strong>sales and returns processed in the selected period</strong>. Negative net sales occur when returns exceed sales in that period, which is normal when customers return items purchased in previous months.
+                      <p className="font-semibold text-blue-900">Understanding Returns by Salesman</p>
+                      <p className="text-blue-800 mt-1">
+                        This report shows <strong>returns processed in the selected period by each salesman</strong>, broken down by Good Returns (sellable) and Bad Returns (wastage).
                       </p>
-                      <p className="text-amber-800 mt-1">
-                        <strong>Example:</strong> A salesman with {getCurrency()} 77K sales and {getCurrency()} 289K returns shows -{getCurrency()} 211K net sales because most returns were for items sold in earlier periods.
+                      <p className="text-blue-800 mt-1">
+                        Focus on salesmen with high return percentages or high wastage to identify potential issues with product handling, customer education, or other operational concerns.
                       </p>
                     </div>
                   </div>
@@ -4087,24 +4068,9 @@ export function ReturnsWastage() {
                       <TableRow>
                         <TableHead className="min-w-[180px]">Salesman</TableHead>
                         <TableHead className="min-w-[100px]">Route</TableHead>
-                        <TableHead className="text-right min-w-[120px]">Sales</TableHead>
                         <TableHead className="text-right min-w-[120px]">Returns</TableHead>
                         <TableHead className="text-right min-w-[110px] text-green-700">Good Returns</TableHead>
                         <TableHead className="text-right min-w-[110px] text-red-700">Bad Returns</TableHead>
-                        <TableHead className="text-right min-w-[120px]">
-                          <div className="flex items-center justify-end gap-1">
-                            <span>Net Sales</span>
-                            <Tooltip>
-                              <TooltipTrigger asChild>
-                                <AlertCircle className="h-3.5 w-3.5 text-amber-500 cursor-help" />
-                              </TooltipTrigger>
-                              <TooltipContent className="max-w-xs">
-                                <p className="text-xs"><strong>Net Sales = Sales - Returns</strong></p>
-                                <p className="text-xs mt-1">Can be negative when returns processed in the period exceed sales in that period (returns from previous months)</p>
-                              </TooltipContent>
-                            </Tooltip>
-                          </div>
-                        </TableHead>
                         <TableHead className="text-right min-w-[100px]">Return %</TableHead>
                       </TableRow>
                     </TableHeader>
@@ -4122,7 +4088,6 @@ export function ReturnsWastage() {
                               <div className="text-xs text-slate-500">{item.salesman_code}</div>
                             </TableCell>
                             <TableCell className="text-sm max-sm:text-xs">{item.route_code}</TableCell>
-                            <TableCell className="text-right text-sm max-sm:text-xs">{formatValue(item.total_sales)}</TableCell>
                             <TableCell className="text-right text-blue-600 text-sm max-sm:text-xs">{formatValue(item.total_returns)}</TableCell>
                             <TableCell className="text-right text-sm max-sm:text-xs">
                               <div className="text-green-600 font-medium">{formatValue(item.good_return_value || 0)}</div>
@@ -4131,16 +4096,6 @@ export function ReturnsWastage() {
                             <TableCell className="text-right text-sm max-sm:text-xs">
                               <div className="text-red-600 font-medium">{formatValue(item.bad_return_value || 0)}</div>
                               <div className="text-xs text-red-500">{formatNumber(item.bad_return_count || 0)} txns</div>
-                            </TableCell>
-                            <TableCell className="text-right font-medium text-sm max-sm:text-xs">
-                              {Number(item.net_sales) < 0 ? (
-                                <div className="flex items-center justify-end gap-1 text-red-600">
-                                  <AlertCircle className="h-3.5 w-3.5 flex-shrink-0" />
-                                  <span>{formatValue(item.net_sales)}</span>
-                                </div>
-                              ) : (
-                                <span className="text-green-600">{formatValue(item.net_sales)}</span>
-                              )}
                             </TableCell>
                             <TableCell className="text-right">
                               <Badge variant={item.return_percentage > 10 ? 'destructive' : item.return_percentage > 5 ? 'default' : 'secondary'} className="text-xs">
