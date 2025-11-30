@@ -137,6 +137,7 @@ export function ChatInterface({ conversationId: initialConversationId }: ChatInt
   // Auto-save messages when they change (after initial load)
   useEffect(() => {
     if (currentConversationId && hasUnsavedChanges && messages.length > 0) {
+      console.log('💾 Auto-saving conversation with', messages.length, 'messages');
       saveCurrentConversation();
     }
   }, [messages]);
@@ -270,6 +271,13 @@ export function ChatInterface({ conversationId: initialConversationId }: ChatInt
     if (!currentConversationId || messages.length === 0) return;
 
     try {
+      console.log('💾 Saving conversation with messages:', messages.map(m => ({
+        role: m.role,
+        contentPreview: m.content?.substring(0, 50) + '...',
+        hasCharts: !!m.charts,
+        hasTableData: !!m.tableData
+      })));
+
       await fetch("/api/chat-history/messages", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
@@ -289,6 +297,7 @@ export function ChatInterface({ conversationId: initialConversationId }: ChatInt
           })),
         }),
       });
+      console.log('✅ Conversation saved successfully');
       setHasUnsavedChanges(false);
       // Trigger sidebar refresh to show newly saved conversation
       setSidebarRefreshKey(prev => prev + 1);
@@ -649,6 +658,7 @@ export function ChatInterface({ conversationId: initialConversationId }: ChatInt
             : Promise.resolve(false),
         ]).then(([summary, hasVisualization]) => {
           console.log("🎉 BOTH summary and visualization complete - updating message");
+          console.log("📝 Summary content:", summary?.substring(0, 100) + "...");
           // Update message with BOTH summary and turn off loading flags
           setMessages(prev => prev.map(msg =>
             msg.id === assistantId
@@ -660,6 +670,10 @@ export function ChatInterface({ conversationId: initialConversationId }: ChatInt
                 }
               : msg
           ));
+
+          // Mark as unsaved to trigger save with the updated summary
+          console.log("✅ Setting hasUnsavedChanges to true to trigger save with summary");
+          setHasUnsavedChanges(true);
         });
       } else {
         // Traditional flow: Handle visualization(s)

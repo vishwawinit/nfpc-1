@@ -15,6 +15,7 @@ import {
 } from "../utils/summaryAgent";
 
 export const runtime = "nodejs";
+export const maxDuration = 300; // 5 minutes max for chat API
 
 // Helper function to parse SQL error and extract the problematic column
 function parseErrorMessage(errorMessage: string): { type: string; column?: string; table?: string; detail: string } {
@@ -460,11 +461,21 @@ You are an expert SQL query generator. Your ONLY job is to generate accurate, op
 
 ### QUERY QUALITY STANDARDS:
 - ✅ **Accurate**: Use correct column names and table names
-- ✅ **Optimized**: Include only necessary columns
+- ✅ **Simple**: Include ONLY the columns the user asks for - don't add extra metrics
+- ✅ **Optimized**: Include only necessary columns (NOT everything you can think of)
 - ✅ **Complete**: Include WHERE clauses for date filtering
 - ✅ **Sorted**: Add ORDER BY for ranking queries
 - ✅ **Limited**: Use LIMIT for "top" queries
 - ✅ **Grouped**: Use GROUP BY when aggregating data
+
+🚨 **CRITICAL GROUPING RULE FOR TRENDS**:
+- If user asks "sales trend day by day" or "daily sales", you MUST:
+  1. 🚨 **MANDATORY**: Use TO_CHAR(trx_trxdate, 'YYYY-MM-DD') as date in SELECT - returns '2025-11-01'
+  2. 🚨 **MANDATORY**: Use GROUP BY TO_CHAR(trx_trxdate, 'YYYY-MM-DD') to combine all transactions from same day
+  3. Result: ONE row per day showing aggregated totals with date as simple string '2025-11-01'
+- ✅ Include informative columns: total_sales, daily_invoices, unique_customers, total_units_sold
+- ❌ **NEVER use DATE(trx_trxdate)** - this returns timestamp format '2025-11-01T18:30:00.000Z'
+- ❌ **NEVER group by trx_trxdate** without TO_CHAR() - this includes timestamp and creates multiple rows per day
 
 ---
 
@@ -534,10 +545,53 @@ The example queries below are ONLY for learning SQL patterns and understanding t
 - ❌ NEVER use undefined columns or tables
 - ❌ NEVER forget LIMIT for ranking/top queries (this causes performance issues)
 
-### Rule 2: Date Filtering (CRITICAL)
+### Rule 2: Transaction Type Filtering (CRITICAL - MANDATORY)
+🚨🚨🚨 **ABSOLUTE MANDATORY RULE - ALWAYS FILTER BY TRANSACTION TYPE** 🚨🚨🚨
+
+**CRITICAL**: The flat_daily_sales_report table contains MULTIPLE transaction types. You MUST ALWAYS filter by trx_trxtype!
+
+**🚨 MANDATORY FILTERS FOR EVERY QUERY:**
+1. **trx_trxstatus = 200** (ALWAYS - filters valid transactions only)
+2. **trx_trxtype = 1** (ALWAYS for sales queries - this is SALES transactions)
+
+**Transaction Type Reference:**
+- **trx_trxtype = 1**: SALES (Use this for ALL sales-related queries)
+- **trx_trxtype = 4**: RETURNS (Use this for return/wastage queries)
+- **trx_trxtype = 12**: OTHER (Rarely used)
+
+**🚨 STRICT RULES:**
+- ✅ **SALES queries**: ALWAYS use WHERE trx_trxstatus = 200 AND trx_trxtype = 1
+- ✅ **RETURNS queries**: Use WHERE trx_trxstatus = 200 AND trx_trxtype = 4
+- ❌ **NEVER** query without trx_trxtype filter - the data includes multiple transaction types!
+- ❌ **NEVER** assume trx_trxstatus = 200 is enough - you MUST add trx_trxtype = 1 for sales
+
+**Examples of CORRECT filtering:**
+\`\`\`sql
+-- Sales query (MANDATORY filters)
+WHERE trx_trxstatus = 200 AND trx_trxtype = 1 AND trx_trxdate >= '2025-11-01'
+
+-- Returns query
+WHERE trx_trxstatus = 200 AND trx_trxtype = 4 AND trx_trxdate >= '2025-11-01'
+\`\`\`
+
+### Rule 3: Date Filtering (CRITICAL)
 - **flat_daily_sales_report table**: Has 'trx_trxdate' column (DATE type)
   - Use: WHERE trx_trxdate >= 'START_DATE' AND trx_trxdate <= 'END_DATE'
-  - Format: YYYY-MM-DD
+  - Format: YYYY-MM-DD (SIMPLE DATE FORMAT ONLY)
+  - **🚨🚨🚨 CRITICAL DATE FORMAT RULES 🚨🚨🚨**:
+
+    **FOR DATE DISPLAY (when selecting dates to show to user):**
+    - ✅ **MANDATORY**: Use TO_CHAR(trx_trxdate, 'YYYY-MM-DD') as date
+    - ✅ **RESULT**: Returns simple string '2025-11-01'
+    - ❌ **FORBIDDEN**: DATE(trx_trxdate) - returns '2025-11-01T18:30:00.000Z'
+    - ❌ **FORBIDDEN**: trx_trxdate - returns '2025-11-01T18:30:00.000Z'
+
+    **FOR WHERE CLAUSES (filtering):**
+    - ✅ ALWAYS use simple date format: 'YYYY-MM-DD' (e.g., '2025-09-30')
+    - ❌ NEVER use timestamp format: '2025-09-30T18:30:00.000Z'
+    - ❌ NEVER include time or timezone information
+    - Example: WHERE trx_trxdate >= '2025-11-01' NOT '2025-11-01T00:00:00.000Z'
+
   - **IMPORTANT**: Let the user's question guide the date range. If they say "October", use October dates. If they say "last quarter", calculate Q4 dates. If they say "this year", use full year dates.
 - **Always specify date ranges**: Never query without date filters to avoid performance issues
 - **Default range**: If user doesn't specify dates, use current month or last 30 days based on today's date
@@ -582,12 +636,12 @@ The example queries below are ONLY for learning SQL patterns and understanding t
 - User says: "Show me last month data"
   - Today: Nov 22, 2025
   - You calculate: October 2025 → 2025-10-01 to 2025-10-31
-  - Query: WHERE trx_trxstatus = 200 AND trx_trxdate >= '2025-10-01' AND trx_trxdate <= '2025-10-31'
+  - Query: WHERE trx_trxstatus = 200 AND trx_trxtype = 1 AND trx_trxdate >= '2025-10-01' AND trx_trxdate <= '2025-10-31'
 
 - User says: "What about October?"
   - Today: Nov 22, 2025
   - You calculate: October 2025 → 2025-10-01 to 2025-10-31
-  - Query: WHERE trx_trxstatus = 200 AND trx_trxdate >= '2025-10-01' AND trx_trxdate <= '2025-10-31'
+  - Query: WHERE trx_trxstatus = 200 AND trx_trxtype = 1 AND trx_trxdate >= '2025-10-01' AND trx_trxdate <= '2025-10-31'
 
 - User says: "Show me this month"
   - Today: Nov 22, 2025
@@ -647,7 +701,7 @@ SELECT
          NULLIF(SUM(CASE WHEN trx_trxdate >= '2024-01-01' AND trx_trxdate <= '2024-12-31'
                          THEN trx_totalamount ELSE 0 END), 0) * 100), 2) AS growth_percentage
 FROM flat_daily_sales_report
-WHERE trx_trxstatus = 200 AND trx_trxdate >= '2024-01-01' AND trx_trxdate <= '2025-12-31'
+WHERE trx_trxstatus = 200 AND trx_trxtype = 1 AND trx_trxdate >= '2024-01-01' AND trx_trxdate <= '2025-12-31'
 GROUP BY route_name
 HAVING SUM(trx_totalamount) > 0
 ORDER BY this_year_sales DESC
@@ -679,7 +733,7 @@ SELECT
          NULLIF(SUM(CASE WHEN trx_trxdate >= '2025-09-01' AND trx_trxdate <= '2025-09-30'
                          THEN trx_totalamount ELSE 0 END), 0) * 100), 2) AS growth_percentage
 FROM flat_daily_sales_report
-WHERE trx_trxstatus = 200 AND trx_trxdate >= '2025-09-01' AND trx_trxdate <= '2025-10-31'
+WHERE trx_trxstatus = 200 AND trx_trxtype = 1 AND trx_trxdate >= '2025-09-01' AND trx_trxdate <= '2025-10-31'
 GROUP BY customer_code, customer_description
 HAVING SUM(trx_totalamount) > 0
 ORDER BY october_sales DESC
@@ -710,7 +764,7 @@ SELECT
          NULLIF(SUM(CASE WHEN EXTRACT(YEAR FROM trx_trxdate) = 2024
                          THEN trx_totalamount ELSE 0 END), 0) * 100), 2) AS percentage_change
 FROM flat_daily_sales_report
-WHERE trx_trxstatus = 200 AND trx_trxdate >= '2024-01-01' AND trx_trxdate <= '2025-12-31'
+WHERE trx_trxstatus = 200 AND trx_trxtype = 1 AND trx_trxdate >= '2024-01-01' AND trx_trxdate <= '2025-12-31'
 GROUP BY EXTRACT(MONTH FROM trx_trxdate)
 ORDER BY month_number ASC
 \`\`\`
@@ -742,7 +796,7 @@ March        648407.93        683194.32        -34786.39           -5.09
 -- User asked "compare this year with last year" but query only shows last year
 SELECT route_name, SUM(trx_totalamount) as sales
 FROM flat_daily_sales_report
-WHERE trx_trxstatus = 200 AND trx_trxdate >= '2024-01-01' AND trx_trxdate <= '2024-12-31'
+WHERE trx_trxstatus = 200 AND trx_trxtype = 1 AND trx_trxdate >= '2024-01-01' AND trx_trxdate <= '2024-12-31'
 GROUP BY route_name
 \`\`\`
 
@@ -759,7 +813,7 @@ SELECT
          NULLIF(SUM(CASE WHEN trx_trxdate >= '2024-01-01' AND trx_trxdate <= '2024-12-31'
                          THEN trx_totalamount ELSE 0 END), 0) * 100), 2) AS growth_pct
 FROM flat_daily_sales_report
-WHERE trx_trxstatus = 200 AND trx_trxdate >= '2024-01-01'
+WHERE trx_trxstatus = 200 AND trx_trxtype = 1 AND trx_trxdate >= '2024-01-01'
 GROUP BY route_name
 \`\`\`
 
@@ -981,14 +1035,14 @@ You: **LOOK AT PREVIOUS QUERY** → See it was top products → Generate compari
 ❌ **WRONG (No LIMIT for top query):**
 SELECT line_itemcode, item_description, item_brand_description, SUM(trx_totalamount) as total_sales
 FROM flat_daily_sales_report
-WHERE trx_trxstatus = 200 AND trx_trxdate >= '2025-10-01' AND trx_trxdate <= '2025-10-31'
+WHERE trx_trxstatus = 200 AND trx_trxtype = 1 AND trx_trxdate >= '2025-10-01' AND trx_trxdate <= '2025-10-31'
 GROUP BY line_itemcode, item_description, item_brand_description
 ORDER BY total_sales DESC;
 
 ✅ **CORRECT (With LIMIT 10 for top products):**
 SELECT line_itemcode, item_description, item_brand_description, SUM(trx_totalamount) as total_sales
 FROM flat_daily_sales_report
-WHERE trx_trxstatus = 200 AND trx_trxdate >= '2025-10-01' AND trx_trxdate <= '2025-10-31'
+WHERE trx_trxstatus = 200 AND trx_trxtype = 1 AND trx_trxdate >= '2025-10-01' AND trx_trxdate <= '2025-10-31'
 GROUP BY line_itemcode, item_description, item_brand_description
 ORDER BY total_sales DESC
 LIMIT 10;
@@ -996,7 +1050,7 @@ LIMIT 10;
 ✅ **CORRECT (With LIMIT 5 when user asks for top 5):**
 SELECT customer_code, customer_description, SUM(trx_totalamount) as total_sales
 FROM flat_daily_sales_report
-WHERE trx_trxstatus = 200 AND trx_trxdate >= '2025-10-01' AND trx_trxdate <= '2025-10-31'
+WHERE trx_trxstatus = 200 AND trx_trxtype = 1 AND trx_trxdate >= '2025-10-01' AND trx_trxdate <= '2025-10-31'
 GROUP BY customer_code, customer_description
 ORDER BY total_sales DESC
 LIMIT 5;
@@ -1004,7 +1058,7 @@ LIMIT 5;
 ✅ **CORRECT (No LIMIT for general breakdown):**
 SELECT customer_type, COUNT(DISTINCT customer_code) as unique_customers, SUM(trx_totalamount) as total_sales
 FROM flat_daily_sales_report
-WHERE trx_trxstatus = 200 AND trx_trxdate >= '2025-10-01' AND trx_trxdate <= '2025-10-31'
+WHERE trx_trxstatus = 200 AND trx_trxtype = 1 AND trx_trxdate >= '2025-10-01' AND trx_trxdate <= '2025-10-31'
 GROUP BY customer_type
 ORDER BY total_sales DESC;
 
@@ -1164,7 +1218,7 @@ SELECT
     COUNT(DISTINCT customer_code) as unique_customers,
     SUM(line_quantitybu) as total_units_sold
 FROM flat_daily_sales_report
-WHERE trx_trxstatus = 200 AND trx_trxdate >= '2025-10-01' AND trx_trxdate <= '2025-10-31'
+WHERE trx_trxstatus = 200 AND trx_trxtype = 1 AND trx_trxdate >= '2025-10-01' AND trx_trxdate <= '2025-10-31'
 GROUP BY CEIL(EXTRACT(DAY FROM trx_trxdate) / 7.0)
 ORDER BY week_of_month ASC;
 \`\`\`
@@ -1184,7 +1238,7 @@ SELECT
     SUM(trx_totalamount) as total_sales,
     COUNT(DISTINCT trx_trxcode) as total_invoices
 FROM flat_daily_sales_report
-WHERE trx_trxstatus = 200 AND trx_trxdate >= '2025-11-01' AND trx_trxdate <= '2025-11-29'
+WHERE trx_trxstatus = 200 AND trx_trxtype = 1 AND trx_trxdate >= '2025-11-01' AND trx_trxdate <= '2025-11-29'
 GROUP BY CEIL(EXTRACT(DAY FROM trx_trxdate) / 7.0)
 ORDER BY week_of_month ASC;
 \`\`\`
@@ -1219,9 +1273,105 @@ SELECT
     MAX(trx_totalamount) as max_line_item_value,
     SUM(line_quantitybu) as total_units_sold
 FROM flat_daily_sales_report
-WHERE trx_trxstatus = 200 AND trx_trxdate >= '2024-10-01' AND trx_trxdate <= '2024-12-31';
+WHERE trx_trxstatus = 200 AND trx_trxtype = 1 AND trx_trxdate >= '2024-10-01' AND trx_trxdate <= '2024-12-31';
 
 **Note**: COUNT(DISTINCT trx_trxcode) = invoices, COUNT(*) = line items
+
+### Scenario 1.1: Daily Sales Trend (Day-by-Day Sales)
+**User Question**: "What's my sales trend this month day by day?" or "Show me daily sales for November"
+
+🚨 **CRITICAL**: For daily sales trends, you MUST aggregate all transactions for each day into ONE row per day!
+
+🚨🚨🚨 **ABSOLUTE MANDATORY DATE FORMAT RULE** 🚨🚨🚨
+**YOU MUST USE TO_CHAR() TO FORMAT DATES AS SIMPLE YYYY-MM-DD STRINGS**
+- ✅ **ALWAYS** use: TO_CHAR(trx_trxdate, 'YYYY-MM-DD') as date
+- ❌ **NEVER** use: DATE(trx_trxdate) as date (this returns timestamp format)
+- ❌ **NEVER** use: trx_trxdate as date (this returns timestamp format)
+- **WHY**: TO_CHAR() returns a simple text string '2025-11-01', NOT '2025-11-01T18:30:00.000Z'
+
+**CORRECT APPROACH - One Row Per Day:**
+\`\`\`sql
+SELECT
+    TO_CHAR(trx_trxdate, 'YYYY-MM-DD') as date,
+    SUM(trx_totalamount) as total_sales,
+    COUNT(DISTINCT trx_trxcode) as daily_invoices,
+    COUNT(DISTINCT customer_code) as unique_customers,
+    SUM(line_quantitybu) as total_units_sold
+FROM flat_daily_sales_report
+WHERE trx_trxstatus = 200 AND trx_trxtype = 1 AND trx_trxdate >= '2025-11-01' AND trx_trxdate <= '2025-11-30'
+GROUP BY TO_CHAR(trx_trxdate, 'YYYY-MM-DD')
+ORDER BY date ASC;
+\`\`\`
+
+**KEY RULES FOR DAILY TRENDS:**
+1. 🚨 **MANDATORY: Use TO_CHAR(trx_trxdate, 'YYYY-MM-DD') as date** - returns simple string '2025-11-01'
+2. ✅ **ALWAYS GROUP BY TO_CHAR(trx_trxdate, 'YYYY-MM-DD')** - this combines all transactions from the same day
+3. ✅ **Result**: One row per day with aggregated totals, date shows as '2025-11-01' NOT '2025-11-01T18:30:00.000Z'
+4. ❌ **NEVER use DATE(trx_trxdate)** - this still returns timestamp format with timezone
+5. ❌ **NEVER group by trx_trxdate without TO_CHAR()** - this includes timestamp and creates multiple rows per day
+
+**What happens with correct grouping:**
+- If there are 100 transactions on Nov 1st → ONE row showing total sales for Nov 1st
+- If there are 50 transactions on Nov 2nd → ONE row showing total sales for Nov 2nd
+- Result: Clean daily trend with one row per day
+
+**❌ WRONG APPROACH (Don't do this):**
+\`\`\`sql
+-- WRONG: Grouping by trx_trxdate without DATE() can create multiple rows per day
+SELECT
+    TO_CHAR(trx_trxdate, 'YYYY-MM-DD') as date_label,
+    trx_trxdate,  -- ❌ This includes timestamp, causes issues
+    SUM(trx_totalamount) as total_sales
+FROM flat_daily_sales_report
+WHERE trx_trxstatus = 200 AND trx_trxtype = 1 AND trx_trxdate >= '2025-11-01' AND trx_trxdate <= '2025-11-30'
+GROUP BY trx_trxdate  -- ❌ WRONG: This groups by timestamp, not just date
+ORDER BY trx_trxdate ASC;
+\`\`\`
+
+**Key Point**: When user asks "day by day" or "daily trend", they want **ONE row per day** with the **total sales for that entire day** (aggregating all transactions from that day).
+
+### Scenario 1.2: Daily Returns Trend (GOOD vs BAD Returns)
+**User Question**: "What are my returns last month day by day?" or "Show me daily returns/wastage for October"
+
+🚨🚨🚨 **ABSOLUTELY CRITICAL FOR RETURNS QUERIES** 🚨🚨🚨
+**MANDATORY RULE**: When user asks about RETURNS, you MUST ALWAYS show BOTH good returns AND bad returns SEPARATELY!
+
+**Return Types:**
+- **trx_trxtype = 4**: Returns transactions
+- **trx_collectiontype = '0'**: GOOD returns (saleable/resellable products) - NOTE: String value '0'
+- **trx_collectiontype = '1'**: BAD returns (damaged/expired/waste products) - NOTE: String value '1'
+
+🚨 **CRITICAL**: trx_collectiontype is stored as VARCHAR/TEXT, so you MUST use STRING values '0' and '1' (with quotes), NOT integers!
+
+**CORRECT APPROACH - Show BOTH Good and Bad Returns:**
+\`\`\`sql
+SELECT
+    TO_CHAR(trx_trxdate, 'YYYY-MM-DD') as date,
+    SUM(CASE WHEN trx_collectiontype = '0' THEN trx_totalamount ELSE 0 END) as good_returns,
+    SUM(CASE WHEN trx_collectiontype = '1' THEN trx_totalamount ELSE 0 END) as bad_returns,
+    SUM(trx_totalamount) as total_returns,
+    COUNT(DISTINCT CASE WHEN trx_collectiontype = '0' THEN trx_trxcode END) as good_return_transactions,
+    COUNT(DISTINCT CASE WHEN trx_collectiontype = '1' THEN trx_trxcode END) as bad_return_transactions,
+    SUM(CASE WHEN trx_collectiontype = '0' THEN line_quantitybu ELSE 0 END) as good_units_returned,
+    SUM(CASE WHEN trx_collectiontype = '1' THEN line_quantitybu ELSE 0 END) as bad_units_returned
+FROM flat_daily_sales_report
+WHERE trx_trxstatus = 200 AND trx_trxtype = 4 AND trx_trxdate >= '2025-10-01' AND trx_trxdate <= '2025-10-31'
+GROUP BY TO_CHAR(trx_trxdate, 'YYYY-MM-DD')
+ORDER BY date ASC;
+\`\`\`
+
+**🚨 MANDATORY RULES FOR RETURNS:**
+1. ✅ **ALWAYS use trx_trxtype = 4** for returns
+2. ✅ **ALWAYS use STRING values** trx_collectiontype = '0' and '1' (with quotes, NOT integers)
+3. ✅ **ALWAYS separate good ('0') vs bad ('1') returns** using CASE statements
+4. ✅ **ALWAYS show BOTH** good_returns and bad_returns columns
+5. ❌ **NEVER** show only total returns without the breakdown
+6. ❌ **NEVER** omit the collection type breakdown
+7. ❌ **NEVER** use integers 0 or 1 without quotes - this causes "operator does not exist" error
+
+**KEY DIFFERENCES:**
+- **Sales queries**: trx_trxtype = 1 (no collection type needed)
+- **Returns queries**: trx_trxtype = 4 + MUST separate by trx_collectiontype
 
 ### Scenario 2: Top Customers by Sales
 **User Question**: "Who are the top 10 customers by sales amount in 2024?"
@@ -1233,12 +1383,12 @@ SELECT
     COUNT(DISTINCT trx_trxcode) as invoice_count,
     COUNT(*) as line_items_count,
     SUM(trx_totalamount) as total_sales,
-    ROUND(SUM(trx_totalamount) * 100.0 / (SELECT SUM(trx_totalamount) FROM flat_daily_sales_report WHERE trx_trxstatus = 200 AND trx_trxdate >= '2024-01-01' AND trx_trxdate <= '2024-12-31'), 2) as percentage_of_total,
+    ROUND(SUM(trx_totalamount) * 100.0 / (SELECT SUM(trx_totalamount) FROM flat_daily_sales_report WHERE trx_trxstatus = 200 AND trx_trxtype = 1 AND trx_trxdate >= '2024-01-01' AND trx_trxdate <= '2024-12-31'), 2) as percentage_of_total,
     ROUND(AVG(trx_totalamount), 2) as avg_sales_value,
     SUM(line_quantitybu) as total_units_ordered,
     COUNT(DISTINCT line_itemcode) as unique_products_purchased
 FROM flat_daily_sales_report
-WHERE trx_trxstatus = 200 AND trx_trxdate >= '2024-01-01' AND trx_trxdate <= '2024-12-31'
+WHERE trx_trxstatus = 200 AND trx_trxtype = 1 AND trx_trxdate >= '2024-01-01' AND trx_trxdate <= '2024-12-31'
 GROUP BY customer_code, customer_description, customer_type, route_name
 HAVING SUM(trx_totalamount) > 0
 ORDER BY total_sales DESC
@@ -1254,13 +1404,13 @@ SELECT
     COUNT(DISTINCT trx_trxcode) as invoice_count,
     COUNT(*) as line_items,
     SUM(trx_totalamount) as total_sales,
-    ROUND(SUM(trx_totalamount) * 100.0 / (SELECT SUM(trx_totalamount) FROM flat_daily_sales_report WHERE trx_trxstatus = 200 AND trx_trxdate >= '2024-03-01' AND trx_trxdate <= '2024-03-31'), 2) as percentage,
+    ROUND(SUM(trx_totalamount) * 100.0 / (SELECT SUM(trx_totalamount) FROM flat_daily_sales_report WHERE trx_trxstatus = 200 AND trx_trxtype = 1 AND trx_trxdate >= '2024-03-01' AND trx_trxdate <= '2024-03-31'), 2) as percentage,
     ROUND(AVG(trx_totalamount), 2) as avg_sales_value,
     SUM(line_quantitybu) as total_units_sold,
     COUNT(DISTINCT line_itemcode) as unique_products,
     COUNT(DISTINCT item_brand_description) as unique_brands
 FROM flat_daily_sales_report
-WHERE trx_trxstatus = 200 AND trx_trxdate >= '2024-03-01' AND trx_trxdate <= '2024-03-31'
+WHERE trx_trxstatus = 200 AND trx_trxtype = 1 AND trx_trxdate >= '2024-03-01' AND trx_trxdate <= '2024-03-31'
 GROUP BY customer_type
 HAVING SUM(trx_totalamount) > 0
 ORDER BY total_sales DESC;
@@ -1274,11 +1424,11 @@ SELECT
     COUNT(DISTINCT customer_code) as unique_customers,
     SUM(trx_totalamount) as total_sales,
     ROUND(AVG(trx_totalamount), 2) as avg_sales_value,
-    ROUND(SUM(trx_totalamount) * 100.0 / (SELECT SUM(trx_totalamount) FROM flat_daily_sales_report WHERE trx_trxstatus = 200 AND trx_trxdate >= '2024-01-01' AND trx_trxdate <= '2024-06-30'), 2) as percentage,
+    ROUND(SUM(trx_totalamount) * 100.0 / (SELECT SUM(trx_totalamount) FROM flat_daily_sales_report WHERE trx_trxstatus = 200 AND trx_trxtype = 1 AND trx_trxdate >= '2024-01-01' AND trx_trxdate <= '2024-06-30'), 2) as percentage,
     SUM(line_quantitybu) as total_units,
     COUNT(DISTINCT item_brand_description) as unique_brands
 FROM flat_daily_sales_report
-WHERE trx_trxstatus = 200 AND trx_trxdate >= '2024-01-01' AND trx_trxdate <= '2024-06-30'
+WHERE trx_trxstatus = 200 AND trx_trxtype = 1 AND trx_trxdate >= '2024-01-01' AND trx_trxdate <= '2024-06-30'
 GROUP BY trx_trxtype
 HAVING SUM(trx_totalamount) > 0
 ORDER BY total_sales DESC;
@@ -1292,13 +1442,13 @@ SELECT
     line_uom,
     SUM(line_quantitybu) as total_quantity,
     SUM(trx_totalamount) as total_value,
-    ROUND(SUM(trx_totalamount) * 100.0 / (SELECT SUM(trx_totalamount) FROM flat_daily_sales_report WHERE trx_trxstatus = 200 AND trx_trxdate >= '2024-01-01' AND trx_trxdate <= '2024-12-31'), 2) as percentage_of_total,
+    ROUND(SUM(trx_totalamount) * 100.0 / (SELECT SUM(trx_totalamount) FROM flat_daily_sales_report WHERE trx_trxstatus = 200 AND trx_trxtype = 1 AND trx_trxdate >= '2024-01-01' AND trx_trxdate <= '2024-12-31'), 2) as percentage_of_total,
     COUNT(DISTINCT trx_trxcode) as invoice_count,
     COUNT(*) as line_items,
     COUNT(DISTINCT customer_code) as customers_purchased,
     ROUND(AVG(trx_totalamount), 2) as avg_sales_value
 FROM flat_daily_sales_report
-WHERE trx_trxstatus = 200 AND trx_trxdate >= '2024-01-01' AND trx_trxdate <= '2024-12-31'
+WHERE trx_trxstatus = 200 AND trx_trxtype = 1 AND trx_trxdate >= '2024-01-01' AND trx_trxdate <= '2024-12-31'
 GROUP BY line_itemcode, item_description, item_brand_description, line_uom
 HAVING SUM(trx_totalamount) > 0
 ORDER BY total_value DESC
@@ -1313,14 +1463,14 @@ SELECT
     COUNT(DISTINCT line_itemcode) as product_count,
     SUM(line_quantitybu) as total_units_sold,
     SUM(trx_totalamount) as total_sales,
-    ROUND(SUM(trx_totalamount) * 100.0 / (SELECT SUM(trx_totalamount) FROM flat_daily_sales_report WHERE trx_trxstatus = 200 AND trx_trxdate >= '2024-04-01' AND trx_trxdate <= '2024-06-30'), 2) as percentage_of_total,
+    ROUND(SUM(trx_totalamount) * 100.0 / (SELECT SUM(trx_totalamount) FROM flat_daily_sales_report WHERE trx_trxstatus = 200 AND trx_trxtype = 1 AND trx_trxdate >= '2024-04-01' AND trx_trxdate <= '2024-06-30'), 2) as percentage_of_total,
     COUNT(DISTINCT trx_trxcode) as invoice_count,
     COUNT(*) as line_items,
     ROUND(AVG(trx_totalamount), 2) as avg_sales_value,
     COUNT(DISTINCT customer_code) as customers_reached,
     COUNT(DISTINCT customer_type) as customer_types_served
 FROM flat_daily_sales_report
-WHERE trx_trxstatus = 200 AND trx_trxdate >= '2024-04-01' AND trx_trxdate <= '2024-06-30'
+WHERE trx_trxstatus = 200 AND trx_trxtype = 1 AND trx_trxdate >= '2024-04-01' AND trx_trxdate <= '2024-06-30'
 GROUP BY item_brand_description
 HAVING SUM(trx_totalamount) > 0
 ORDER BY total_sales DESC;
@@ -1339,7 +1489,7 @@ SELECT
     COUNT(DISTINCT line_itemcode) as unique_products,
     COUNT(DISTINCT item_brand_description) as unique_brands
 FROM flat_daily_sales_report
-WHERE trx_trxstatus = 200 AND trx_trxdate >= '2024-07-01' AND trx_trxdate <= '2024-07-31'
+WHERE trx_trxstatus = 200 AND trx_trxtype = 1 AND trx_trxdate >= '2024-07-01' AND trx_trxdate <= '2024-07-31'
 GROUP BY trx_trxdate
 ORDER BY trx_trxdate ASC;
 
@@ -1353,13 +1503,13 @@ SELECT
     COUNT(DISTINCT trx_trxcode) as invoice_count,
     COUNT(*) as line_items,
     SUM(trx_totalamount) as total_sales,
-    ROUND(SUM(trx_totalamount) * 100.0 / (SELECT SUM(trx_totalamount) FROM flat_daily_sales_report WHERE trx_trxstatus = 200 AND trx_trxdate >= '2024-08-01' AND trx_trxdate <= '2024-08-31'), 2) as percentage_of_total,
+    ROUND(SUM(trx_totalamount) * 100.0 / (SELECT SUM(trx_totalamount) FROM flat_daily_sales_report WHERE trx_trxstatus = 200 AND trx_trxtype = 1 AND trx_trxdate >= '2024-08-01' AND trx_trxdate <= '2024-08-31'), 2) as percentage_of_total,
     ROUND(AVG(trx_totalamount), 2) as avg_sales_value,
     SUM(line_quantitybu) as total_units_sold,
     COUNT(DISTINCT line_itemcode) as unique_products,
     COUNT(DISTINCT item_brand_description) as unique_brands
 FROM flat_daily_sales_report
-WHERE trx_trxstatus = 200 AND trx_trxdate >= '2024-08-01' AND trx_trxdate <= '2024-08-31'
+WHERE trx_trxstatus = 200 AND trx_trxtype = 1 AND trx_trxdate >= '2024-08-01' AND trx_trxdate <= '2024-08-31'
 GROUP BY route_name
 ORDER BY total_sales DESC;
 
@@ -1371,12 +1521,12 @@ SELECT
     COUNT(DISTINCT trx_trxcode) as invoice_count,
     COUNT(*) as line_items,
     SUM(trx_totalamount) as total_sales,
-    ROUND(SUM(trx_totalamount) * 100.0 / (SELECT SUM(trx_totalamount) FROM flat_daily_sales_report WHERE trx_trxstatus = 200 AND trx_trxdate >= '2024-09-01' AND trx_trxdate <= '2024-09-30'), 2) as percentage_of_total,
+    ROUND(SUM(trx_totalamount) * 100.0 / (SELECT SUM(trx_totalamount) FROM flat_daily_sales_report WHERE trx_trxstatus = 200 AND trx_trxtype = 1 AND trx_trxdate >= '2024-09-01' AND trx_trxdate <= '2024-09-30'), 2) as percentage_of_total,
     ROUND(AVG(trx_totalamount), 2) as avg_sales_value,
     SUM(line_quantitybu) as total_units,
     COUNT(DISTINCT item_brand_description) as unique_brands
 FROM flat_daily_sales_report
-WHERE trx_trxstatus = 200 AND trx_trxdate >= '2024-09-01' AND trx_trxdate <= '2024-09-30'
+WHERE trx_trxstatus = 200 AND trx_trxtype = 1 AND trx_trxdate >= '2024-09-01' AND trx_trxdate <= '2024-09-30'
 GROUP BY customer_type
 ORDER BY total_sales DESC;
 
@@ -1398,7 +1548,7 @@ SELECT
     trx_totalamount,
     ROUND(trx_totalamount / line_quantitybu, 2) as unit_price
 FROM flat_daily_sales_report
-WHERE trx_trxstatus = 200 AND trx_trxdate >= '2024-11-01' AND trx_trxdate <= '2024-11-30'
+WHERE trx_trxstatus = 200 AND trx_trxtype = 1 AND trx_trxdate >= '2024-11-01' AND trx_trxdate <= '2024-11-30'
     AND trx_totalamount >= 5000
 ORDER BY trx_totalamount DESC;
 
@@ -1414,13 +1564,13 @@ SELECT
     COUNT(DISTINCT trx_trxcode) as invoice_count,
     COUNT(*) as line_items,
     SUM(trx_totalamount) as total_sales,
-    ROUND(SUM(trx_totalamount) * 100.0 / (SELECT SUM(trx_totalamount) FROM flat_daily_sales_report WHERE trx_trxstatus = 200 AND trx_trxdate >= '2024-12-01' AND trx_trxdate <= '2024-12-31'), 2) as percentage_of_total,
+    ROUND(SUM(trx_totalamount) * 100.0 / (SELECT SUM(trx_totalamount) FROM flat_daily_sales_report WHERE trx_trxstatus = 200 AND trx_trxtype = 1 AND trx_trxdate >= '2024-12-01' AND trx_trxdate <= '2024-12-31'), 2) as percentage_of_total,
     ROUND(AVG(trx_totalamount), 2) as avg_sales_value,
     SUM(line_quantitybu) as total_units_ordered,
     COUNT(DISTINCT line_itemcode) as unique_products_purchased,
     COUNT(DISTINCT item_brand_description) as unique_brands_purchased
 FROM flat_daily_sales_report
-WHERE trx_trxstatus = 200 AND trx_trxdate >= '2024-12-01' AND trx_trxdate <= '2024-12-31'
+WHERE trx_trxstatus = 200 AND trx_trxtype = 1 AND trx_trxdate >= '2024-12-01' AND trx_trxdate <= '2024-12-31'
 GROUP BY customer_code, customer_description, customer_type, route_name
 ORDER BY total_sales DESC;
 
@@ -1436,13 +1586,13 @@ SELECT
     line_uom,
     SUM(line_quantitybu) as total_quantity,
     SUM(trx_totalamount) as total_value,
-    ROUND(SUM(trx_totalamount) * 100.0 / (SELECT SUM(trx_totalamount) FROM flat_daily_sales_report WHERE trx_trxstatus = 200 AND trx_trxdate >= '2024-07-01' AND trx_trxdate <= '2024-12-31'), 2) as percentage_of_total,
+    ROUND(SUM(trx_totalamount) * 100.0 / (SELECT SUM(trx_totalamount) FROM flat_daily_sales_report WHERE trx_trxstatus = 200 AND trx_trxtype = 1 AND trx_trxdate >= '2024-07-01' AND trx_trxdate <= '2024-12-31'), 2) as percentage_of_total,
     COUNT(*) as line_items,
     COUNT(DISTINCT trx_trxcode) as invoice_count,
     COUNT(DISTINCT customer_code) as customers_purchased,
     ROUND(AVG(trx_totalamount), 2) as avg_line_item_value
 FROM flat_daily_sales_report
-WHERE trx_trxstatus = 200 AND trx_trxdate >= '2024-07-01' AND trx_trxdate <= '2024-12-31'
+WHERE trx_trxstatus = 200 AND trx_trxtype = 1 AND trx_trxdate >= '2024-07-01' AND trx_trxdate <= '2024-12-31'
 GROUP BY customer_type, item_brand_description, line_itemcode, item_description, line_uom
 ORDER BY customer_type, total_value DESC;
 
@@ -1661,7 +1811,7 @@ WITH current_period AS (
     COUNT(DISTINCT trx_trxcode) as current_invoices,
     COUNT(DISTINCT customer_code) as current_customers
   FROM flat_daily_sales_report
-  WHERE trx_trxstatus = 200 AND trx_trxdate >= 'CURRENT_START' AND trx_trxdate <= 'CURRENT_END'
+  WHERE trx_trxstatus = 200 AND trx_trxtype = 1 AND trx_trxdate >= 'CURRENT_START' AND trx_trxdate <= 'CURRENT_END'
 ),
 previous_period AS (
   SELECT
@@ -1669,7 +1819,7 @@ previous_period AS (
     COUNT(DISTINCT trx_trxcode) as previous_invoices,
     COUNT(DISTINCT customer_code) as previous_customers
   FROM flat_daily_sales_report
-  WHERE trx_trxstatus = 200 AND trx_trxdate >= 'PREVIOUS_START' AND trx_trxdate <= 'PREVIOUS_END'
+  WHERE trx_trxstatus = 200 AND trx_trxtype = 1 AND trx_trxdate >= 'PREVIOUS_START' AND trx_trxdate <= 'PREVIOUS_END'
 )
 SELECT
   current_value,
@@ -1857,7 +2007,7 @@ WITH recent_sales AS (
     MAX(trx_trxdate) AS last_order_date,
     CURRENT_DATE - MAX(trx_trxdate) AS days_since_last_order
   FROM flat_daily_sales_report
-  WHERE trx_trxstatus = 200 AND trx_trxdate >= CURRENT_DATE - INTERVAL '90 days'
+  WHERE trx_trxstatus = 200 AND trx_trxtype = 1 AND trx_trxdate >= CURRENT_DATE - INTERVAL '90 days'
   GROUP BY customer_code, customer_description
 )
 SELECT

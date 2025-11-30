@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { query } from '@/lib/database';
 
 export const dynamic = 'force-dynamic';
-export const maxDuration = 60; // 60 seconds max
+export const maxDuration = 300; // 5 minutes max
 
 export async function POST(req: NextRequest) {
   try {
@@ -18,26 +18,59 @@ export async function POST(req: NextRequest) {
 
     console.log('🔍 Executing SQL query:', sqlQuery.substring(0, 200) + '...');
 
-    // Execute the query with a 30-second timeout
+    // Execute the query with a 30-second timeout at database level
     const startTime = Date.now();
-    const result = await query(sqlQuery);
-    const executionTime = Date.now() - startTime;
 
-    console.log(`✅ Query executed successfully in ${executionTime}ms`);
-    console.log(`📊 Rows returned: ${result.rows?.length || 0}`);
+    try {
+      // Set statement timeout to 5 minutes for chatbot queries
+      await query('SET statement_timeout = 300000'); // 5 minutes (300 seconds)
 
-    // Convert rows from objects to arrays for compatibility
-    const columns = result.rows?.[0] ? Object.keys(result.rows[0]) : [];
-    const rowsAsArrays = result.rows?.map(row => columns.map(col => row[col])) || [];
+      const result = await query(sqlQuery);
+      const executionTime = Date.now() - startTime;
 
-    // Return the result in the expected format
-    return NextResponse.json({
-      success: true,
-      rows: rowsAsArrays,
-      columns,
-      rowCount: result.rows?.length || 0,
-      executionTime,
-    });
+      // Reset timeout
+      await query('SET statement_timeout = 0');
+
+      console.log(`✅ Query executed successfully in ${executionTime}ms`);
+      console.log(`📊 Rows returned: ${result.rows?.length || 0}`);
+
+      // Convert rows from objects to arrays for compatibility
+      const columns = result.rows?.[0] ? Object.keys(result.rows[0]) : [];
+      const rowsAsArrays = result.rows?.map(row => columns.map(col => row[col])) || [];
+
+      // Return the result in the expected format
+      return NextResponse.json({
+        success: true,
+        rows: rowsAsArrays,
+        columns,
+        rowCount: result.rows?.length || 0,
+        executionTime,
+      });
+    } catch (queryError: any) {
+      // ALWAYS reset timeout even if query fails
+      try {
+        await query('SET statement_timeout = 0');
+      } catch (resetError) {
+        console.error('⚠️ Failed to reset timeout:', resetError);
+      }
+
+      // Check if it's a timeout error
+      if (queryError.code === '57014' || queryError.message?.includes('timeout')) {
+        console.error('⏱️ Query timeout after 5 minutes');
+        return NextResponse.json(
+          {
+            error: 'Query execution time exceeded 5 minutes. The dataset might be too large. Please try adding date filters or limiting the scope.',
+            detail: 'The query was automatically cancelled after 5 minutes to prevent database overload.',
+            code: 'QUERY_TIMEOUT',
+            success: false,
+          },
+          { status: 408 } // 408 Request Timeout
+        );
+      }
+
+      // Re-throw for general error handler
+      throw queryError;
+    }
   } catch (error: any) {
     console.error('❌ SQL execution error:', error);
 
