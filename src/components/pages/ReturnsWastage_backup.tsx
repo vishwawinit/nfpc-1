@@ -24,7 +24,7 @@ import ExcelJS from 'exceljs'
 
 export function ReturnsWastage() {
   const [activeTab, setActiveTab] = useState('return-reasons')
-  const [dateRange, setDateRange] = useState('thisMonth')
+  const [dateRange, setDateRange] = useState('lastMonth')
   const [selectedRegion, setSelectedRegion] = useState('all')
   const [selectedSalesman, setSelectedSalesman] = useState('all')
   const [selectedRoute, setSelectedRoute] = useState('all')
@@ -64,18 +64,10 @@ export function ReturnsWastage() {
   useEffect(() => {
     if (selectedRegion !== 'all') {
       fetchFilters()
-      setSelectedRoute('all')
       setSelectedSalesman('all')
+      setSelectedRoute('all')
     }
   }, [selectedRegion])
-
-  // Fetch filter options when route changes (cascading filter)
-  useEffect(() => {
-    if (selectedRoute !== 'all') {
-      fetchFilters()
-      setSelectedSalesman('all')
-    }
-  }, [selectedRoute])
 
   // Fetch data when filters change
   useEffect(() => {
@@ -96,11 +88,14 @@ export function ReturnsWastage() {
     try {
       const params = new URLSearchParams({
         range: dateRange,
-        region: selectedRegion,
-        route: selectedRoute
+        region: selectedRegion
       })
       const response = await fetch(`/api/returns-wastage/filters?${params}`, {
-        cache: 'default' // Use browser cache
+        // Enable Next.js caching for filter options
+        next: {
+          revalidate: 300, // Cache for 5 minutes
+          tags: ['returns-wastage-filters']
+        }
       })
       const result = await response.json()
       if (result.success) {
@@ -126,7 +121,11 @@ export function ReturnsWastage() {
       })
 
       const response = await fetch(`/api/returns-wastage?${params}`, {
-        cache: 'default' // Use browser cache
+        // Enable Next.js caching for data
+        next: {
+          revalidate: 300, // Cache for 5 minutes
+          tags: ['returns-wastage']
+        }
       })
       const result = await response.json()
 
@@ -2002,6 +2001,7 @@ export function ReturnsWastage() {
   const tabs = [
     { id: 'return-reasons', label: 'Return Reasons', icon: FileText },
     { id: 'mtd-returns', label: 'Period Returns', icon: PackageX },
+    { id: 'weekly-history', label: 'Weekly History', icon: Calendar },
     { id: 'sku-return', label: 'SKU Return %', icon: BarChart3 },
     { id: 'return-on-sales', label: 'Return on Sales', icon: DollarSign },
     { id: 'good-bad-details', label: 'Good/Bad Returns Details', icon: ListFilter }
@@ -2417,196 +2417,233 @@ export function ReturnsWastage() {
               </Card>
 
               {/* Bar Chart - Return Reasons Comparison */}
-              <Card className="shadow-sm border-slate-200">
-                <CardHeader className="pb-4">
+              <Card>
+                <CardHeader>
                   <div className="flex items-center justify-between">
                     <div>
-                      <CardTitle className="text-xl font-bold text-slate-800 max-sm:text-lg">Top 5 Brands by Returns</CardTitle>
-                      <p className="text-sm text-slate-600 mt-1.5">Breakdown of good vs bad returns by brand</p>
+                      <CardTitle className="text-lg font-semibold max-sm:text-base">Top Return Reasons</CardTitle>
+                      <p className="text-xs text-slate-500 mt-1">Top 3 GOOD + Top 3 BAD by transaction count</p>
                     </div>
                     <Tooltip>
                       <TooltipTrigger asChild>
-                        <HelpCircle className="h-5 w-5 text-slate-400 cursor-help flex-shrink-0 hover:text-slate-600 transition-colors" />
+                        <HelpCircle className="h-5 w-5 text-slate-400 cursor-help flex-shrink-0" />
                       </TooltipTrigger>
-                      <TooltipContent className="max-w-xs bg-slate-900 text-white border-slate-700">
+                      <TooltipContent className="max-w-xs">
                         <div className="space-y-2 text-xs">
-                          <p className="font-semibold text-sm">Top Brands by Returns</p>
-                          <p><strong>What it shows:</strong> The 5 brands with highest total return values.</p>
-                          <p><strong>Chart breakdown:</strong></p>
+                          <p className="font-semibold">Bar Chart: Top Return Reasons</p>
+                          <p><strong>What it shows:</strong> Most frequent return reasons by NUMBER of transactions (not by value).</p>
+                          <p><strong>Chart includes:</strong></p>
                           <ul className="list-disc pl-4 space-y-1">
-                            <li><span className="text-emerald-400 font-semibold">Green section</span>: Good returns (sellable items)</li>
-                            <li><span className="text-rose-400 font-semibold">Red section</span>: Bad returns (wastage/damaged)</li>
+                            <li><span className="text-green-600 font-semibold">Green bars</span>: Top 3 GOOD return reasons (sellable - collection_type = 1)</li>
+                            <li><span className="text-red-600 font-semibold">Red bars</span>: Top 3 BAD return reasons (wastage - collection_type = 0)</li>
                           </ul>
-                          <p className="text-emerald-300">💡 Helps identify brands with quality issues vs. overstocking problems</p>
+                          <p><strong>Y-axis shows:</strong> Transaction COUNT (how many return orders had this reason)</p>
+                          <p><strong>Example:</strong> If "Sellable" shows 1,438, it means 1,438 return transactions had the reason "Sellable".</p>
+                          <p className="text-blue-600">ℹ This helps identify which specific reasons cause the most returns</p>
                         </div>
                       </TooltipContent>
                     </Tooltip>
                   </div>
                 </CardHeader>
-                <CardContent className="pt-2">
-                  <ResponsiveContainer width="100%" height={isMobile ? 280 : 340}>
+                <CardContent>
+                  <ResponsiveContainer width="100%" height={isMobile ? 250 : 300}>
                     <BarChart
-                      data={(data?.returnReasons?.byBrand || [])
-                        .slice(0, 5)
-                        .map((b: any, idx: number) => ({
-                          brandName: b.brand_name && b.brand_name.length > 12
-                            ? b.brand_name.substring(0, 12) + '...'
-                            : b.brand_name || 'Unknown',
-                          fullBrandName: b.brand_name || 'Unknown',
-                          goodReturnValue: Number(b.good_return_value) || 0,
-                          goodReturnQty: Number(b.good_return_qty) || 0,
-                          goodReturnCount: Number(b.good_return_count) || 0,
-                          badReturnValue: Number(b.bad_return_value) || 0,
-                          badReturnQty: Number(b.bad_return_qty) || 0,
-                          badReturnCount: Number(b.bad_return_count) || 0,
-                          totalReturnValue: Number(b.total_return_value) || 0,
-                          rank: idx + 1
-                        }))}
-                      margin={{ top: 10, right: 20, left: 20, bottom: 60 }}
-                      barSize={isMobile ? 40 : 60}
+                      data={[
+                        ...(data?.returnReasons?.goodReasons || []).map((r: any) => ({
+                          reason: r.reason.length > 20 ? r.reason.substring(0, 20) + '...' : r.reason,
+                          fullReason: r.reason,
+                          count: parseInt(r.count),
+                          value: parseFloat(r.value || 0),
+                          category: 'GOOD',
+                          fill: '#10b981'
+                        })),
+                        ...(data?.returnReasons?.badReasons || []).map((r: any) => ({
+                          reason: r.reason.length > 20 ? r.reason.substring(0, 20) + '...' : r.reason,
+                          fullReason: r.reason,
+                          count: parseInt(r.count),
+                          value: parseFloat(r.value || 0),
+                          category: 'BAD',
+                          fill: '#ef4444'
+                        }))
+                      ]}
                     >
-                      <defs>
-                        <linearGradient id="goodReturnGradient" x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="0%" stopColor="#10b981" stopOpacity={0.9} />
-                          <stop offset="100%" stopColor="#059669" stopOpacity={1} />
-                        </linearGradient>
-                        <linearGradient id="badReturnGradient" x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="0%" stopColor="#f43f5e" stopOpacity={0.9} />
-                          <stop offset="100%" stopColor="#dc2626" stopOpacity={1} />
-                        </linearGradient>
-                      </defs>
-                      <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" vertical={false} />
+                      <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
                       <XAxis
-                        dataKey="brandName"
-                        tick={{
-                          fill: '#475569',
-                          fontSize: isMobile ? 11 : 13,
-                          fontWeight: 600
-                        }}
-                        tickLine={false}
-                        axisLine={{ stroke: '#cbd5e1', strokeWidth: 1.5 }}
-                        height={60}
-                      />
-                      <YAxis
-                        tick={{
-                          fill: '#64748b',
-                          fontSize: isMobile ? 10 : 12,
-                          fontWeight: 500
-                        }}
-                        tickLine={false}
-                        axisLine={{ stroke: '#cbd5e1', strokeWidth: 1.5 }}
-                        tickFormatter={(value) => `${(value / 1000).toFixed(0)}K`}
-                        label={{
-                          value: 'Return Value (AED)',
-                          angle: -90,
-                          position: 'insideLeft',
-                          style: {
-                            fill: '#475569',
-                            fontWeight: 600,
-                            fontSize: isMobile ? 11 : 13
-                          }
-                        }}
-                      />
-                      <RechartsTooltip
-                        cursor={{ fill: '#f1f5f9', opacity: 0.3 }}
-                        content={({ active, payload }) => {
-                          if (!active || !payload || !payload[0]) return null
-                          const data = payload[0].payload
+                        dataKey="reason"
+                        tick={(props: any) => {
+                          const { x, y, payload, index } = props
+                          const chartData = [
+                            ...(data?.returnReasons?.goodReasons || []).map((r: any) => ({ category: 'GOOD' })),
+                            ...(data?.returnReasons?.badReasons || []).map((r: any) => ({ category: 'BAD' }))
+                          ]
+                          const category = chartData[index]?.category
+                          const fill = category === 'GOOD' ? '#10b981' : '#ef4444'
                           return (
-                            <div className="bg-white border-2 border-slate-200 rounded-lg shadow-lg p-4 min-w-[260px]">
-                              <div className="flex items-center justify-between mb-3 pb-2 border-b-2 border-slate-100">
-                                <div className="font-bold text-slate-800 text-base">{data.fullBrandName}</div>
-                                <div className="bg-slate-800 text-white text-xs font-bold px-2 py-0.5 rounded">#{data.rank}</div>
-                              </div>
-
-                              <div className="space-y-2.5">
-                                <div className="bg-emerald-50 rounded-md p-2.5 border border-emerald-200">
-                                  <div className="flex items-center gap-2 mb-1.5">
-                                    <div className="w-3 h-3 rounded-full bg-emerald-500"></div>
-                                    <div className="font-semibold text-emerald-700 text-sm">Good Returns</div>
-                                  </div>
-                                  <div className="ml-5 space-y-0.5 text-xs text-slate-700">
-                                    <div className="flex justify-between">
-                                      <span>Value:</span>
-                                      <span className="font-semibold">{formatValue(data.goodReturnValue)}</span>
-                                    </div>
-                                    <div className="flex justify-between">
-                                      <span>Quantity:</span>
-                                      <span className="font-medium">{formatNumber(data.goodReturnQty)} units</span>
-                                    </div>
-                                    <div className="flex justify-between">
-                                      <span>Orders:</span>
-                                      <span className="font-medium">{formatNumber(data.goodReturnCount)}</span>
-                                    </div>
-                                  </div>
-                                </div>
-
-                                <div className="bg-rose-50 rounded-md p-2.5 border border-rose-200">
-                                  <div className="flex items-center gap-2 mb-1.5">
-                                    <div className="w-3 h-3 rounded-full bg-rose-500"></div>
-                                    <div className="font-semibold text-rose-700 text-sm">Bad Returns</div>
-                                  </div>
-                                  <div className="ml-5 space-y-0.5 text-xs text-slate-700">
-                                    <div className="flex justify-between">
-                                      <span>Value:</span>
-                                      <span className="font-semibold">{formatValue(data.badReturnValue)}</span>
-                                    </div>
-                                    <div className="flex justify-between">
-                                      <span>Quantity:</span>
-                                      <span className="font-medium">{formatNumber(data.badReturnQty)} units</span>
-                                    </div>
-                                    <div className="flex justify-between">
-                                      <span>Orders:</span>
-                                      <span className="font-medium">{formatNumber(data.badReturnCount)}</span>
-                                    </div>
-                                  </div>
-                                </div>
-
-                                <div className="bg-slate-100 rounded-md p-2 border border-slate-300">
-                                  <div className="flex justify-between items-center">
-                                    <span className="font-bold text-slate-700 text-sm">Total Returns:</span>
-                                    <span className="font-bold text-slate-900 text-base">{formatValue(data.totalReturnValue)}</span>
-                                  </div>
-                                </div>
-                              </div>
-                            </div>
+                            <g transform={`translate(${x},${y})`}>
+                              <text
+                                x={0}
+                                y={0}
+                                dy={16}
+                                textAnchor="end"
+                                fill={fill}
+                                transform="rotate(-45)"
+                                fontSize={isMobile ? 10 : 12}
+                                fontWeight="500"
+                              >
+                                {payload.value}
+                              </text>
+                            </g>
                           )
                         }}
+                        height={100}
+                      />
+                      <YAxis
+                        label={{ value: 'Transaction Count', angle: -90, position: 'insideLeft', fill: '#6b7280' }}
+                        tick={{ fontSize: isMobile ? 10 : 12, fill: '#6b7280' }}
+                      />
+                      <RechartsTooltip
+                        formatter={(value: any, name: any, props: any) => {
+                          const { count, value: amount, category, fullReason } = props.payload
+                          return [
+                            <div key="tooltip" className="space-y-1">
+                              <div className="font-semibold">{fullReason}</div>
+                              <div><strong>Category:</strong> <span className={category === 'GOOD' ? 'text-green-600' : 'text-red-600'}>{category}</span></div>
+                              <div><strong>Count:</strong> {formatNumber(count)} return transactions</div>
+                              <div><strong>Value:</strong> {formatValue(amount)}</div>
+                              <div className="text-xs text-slate-500 mt-1">
+                                Avg: {formatValue(amount / count)} per return
+                              </div>
+                            </div>,
+                            ''
+                          ]
+                        }}
+                        contentStyle={{ backgroundColor: '#ffffff', border: '1px solid #e5e7eb', padding: '8px 12px' }}
                       />
                       <Legend
-                        verticalAlign="bottom"
-                        height={40}
+                        wrapperStyle={{ fontSize: isMobile ? '12px' : '14px' }}
                         content={() => (
-                          <div className="flex items-center justify-center gap-6 mt-4 pb-2">
-                            <div className="flex items-center gap-2">
-                              <div className="w-4 h-4 rounded bg-gradient-to-b from-emerald-500 to-emerald-600"></div>
-                              <span className="text-sm font-semibold text-slate-700">Good Returns</span>
-                            </div>
-                            <div className="flex items-center gap-2">
-                              <div className="w-4 h-4 rounded bg-gradient-to-b from-rose-500 to-red-600"></div>
-                              <span className="text-sm font-semibold text-slate-700">Bad Returns</span>
-                            </div>
+                          <div style={{ textAlign: 'center', fontSize: isMobile ? '12px' : '14px', paddingTop: '10px' }}>
+                            <span className="text-green-600 font-semibold">●</span> GOOD (Sellable) |
+                            <span className="text-red-600 font-semibold ml-2">●</span> BAD (Wastage)
                           </div>
                         )}
                       />
-                      <Bar
-                        dataKey="goodReturnValue"
-                        stackId="a"
-                        fill="url(#goodReturnGradient)"
-                        radius={[0, 0, 0, 0]}
-                      />
-                      <Bar
-                        dataKey="badReturnValue"
-                        stackId="a"
-                        fill="url(#badReturnGradient)"
-                        radius={[6, 6, 0, 0]}
-                      />
+                      <Bar dataKey="count" radius={[4, 4, 0, 0]}>
+                        {[
+                          ...(data?.returnReasons?.goodReasons || []).map((r: any) => ({
+                            ...r,
+                            category: 'GOOD'
+                          })),
+                          ...(data?.returnReasons?.badReasons || []).map((r: any) => ({
+                            ...r,
+                            category: 'BAD'
+                          }))
+                        ].map((entry: any, index: number) => (
+                          <Cell key={`cell-${index}`} fill={entry.category === 'GOOD' ? '#10b981' : '#ef4444'} />
+                        ))}
+                      </Bar>
                     </BarChart>
                   </ResponsiveContainer>
                 </CardContent>
               </Card>
             </div>
             </TooltipProvider>
+
+            {/* Good Return Reasons Table */}
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-lg font-semibold max-sm:text-base flex items-center gap-2">
+                  <Badge className="bg-green-500">GOOD</Badge>
+                  Sellable Return Reasons
+                </CardTitle>
+                <p className="text-xs text-slate-500 mt-1">Items that can be resold</p>
+              </CardHeader>
+              <CardContent>
+                <div className="overflow-x-auto">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead className="min-w-[200px]">Reason</TableHead>
+                        <TableHead className="text-right min-w-[100px]">Count</TableHead>
+                        <TableHead className="text-right min-w-[120px]">Value</TableHead>
+                        <TableHead className="text-right min-w-[100px]">Quantity</TableHead>
+                        <TableHead className="text-right min-w-[80px]">%</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {data?.returnReasons?.goodReasons?.map((item: any, idx: number) => (
+                        <TableRow key={idx}>
+                          <TableCell>
+                            <div className="flex items-center gap-2">
+                              <Badge variant="outline" className="bg-green-50 text-green-700 border-green-200">
+                                GOOD
+                              </Badge>
+                              <span className="font-medium text-sm max-sm:text-xs">{item.reason}</span>
+                            </div>
+                          </TableCell>
+                          <TableCell className="text-right text-sm max-sm:text-xs">{formatNumber(item.count)}</TableCell>
+                          <TableCell className="text-right font-medium text-green-600 text-sm max-sm:text-xs">
+                            {formatValue(item.value)}
+                          </TableCell>
+                          <TableCell className="text-right text-sm max-sm:text-xs">{formatNumber(item.qty)}</TableCell>
+                          <TableCell className="text-right text-sm max-sm:text-xs">
+                            <Badge variant="secondary">{item.percentage}%</Badge>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* Bad Return Reasons Table */}
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-lg font-semibold max-sm:text-base flex items-center gap-2">
+                  <Badge className="bg-red-500">BAD</Badge>
+                  Damaged/Expired Return Reasons
+                </CardTitle>
+                <p className="text-xs text-slate-500 mt-1">Items that cannot be resold (wastage)</p>
+              </CardHeader>
+              <CardContent>
+                <div className="overflow-x-auto">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead className="min-w-[200px]">Reason</TableHead>
+                        <TableHead className="text-right min-w-[100px]">Count</TableHead>
+                        <TableHead className="text-right min-w-[120px]">Value</TableHead>
+                        <TableHead className="text-right min-w-[100px]">Quantity</TableHead>
+                        <TableHead className="text-right min-w-[80px]">%</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {data?.returnReasons?.badReasons?.map((item: any, idx: number) => (
+                        <TableRow key={idx}>
+                          <TableCell>
+                            <div className="flex items-center gap-2">
+                              <Badge variant="outline" className="bg-red-50 text-red-700 border-red-200">
+                                BAD
+                              </Badge>
+                              <span className="font-medium text-sm max-sm:text-xs">{item.reason}</span>
+                            </div>
+                          </TableCell>
+                          <TableCell className="text-right text-sm max-sm:text-xs">{formatNumber(item.count)}</TableCell>
+                          <TableCell className="text-right font-medium text-red-600 text-sm max-sm:text-xs">
+                            {formatValue(item.value)}
+                          </TableCell>
+                          <TableCell className="text-right text-sm max-sm:text-xs">{formatNumber(item.qty)}</TableCell>
+                          <TableCell className="text-right text-sm max-sm:text-xs">
+                            <Badge variant="secondary">{item.percentage}%</Badge>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+              </CardContent>
+            </Card>
 
             {/* Top Products by Return Reason */}
             <Card>
