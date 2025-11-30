@@ -24,7 +24,7 @@ import ExcelJS from 'exceljs'
 
 export function ReturnsWastage() {
   const [activeTab, setActiveTab] = useState('return-reasons')
-  const [dateRange, setDateRange] = useState('thisMonth')
+  const [dateRange, setDateRange] = useState('lastMonth')
   const [selectedRegion, setSelectedRegion] = useState('all')
   const [selectedSalesman, setSelectedSalesman] = useState('all')
   const [selectedRoute, setSelectedRoute] = useState('all')
@@ -64,18 +64,10 @@ export function ReturnsWastage() {
   useEffect(() => {
     if (selectedRegion !== 'all') {
       fetchFilters()
-      setSelectedRoute('all')
       setSelectedSalesman('all')
+      setSelectedRoute('all')
     }
   }, [selectedRegion])
-
-  // Fetch filter options when route changes (cascading filter)
-  useEffect(() => {
-    if (selectedRoute !== 'all') {
-      fetchFilters()
-      setSelectedSalesman('all')
-    }
-  }, [selectedRoute])
 
   // Fetch data when filters change
   useEffect(() => {
@@ -96,11 +88,14 @@ export function ReturnsWastage() {
     try {
       const params = new URLSearchParams({
         range: dateRange,
-        region: selectedRegion,
-        route: selectedRoute
+        region: selectedRegion
       })
       const response = await fetch(`/api/returns-wastage/filters?${params}`, {
-        cache: 'default' // Use browser cache
+        // Enable Next.js caching for filter options
+        next: {
+          revalidate: 300, // Cache for 5 minutes
+          tags: ['returns-wastage-filters']
+        }
       })
       const result = await response.json()
       if (result.success) {
@@ -126,7 +121,11 @@ export function ReturnsWastage() {
       })
 
       const response = await fetch(`/api/returns-wastage?${params}`, {
-        cache: 'default' // Use browser cache
+        // Enable Next.js caching for data
+        next: {
+          revalidate: 300, // Cache for 5 minutes
+          tags: ['returns-wastage']
+        }
       })
       const result = await response.json()
 
@@ -1520,7 +1519,8 @@ export function ReturnsWastage() {
       summarySheet.addRow(['KEY METRICS', '', '', ''])
       summarySheet.addRow(['Total Sales', formatValue(summary?.total_sales || 0), '', ''])
       summarySheet.addRow(['Total Returns', formatValue(summary?.total_returns || 0), '', ''])
-      summarySheet.addRow(['Overall Return Rate', '', `${Number(summary?.return_percentage || 0)}%`, ''])
+      summarySheet.addRow(['Net Sales', formatValue(summary?.net_sales || 0), '', ''])
+      summarySheet.addRow(['Overall Return Rate', '', `${Number(summary?.return_percentage || 0).toFixed(2)}%`, ''])
       summarySheet.addRow(['Salesmen with Returns', '', '', salesmen.length])
       summarySheet.addRow([])
 
@@ -1553,23 +1553,29 @@ export function ReturnsWastage() {
 
       summarySheet.addRow([])
 
-      // Important Note about Returns
-      summarySheet.addRow(['UNDERSTANDING RETURNS BY SALESMAN', '', '', ''])
+      // Important Note about Negative Net Sales
+      summarySheet.addRow(['IMPORTANT NOTE: UNDERSTANDING NEGATIVE NET SALES', '', '', ''])
       summarySheet.addRow([
-        'What does this report show?',
-        'This report shows returns processed in the selected period by each salesman, broken down by Good Returns (sellable) and Bad Returns (wastage).',
+        'What does negative net sales mean?',
+        'Negative net sales occur when returns processed in the selected period exceed sales in that same period.',
         '',
         ''
       ])
       summarySheet.addRow([
-        'Key Focus Areas:',
-        'Identify salesmen with high return percentages or high wastage to address potential issues with product handling, customer education, or operational concerns.',
+        'Why does this happen?',
+        'This is normal when customers return items that were purchased in previous months.',
         '',
         ''
       ])
       summarySheet.addRow([
-        'Route Column:',
-        'The Route Code column shows the route sub-area code assigned to each salesman.',
+        'Example:',
+        `If a salesman had ${currency} 77,936 in sales during September but processed ${currency} 289,043 in returns (from items sold in July/August), their net sales will be -${currency} 211,107.`,
+        '',
+        ''
+      ])
+      summarySheet.addRow([
+        'Key Point:',
+        'This report shows sales and returns PROCESSED in the selected period, not necessarily from items sold in that period.',
         '',
         ''
       ])
@@ -1590,13 +1596,13 @@ export function ReturnsWastage() {
       // Style the Important Note section
       const noteHeaderRow = summarySheet.getRow(13)
       noteHeaderRow.font = { bold: true, size: 12, color: { argb: 'FFFFFF' } }
-      noteHeaderRow.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: '3B82F6' } }
+      noteHeaderRow.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'F59E0B' } }
       summarySheet.mergeCells('A13:D13')
 
-      // Style note content rows with blue background
-      for (let i = 14; i <= 16; i++) {
+      // Style note content rows with amber background
+      for (let i = 14; i <= 17; i++) {
         const row = summarySheet.getRow(i)
-        row.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'DBEAFE' } }
+        row.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FEF3C7' } }
         row.getCell(1).font = { bold: true }
         summarySheet.mergeCells(`B${i}:D${i}`)
         row.getCell(2).alignment = { wrapText: true, vertical: 'top' }
@@ -1607,12 +1613,14 @@ export function ReturnsWastage() {
       dataSheet.columns = [
         { header: 'Salesman Code', key: 'salesman_code', width: 15 },
         { header: 'Salesman Name', key: 'salesman_name', width: 25 },
-        { header: 'Route Code', key: 'route_code', width: 15 },
+        { header: 'Route Code', key: 'route_code', width: 12 },
+        { header: `Total Sales (${currency})`, key: 'total_sales', width: 18 },
         { header: `Good Returns (${currency})`, key: 'good_return_value', width: 18 },
         { header: 'Good Return Count', key: 'good_return_count', width: 18 },
         { header: `Bad Returns (${currency})`, key: 'bad_return_value', width: 18 },
         { header: 'Bad Return Count', key: 'bad_return_count', width: 18 },
         { header: `Total Returns (${currency})`, key: 'total_returns', width: 18 },
+        { header: `Net Sales (${currency})`, key: 'net_sales', width: 18 },
         { header: 'Return %', key: 'return_percentage', width: 12 }
       ]
 
@@ -1621,21 +1629,25 @@ export function ReturnsWastage() {
         dataSheet.addRow({
           salesman_code: salesman.salesman_code || '',
           salesman_name: salesman.salesman_name || '',
-          route_code: salesman.route_code || 'N/A',
+          route_code: salesman.route_code || '',
+          total_sales: Number(salesman.total_sales || 0),
           good_return_value: Number(salesman.good_return_value || 0),
           good_return_count: Number(salesman.good_return_count || 0),
           bad_return_value: Number(salesman.bad_return_value || 0),
           bad_return_count: Number(salesman.bad_return_count || 0),
           total_returns: Number(salesman.total_returns || 0),
+          net_sales: Number(salesman.net_sales || 0),
           return_percentage: Number(salesman.return_percentage || 0)
         })
       })
 
       // Format currency columns
+      dataSheet.getColumn('total_sales').numFmt = '#,##0.00'
       dataSheet.getColumn('good_return_value').numFmt = '#,##0.00'
       dataSheet.getColumn('bad_return_value').numFmt = '#,##0.00'
       dataSheet.getColumn('total_returns').numFmt = '#,##0.00'
-      dataSheet.getColumn('return_percentage').numFmt = '0.0"%"'
+      dataSheet.getColumn('net_sales').numFmt = '#,##0.00'
+      dataSheet.getColumn('return_percentage').numFmt = '0.00"%"'
 
       // Style header row
       const headerRow = dataSheet.getRow(1)
@@ -1989,6 +2001,7 @@ export function ReturnsWastage() {
   const tabs = [
     { id: 'return-reasons', label: 'Return Reasons', icon: FileText },
     { id: 'mtd-returns', label: 'Period Returns', icon: PackageX },
+    { id: 'weekly-history', label: 'Weekly History', icon: Calendar },
     { id: 'sku-return', label: 'SKU Return %', icon: BarChart3 },
     { id: 'return-on-sales', label: 'Return on Sales', icon: DollarSign },
     { id: 'good-bad-details', label: 'Good/Bad Returns Details', icon: ListFilter }
@@ -2404,196 +2417,233 @@ export function ReturnsWastage() {
               </Card>
 
               {/* Bar Chart - Return Reasons Comparison */}
-              <Card className="shadow-sm border-slate-200">
-                <CardHeader className="pb-4">
+              <Card>
+                <CardHeader>
                   <div className="flex items-center justify-between">
                     <div>
-                      <CardTitle className="text-xl font-bold text-slate-800 max-sm:text-lg">Top 5 Brands by Returns</CardTitle>
-                      <p className="text-sm text-slate-600 mt-1.5">Breakdown of good vs bad returns by brand</p>
+                      <CardTitle className="text-lg font-semibold max-sm:text-base">Top Return Reasons</CardTitle>
+                      <p className="text-xs text-slate-500 mt-1">Top 3 GOOD + Top 3 BAD by transaction count</p>
                     </div>
                     <Tooltip>
                       <TooltipTrigger asChild>
-                        <HelpCircle className="h-5 w-5 text-slate-400 cursor-help flex-shrink-0 hover:text-slate-600 transition-colors" />
+                        <HelpCircle className="h-5 w-5 text-slate-400 cursor-help flex-shrink-0" />
                       </TooltipTrigger>
-                      <TooltipContent className="max-w-xs bg-slate-900 text-white border-slate-700">
+                      <TooltipContent className="max-w-xs">
                         <div className="space-y-2 text-xs">
-                          <p className="font-semibold text-sm">Top Brands by Returns</p>
-                          <p><strong>What it shows:</strong> The 5 brands with highest total return values.</p>
-                          <p><strong>Chart breakdown:</strong></p>
+                          <p className="font-semibold">Bar Chart: Top Return Reasons</p>
+                          <p><strong>What it shows:</strong> Most frequent return reasons by NUMBER of transactions (not by value).</p>
+                          <p><strong>Chart includes:</strong></p>
                           <ul className="list-disc pl-4 space-y-1">
-                            <li><span className="text-emerald-400 font-semibold">Green section</span>: Good returns (sellable items)</li>
-                            <li><span className="text-rose-400 font-semibold">Red section</span>: Bad returns (wastage/damaged)</li>
+                            <li><span className="text-green-600 font-semibold">Green bars</span>: Top 3 GOOD return reasons (sellable - collection_type = 1)</li>
+                            <li><span className="text-red-600 font-semibold">Red bars</span>: Top 3 BAD return reasons (wastage - collection_type = 0)</li>
                           </ul>
-                          <p className="text-emerald-300">💡 Helps identify brands with quality issues vs. overstocking problems</p>
+                          <p><strong>Y-axis shows:</strong> Transaction COUNT (how many return orders had this reason)</p>
+                          <p><strong>Example:</strong> If "Sellable" shows 1,438, it means 1,438 return transactions had the reason "Sellable".</p>
+                          <p className="text-blue-600">ℹ This helps identify which specific reasons cause the most returns</p>
                         </div>
                       </TooltipContent>
                     </Tooltip>
                   </div>
                 </CardHeader>
-                <CardContent className="pt-2">
-                  <ResponsiveContainer width="100%" height={isMobile ? 280 : 340}>
+                <CardContent>
+                  <ResponsiveContainer width="100%" height={isMobile ? 250 : 300}>
                     <BarChart
-                      data={(data?.returnReasons?.byBrand || [])
-                        .slice(0, 5)
-                        .map((b: any, idx: number) => ({
-                          brandName: b.brand_name && b.brand_name.length > 12
-                            ? b.brand_name.substring(0, 12) + '...'
-                            : b.brand_name || 'Unknown',
-                          fullBrandName: b.brand_name || 'Unknown',
-                          goodReturnValue: Number(b.good_return_value) || 0,
-                          goodReturnQty: Number(b.good_return_qty) || 0,
-                          goodReturnCount: Number(b.good_return_count) || 0,
-                          badReturnValue: Number(b.bad_return_value) || 0,
-                          badReturnQty: Number(b.bad_return_qty) || 0,
-                          badReturnCount: Number(b.bad_return_count) || 0,
-                          totalReturnValue: Number(b.total_return_value) || 0,
-                          rank: idx + 1
-                        }))}
-                      margin={{ top: 10, right: 20, left: 20, bottom: 60 }}
-                      barSize={isMobile ? 40 : 60}
+                      data={[
+                        ...(data?.returnReasons?.goodReasons || []).map((r: any) => ({
+                          reason: r.reason.length > 20 ? r.reason.substring(0, 20) + '...' : r.reason,
+                          fullReason: r.reason,
+                          count: parseInt(r.count),
+                          value: parseFloat(r.value || 0),
+                          category: 'GOOD',
+                          fill: '#10b981'
+                        })),
+                        ...(data?.returnReasons?.badReasons || []).map((r: any) => ({
+                          reason: r.reason.length > 20 ? r.reason.substring(0, 20) + '...' : r.reason,
+                          fullReason: r.reason,
+                          count: parseInt(r.count),
+                          value: parseFloat(r.value || 0),
+                          category: 'BAD',
+                          fill: '#ef4444'
+                        }))
+                      ]}
                     >
-                      <defs>
-                        <linearGradient id="goodReturnGradient" x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="0%" stopColor="#10b981" stopOpacity={0.9} />
-                          <stop offset="100%" stopColor="#059669" stopOpacity={1} />
-                        </linearGradient>
-                        <linearGradient id="badReturnGradient" x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="0%" stopColor="#f43f5e" stopOpacity={0.9} />
-                          <stop offset="100%" stopColor="#dc2626" stopOpacity={1} />
-                        </linearGradient>
-                      </defs>
-                      <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" vertical={false} />
+                      <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
                       <XAxis
-                        dataKey="brandName"
-                        tick={{
-                          fill: '#475569',
-                          fontSize: isMobile ? 11 : 13,
-                          fontWeight: 600
-                        }}
-                        tickLine={false}
-                        axisLine={{ stroke: '#cbd5e1', strokeWidth: 1.5 }}
-                        height={60}
-                      />
-                      <YAxis
-                        tick={{
-                          fill: '#64748b',
-                          fontSize: isMobile ? 10 : 12,
-                          fontWeight: 500
-                        }}
-                        tickLine={false}
-                        axisLine={{ stroke: '#cbd5e1', strokeWidth: 1.5 }}
-                        tickFormatter={(value) => `${(value / 1000).toFixed(0)}K`}
-                        label={{
-                          value: 'Return Value (AED)',
-                          angle: -90,
-                          position: 'insideLeft',
-                          style: {
-                            fill: '#475569',
-                            fontWeight: 600,
-                            fontSize: isMobile ? 11 : 13
-                          }
-                        }}
-                      />
-                      <RechartsTooltip
-                        cursor={{ fill: '#f1f5f9', opacity: 0.3 }}
-                        content={({ active, payload }) => {
-                          if (!active || !payload || !payload[0]) return null
-                          const data = payload[0].payload
+                        dataKey="reason"
+                        tick={(props: any) => {
+                          const { x, y, payload, index } = props
+                          const chartData = [
+                            ...(data?.returnReasons?.goodReasons || []).map((r: any) => ({ category: 'GOOD' })),
+                            ...(data?.returnReasons?.badReasons || []).map((r: any) => ({ category: 'BAD' }))
+                          ]
+                          const category = chartData[index]?.category
+                          const fill = category === 'GOOD' ? '#10b981' : '#ef4444'
                           return (
-                            <div className="bg-white border-2 border-slate-200 rounded-lg shadow-lg p-4 min-w-[260px]">
-                              <div className="flex items-center justify-between mb-3 pb-2 border-b-2 border-slate-100">
-                                <div className="font-bold text-slate-800 text-base">{data.fullBrandName}</div>
-                                <div className="bg-slate-800 text-white text-xs font-bold px-2 py-0.5 rounded">#{data.rank}</div>
-                              </div>
-
-                              <div className="space-y-2.5">
-                                <div className="bg-emerald-50 rounded-md p-2.5 border border-emerald-200">
-                                  <div className="flex items-center gap-2 mb-1.5">
-                                    <div className="w-3 h-3 rounded-full bg-emerald-500"></div>
-                                    <div className="font-semibold text-emerald-700 text-sm">Good Returns</div>
-                                  </div>
-                                  <div className="ml-5 space-y-0.5 text-xs text-slate-700">
-                                    <div className="flex justify-between">
-                                      <span>Value:</span>
-                                      <span className="font-semibold">{formatValue(data.goodReturnValue)}</span>
-                                    </div>
-                                    <div className="flex justify-between">
-                                      <span>Quantity:</span>
-                                      <span className="font-medium">{formatNumber(data.goodReturnQty)} units</span>
-                                    </div>
-                                    <div className="flex justify-between">
-                                      <span>Orders:</span>
-                                      <span className="font-medium">{formatNumber(data.goodReturnCount)}</span>
-                                    </div>
-                                  </div>
-                                </div>
-
-                                <div className="bg-rose-50 rounded-md p-2.5 border border-rose-200">
-                                  <div className="flex items-center gap-2 mb-1.5">
-                                    <div className="w-3 h-3 rounded-full bg-rose-500"></div>
-                                    <div className="font-semibold text-rose-700 text-sm">Bad Returns</div>
-                                  </div>
-                                  <div className="ml-5 space-y-0.5 text-xs text-slate-700">
-                                    <div className="flex justify-between">
-                                      <span>Value:</span>
-                                      <span className="font-semibold">{formatValue(data.badReturnValue)}</span>
-                                    </div>
-                                    <div className="flex justify-between">
-                                      <span>Quantity:</span>
-                                      <span className="font-medium">{formatNumber(data.badReturnQty)} units</span>
-                                    </div>
-                                    <div className="flex justify-between">
-                                      <span>Orders:</span>
-                                      <span className="font-medium">{formatNumber(data.badReturnCount)}</span>
-                                    </div>
-                                  </div>
-                                </div>
-
-                                <div className="bg-slate-100 rounded-md p-2 border border-slate-300">
-                                  <div className="flex justify-between items-center">
-                                    <span className="font-bold text-slate-700 text-sm">Total Returns:</span>
-                                    <span className="font-bold text-slate-900 text-base">{formatValue(data.totalReturnValue)}</span>
-                                  </div>
-                                </div>
-                              </div>
-                            </div>
+                            <g transform={`translate(${x},${y})`}>
+                              <text
+                                x={0}
+                                y={0}
+                                dy={16}
+                                textAnchor="end"
+                                fill={fill}
+                                transform="rotate(-45)"
+                                fontSize={isMobile ? 10 : 12}
+                                fontWeight="500"
+                              >
+                                {payload.value}
+                              </text>
+                            </g>
                           )
                         }}
+                        height={100}
+                      />
+                      <YAxis
+                        label={{ value: 'Transaction Count', angle: -90, position: 'insideLeft', fill: '#6b7280' }}
+                        tick={{ fontSize: isMobile ? 10 : 12, fill: '#6b7280' }}
+                      />
+                      <RechartsTooltip
+                        formatter={(value: any, name: any, props: any) => {
+                          const { count, value: amount, category, fullReason } = props.payload
+                          return [
+                            <div key="tooltip" className="space-y-1">
+                              <div className="font-semibold">{fullReason}</div>
+                              <div><strong>Category:</strong> <span className={category === 'GOOD' ? 'text-green-600' : 'text-red-600'}>{category}</span></div>
+                              <div><strong>Count:</strong> {formatNumber(count)} return transactions</div>
+                              <div><strong>Value:</strong> {formatValue(amount)}</div>
+                              <div className="text-xs text-slate-500 mt-1">
+                                Avg: {formatValue(amount / count)} per return
+                              </div>
+                            </div>,
+                            ''
+                          ]
+                        }}
+                        contentStyle={{ backgroundColor: '#ffffff', border: '1px solid #e5e7eb', padding: '8px 12px' }}
                       />
                       <Legend
-                        verticalAlign="bottom"
-                        height={40}
+                        wrapperStyle={{ fontSize: isMobile ? '12px' : '14px' }}
                         content={() => (
-                          <div className="flex items-center justify-center gap-6 mt-4 pb-2">
-                            <div className="flex items-center gap-2">
-                              <div className="w-4 h-4 rounded bg-gradient-to-b from-emerald-500 to-emerald-600"></div>
-                              <span className="text-sm font-semibold text-slate-700">Good Returns</span>
-                            </div>
-                            <div className="flex items-center gap-2">
-                              <div className="w-4 h-4 rounded bg-gradient-to-b from-rose-500 to-red-600"></div>
-                              <span className="text-sm font-semibold text-slate-700">Bad Returns</span>
-                            </div>
+                          <div style={{ textAlign: 'center', fontSize: isMobile ? '12px' : '14px', paddingTop: '10px' }}>
+                            <span className="text-green-600 font-semibold">●</span> GOOD (Sellable) |
+                            <span className="text-red-600 font-semibold ml-2">●</span> BAD (Wastage)
                           </div>
                         )}
                       />
-                      <Bar
-                        dataKey="goodReturnValue"
-                        stackId="a"
-                        fill="url(#goodReturnGradient)"
-                        radius={[0, 0, 0, 0]}
-                      />
-                      <Bar
-                        dataKey="badReturnValue"
-                        stackId="a"
-                        fill="url(#badReturnGradient)"
-                        radius={[6, 6, 0, 0]}
-                      />
+                      <Bar dataKey="count" radius={[4, 4, 0, 0]}>
+                        {[
+                          ...(data?.returnReasons?.goodReasons || []).map((r: any) => ({
+                            ...r,
+                            category: 'GOOD'
+                          })),
+                          ...(data?.returnReasons?.badReasons || []).map((r: any) => ({
+                            ...r,
+                            category: 'BAD'
+                          }))
+                        ].map((entry: any, index: number) => (
+                          <Cell key={`cell-${index}`} fill={entry.category === 'GOOD' ? '#10b981' : '#ef4444'} />
+                        ))}
+                      </Bar>
                     </BarChart>
                   </ResponsiveContainer>
                 </CardContent>
               </Card>
             </div>
             </TooltipProvider>
+
+            {/* Good Return Reasons Table */}
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-lg font-semibold max-sm:text-base flex items-center gap-2">
+                  <Badge className="bg-green-500">GOOD</Badge>
+                  Sellable Return Reasons
+                </CardTitle>
+                <p className="text-xs text-slate-500 mt-1">Items that can be resold</p>
+              </CardHeader>
+              <CardContent>
+                <div className="overflow-x-auto">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead className="min-w-[200px]">Reason</TableHead>
+                        <TableHead className="text-right min-w-[100px]">Count</TableHead>
+                        <TableHead className="text-right min-w-[120px]">Value</TableHead>
+                        <TableHead className="text-right min-w-[100px]">Quantity</TableHead>
+                        <TableHead className="text-right min-w-[80px]">%</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {data?.returnReasons?.goodReasons?.map((item: any, idx: number) => (
+                        <TableRow key={idx}>
+                          <TableCell>
+                            <div className="flex items-center gap-2">
+                              <Badge variant="outline" className="bg-green-50 text-green-700 border-green-200">
+                                GOOD
+                              </Badge>
+                              <span className="font-medium text-sm max-sm:text-xs">{item.reason}</span>
+                            </div>
+                          </TableCell>
+                          <TableCell className="text-right text-sm max-sm:text-xs">{formatNumber(item.count)}</TableCell>
+                          <TableCell className="text-right font-medium text-green-600 text-sm max-sm:text-xs">
+                            {formatValue(item.value)}
+                          </TableCell>
+                          <TableCell className="text-right text-sm max-sm:text-xs">{formatNumber(item.qty)}</TableCell>
+                          <TableCell className="text-right text-sm max-sm:text-xs">
+                            <Badge variant="secondary">{item.percentage}%</Badge>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* Bad Return Reasons Table */}
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-lg font-semibold max-sm:text-base flex items-center gap-2">
+                  <Badge className="bg-red-500">BAD</Badge>
+                  Damaged/Expired Return Reasons
+                </CardTitle>
+                <p className="text-xs text-slate-500 mt-1">Items that cannot be resold (wastage)</p>
+              </CardHeader>
+              <CardContent>
+                <div className="overflow-x-auto">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead className="min-w-[200px]">Reason</TableHead>
+                        <TableHead className="text-right min-w-[100px]">Count</TableHead>
+                        <TableHead className="text-right min-w-[120px]">Value</TableHead>
+                        <TableHead className="text-right min-w-[100px]">Quantity</TableHead>
+                        <TableHead className="text-right min-w-[80px]">%</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {data?.returnReasons?.badReasons?.map((item: any, idx: number) => (
+                        <TableRow key={idx}>
+                          <TableCell>
+                            <div className="flex items-center gap-2">
+                              <Badge variant="outline" className="bg-red-50 text-red-700 border-red-200">
+                                BAD
+                              </Badge>
+                              <span className="font-medium text-sm max-sm:text-xs">{item.reason}</span>
+                            </div>
+                          </TableCell>
+                          <TableCell className="text-right text-sm max-sm:text-xs">{formatNumber(item.count)}</TableCell>
+                          <TableCell className="text-right font-medium text-red-600 text-sm max-sm:text-xs">
+                            {formatValue(item.value)}
+                          </TableCell>
+                          <TableCell className="text-right text-sm max-sm:text-xs">{formatNumber(item.qty)}</TableCell>
+                          <TableCell className="text-right text-sm max-sm:text-xs">
+                            <Badge variant="secondary">{item.percentage}%</Badge>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+              </CardContent>
+            </Card>
 
             {/* Top Products by Return Reason */}
             <Card>
@@ -3720,6 +3770,7 @@ export function ReturnsWastage() {
                       <TableRow>
                         <TableHead className="min-w-[200px]">Product</TableHead>
                         <TableHead className="min-w-[150px]">Category</TableHead>
+                        <TableHead className="text-right min-w-[100px]">Sold</TableHead>
                         <TableHead className="text-right min-w-[100px]">Returned</TableHead>
                         <TableHead className="text-right min-w-[100px]">Return %</TableHead>
                         <TableHead className="text-right min-w-[110px] text-green-700">Good Returns</TableHead>
@@ -3741,6 +3792,7 @@ export function ReturnsWastage() {
                               <div className="text-xs text-slate-500">{item.product_code}</div>
                             </TableCell>
                             <TableCell className="text-sm max-sm:text-xs">{item.category_name}</TableCell>
+                            <TableCell className="text-right text-sm max-sm:text-xs">{formatNumber(item.total_sold)}</TableCell>
                             <TableCell className="text-right text-sm max-sm:text-xs">{formatNumber(item.total_returned)}</TableCell>
                             <TableCell className="text-right">
                               <Badge variant={item.return_percentage > 10 ? 'destructive' : item.return_percentage > 5 ? 'default' : 'secondary'} className="text-xs">
@@ -4033,29 +4085,35 @@ export function ReturnsWastage() {
                       <div className="space-y-2 text-xs">
                         <p><strong>Return on Sales by Salesman Explained:</strong></p>
                         <ul className="list-disc list-inside space-y-1 ml-2">
-                          <li><strong>Route:</strong> Route sub-area code assigned to the salesman</li>
+                          <li><strong>Sales:</strong> Total sales value in the selected period</li>
                           <li><strong>Returns:</strong> Total returns processed in the selected period (Good + Bad)</li>
-                          <li><strong className="text-green-600">Good Returns:</strong> Sellable returns that can be resold</li>
-                          <li><strong className="text-red-600">Bad Returns:</strong> Wastage that cannot be resold</li>
-                          <li><strong>Return %:</strong> Percentage of returns relative to sales</li>
+                          <li><strong>Net Sales:</strong> Sales minus Returns</li>
+                          <li><strong className="text-green-600">Good Returns:</strong> Sellable returns</li>
+                          <li><strong className="text-red-600">Bad Returns:</strong> Wastage</li>
+                          <li><strong>Return %:</strong> (Returns / Sales) × 100</li>
                         </ul>
-                        <p className="mt-2"><strong>Action:</strong> Identify salesmen with high return rates and investigate the cause. Focus on reducing wastage (Bad Returns).</p>
+                        <div className="mt-2 p-2 bg-amber-50 border border-amber-200 rounded">
+                          <p className="font-semibold text-amber-900">⚠️ About Negative Net Sales:</p>
+                          <p className="mt-1">Negative net sales can occur when returns processed in the period exceed sales in that same period. This happens when customers return items purchased in previous months.</p>
+                          <p className="mt-1"><strong>Example:</strong> If a salesman had {getCurrency()} 50K sales in September but processed {getCurrency()} 100K in returns (from items sold in July/August), their net sales will be -{getCurrency()} 50K.</p>
+                        </div>
+                        <p className="mt-2"><strong>Action:</strong> Identify salesmen with high return rates and investigate the cause</p>
                       </div>
                     </TooltipContent>
                   </Tooltip>
                 </div>
 
-                {/* Info Banner about Returns */}
-                <div className="mt-4 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+                {/* Warning Banner about Negative Net Sales */}
+                <div className="mt-4 p-3 bg-amber-50 border border-amber-200 rounded-lg">
                   <div className="flex items-start gap-2">
-                    <AlertCircle className="h-5 w-5 text-blue-600 flex-shrink-0 mt-0.5" />
+                    <AlertCircle className="h-5 w-5 text-amber-600 flex-shrink-0 mt-0.5" />
                     <div className="flex-1 text-xs">
-                      <p className="font-semibold text-blue-900">Understanding Returns by Salesman</p>
-                      <p className="text-blue-800 mt-1">
-                        This report shows <strong>returns processed in the selected period by each salesman</strong>, broken down by Good Returns (sellable) and Bad Returns (wastage).
+                      <p className="font-semibold text-amber-900">Understanding Net Sales Values</p>
+                      <p className="text-amber-800 mt-1">
+                        This report shows <strong>sales and returns processed in the selected period</strong>. Negative net sales occur when returns exceed sales in that period, which is normal when customers return items purchased in previous months.
                       </p>
-                      <p className="text-blue-800 mt-1">
-                        Focus on salesmen with high return percentages or high wastage to identify potential issues with product handling, customer education, or other operational concerns.
+                      <p className="text-amber-800 mt-1">
+                        <strong>Example:</strong> A salesman with {getCurrency()} 77K sales and {getCurrency()} 289K returns shows -{getCurrency()} 211K net sales because most returns were for items sold in earlier periods.
                       </p>
                     </div>
                   </div>
@@ -4068,9 +4126,24 @@ export function ReturnsWastage() {
                       <TableRow>
                         <TableHead className="min-w-[180px]">Salesman</TableHead>
                         <TableHead className="min-w-[100px]">Route</TableHead>
+                        <TableHead className="text-right min-w-[120px]">Sales</TableHead>
                         <TableHead className="text-right min-w-[120px]">Returns</TableHead>
                         <TableHead className="text-right min-w-[110px] text-green-700">Good Returns</TableHead>
                         <TableHead className="text-right min-w-[110px] text-red-700">Bad Returns</TableHead>
+                        <TableHead className="text-right min-w-[120px]">
+                          <div className="flex items-center justify-end gap-1">
+                            <span>Net Sales</span>
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <AlertCircle className="h-3.5 w-3.5 text-amber-500 cursor-help" />
+                              </TooltipTrigger>
+                              <TooltipContent className="max-w-xs">
+                                <p className="text-xs"><strong>Net Sales = Sales - Returns</strong></p>
+                                <p className="text-xs mt-1">Can be negative when returns processed in the period exceed sales in that period (returns from previous months)</p>
+                              </TooltipContent>
+                            </Tooltip>
+                          </div>
+                        </TableHead>
                         <TableHead className="text-right min-w-[100px]">Return %</TableHead>
                       </TableRow>
                     </TableHeader>
@@ -4088,6 +4161,7 @@ export function ReturnsWastage() {
                               <div className="text-xs text-slate-500">{item.salesman_code}</div>
                             </TableCell>
                             <TableCell className="text-sm max-sm:text-xs">{item.route_code}</TableCell>
+                            <TableCell className="text-right text-sm max-sm:text-xs">{formatValue(item.total_sales)}</TableCell>
                             <TableCell className="text-right text-blue-600 text-sm max-sm:text-xs">{formatValue(item.total_returns)}</TableCell>
                             <TableCell className="text-right text-sm max-sm:text-xs">
                               <div className="text-green-600 font-medium">{formatValue(item.good_return_value || 0)}</div>
@@ -4096,6 +4170,16 @@ export function ReturnsWastage() {
                             <TableCell className="text-right text-sm max-sm:text-xs">
                               <div className="text-red-600 font-medium">{formatValue(item.bad_return_value || 0)}</div>
                               <div className="text-xs text-red-500">{formatNumber(item.bad_return_count || 0)} txns</div>
+                            </TableCell>
+                            <TableCell className="text-right font-medium text-sm max-sm:text-xs">
+                              {Number(item.net_sales) < 0 ? (
+                                <div className="flex items-center justify-end gap-1 text-red-600">
+                                  <AlertCircle className="h-3.5 w-3.5 flex-shrink-0" />
+                                  <span>{formatValue(item.net_sales)}</span>
+                                </div>
+                              ) : (
+                                <span className="text-green-600">{formatValue(item.net_sales)}</span>
+                              )}
                             </TableCell>
                             <TableCell className="text-right">
                               <Badge variant={item.return_percentage > 10 ? 'destructive' : item.return_percentage > 5 ? 'default' : 'secondary'} className="text-xs">

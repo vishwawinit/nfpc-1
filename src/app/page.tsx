@@ -8,6 +8,7 @@ import { LMTDSecondaryReport } from '../components/pages/LMTDSecondaryReport'
 import { CustomersReportUpdated as CustomersReport } from '../components/pages/CustomersReportUpdated'
 import { ProductsReport } from '../components/pages/ProductsReport'
 import { OrdersReport } from '../components/pages/OrdersReport'
+import { ReturnsWastage } from '../components/pages/ReturnsWastage'
 import {
   Menu,
   LayoutDashboard,
@@ -17,11 +18,11 @@ import {
   TrendingUp,
   ChevronLeft,
   ChevronRight,
-  ChevronDown,
   X,
   BarChart3,
   ShoppingCart,
-  MessageSquare
+  MessageSquare,
+  AlertTriangle
 } from 'lucide-react'
 
 type PageType =
@@ -32,6 +33,7 @@ type PageType =
   | 'customersReport'
   | 'productsReport'
   | 'ordersReport'
+  | 'returnsWastage'
 
 interface MenuItem {
   id: PageType
@@ -39,18 +41,10 @@ interface MenuItem {
   icon: any
 }
 
-interface MenuCategory {
-  id: string
-  label: string
-  icon: any
-  items: MenuItem[]
-}
-
 function HomePageContent() {
   const [currentPage, setCurrentPage] = useState<PageType>('dashboard')
   const [sidebarExpanded, setSidebarExpanded] = useState(true)
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false)
-  const [expandedCategories, setExpandedCategories] = useState<string[]>([])
   
   // Date state to prevent hydration mismatch
   const [currentDate, setCurrentDate] = useState<{
@@ -77,42 +71,14 @@ function HomePageContent() {
     })
   }, [])
 
-  const toggleCategory = (categoryId: string) => {
-    setExpandedCategories(prev =>
-      prev.includes(categoryId)
-        ? prev.filter(id => id !== categoryId)
-        : [...prev, categoryId]
-    )
-  }
-
-  const menuCategories: MenuCategory[] = [
-    {
-      id: 'sales',
-      label: 'Sales & Performance',
-      icon: TrendingUp,
-      items: [
-        { id: 'dailyStockSale' as PageType, label: 'Daily Sales Report', icon: TrendingUp },
-        { id: 'customersReport' as PageType, label: 'Customers Report', icon: Users },
-        { id: 'lmtdSecondary' as PageType, label: 'LMTD Secondary Sales Vs MTD', icon: BarChart3 },
-      ]
-    },
-    {
-      id: 'field',
-      label: 'Field Operations',
-      icon: Users,
-      items: [
-        { id: 'storeUserVisit' as PageType, label: 'Store User Visit Report', icon: MapPin },
-      ]
-    },
-    {
-      id: 'inventory',
-      label: 'Inventory & Stock',
-      icon: Package,
-      items: [
-        { id: 'productsReport' as PageType, label: 'Products Report', icon: Package },
-        { id: 'ordersReport' as PageType, label: 'Orders Report', icon: ShoppingCart },
-      ]
-    },
+  const menuItems: MenuItem[] = [
+    { id: 'dailyStockSale' as PageType, label: 'Daily Sales Report', icon: TrendingUp },
+    { id: 'customersReport' as PageType, label: 'Customers Report', icon: Users },
+    { id: 'returnsWastage' as PageType, label: 'Returns and Wastage', icon: AlertTriangle },
+    { id: 'lmtdSecondary' as PageType, label: 'LMTD Secondary Sales Vs MTD', icon: BarChart3 },
+    { id: 'storeUserVisit' as PageType, label: 'Store User Visit Report', icon: MapPin },
+    { id: 'productsReport' as PageType, label: 'Products Report', icon: Package },
+    { id: 'ordersReport' as PageType, label: 'Orders Report', icon: ShoppingCart },
   ]
 
   return (
@@ -130,7 +96,7 @@ function HomePageContent() {
                 <img
                   src="https://nfpcsfalive.winitsoftware.com/nfpcsfa-92/Img/logoNew1.jpg?v=2"
                   alt="NFPC Logo"
-                  className="h-8 w-auto rounded-sm border border-gray-200 bg-white"
+                  className="h-8 w-auto rounded-sm border border-gray-700 bg-white"
                 />
                 <div>
                   <h1 className="text-xl font-bold text-white">
@@ -151,7 +117,7 @@ function HomePageContent() {
 
           {/* Sidebar Menu */}
           <nav className="flex-1 overflow-y-auto py-3 px-2">
-            {/* Dashboard - Always visible */}
+            {/* Dashboard */}
             <button
               onClick={() => setCurrentPage('dashboard')}
               className={`w-full flex items-center gap-3 px-4 py-3 mb-2 rounded-lg transition-all duration-200 font-medium ${
@@ -172,29 +138,27 @@ function HomePageContent() {
               <div className="my-3 border-t border-gray-700"></div>
             )}
 
-            {/* All Reports - Direct Buttons */}
-            {menuCategories.map((category) =>
-              category.items.map((item) => {
-                const ItemIcon = item.icon
-                return (
-                  <button
-                    key={item.id}
-                    onClick={() => setCurrentPage(item.id)}
-                    className={`w-full flex items-center gap-3 px-4 py-2.5 mb-1 rounded-lg transition-all duration-200 font-medium ${
-                      currentPage === item.id
-                        ? 'bg-slate-700 text-white shadow-sm'
-                        : 'text-gray-300 hover:bg-slate-700/50'
-                    }`}
-                    title={!sidebarExpanded ? item.label : ''}
-                  >
-                    <ItemIcon size={18} className="flex-shrink-0" />
-                    {sidebarExpanded && (
-                      <span className="text-sm font-semibold truncate text-left">{item.label}</span>
-                    )}
-                  </button>
-                )
-              })
-            )}
+            {/* Menu Items */}
+            {menuItems.map((item) => {
+              const ItemIcon = item.icon
+              return (
+                <button
+                  key={item.id}
+                  onClick={() => setCurrentPage(item.id)}
+                  className={`w-full flex items-center gap-3 px-4 py-3 mb-1 rounded-lg transition-all duration-200 font-medium ${
+                    currentPage === item.id
+                      ? 'bg-slate-700 text-white shadow-sm'
+                      : 'text-gray-300 hover:bg-slate-700/50'
+                  }`}
+                  title={!sidebarExpanded ? item.label : ''}
+                >
+                  <ItemIcon size={20} className="flex-shrink-0" />
+                  {sidebarExpanded && (
+                    <span className="text-sm font-semibold">{item.label}</span>
+                  )}
+                </button>
+              )
+            })}
           </nav>
 
           {/* AI Assistant - Bottom of Sidebar */}
@@ -219,7 +183,7 @@ function HomePageContent() {
                   <div className="font-semibold text-gray-200">
                     {currentDate.fullDate || 'Loading...'}
                   </div>
-                  <div className="mt-1 text-gray-500">
+                  <div className="mt-1 text-gray-400">
                     {currentDate.weekday || 'Loading...'}
                   </div>
                 </div>
@@ -257,7 +221,7 @@ function HomePageContent() {
               <img
                 src="https://nfpcsfalive.winitsoftware.com/nfpcsfa-92/Img/logoNew1.jpg?v=2"
                 alt="NFPC Logo"
-                className="h-8 w-auto rounded-sm border border-gray-200 bg-white"
+                className="h-8 w-auto rounded-sm border border-gray-700 bg-white"
               />
               <div>
                 <h1 className="text-xl font-bold text-white">
@@ -293,29 +257,27 @@ function HomePageContent() {
 
             <div className="my-3 border-t border-gray-700"></div>
 
-            {/* All Reports - Direct Buttons (Mobile) */}
-            {menuCategories.map((category) =>
-              category.items.map((item) => {
-                const ItemIcon = item.icon
-                return (
-                  <button
-                    key={item.id}
-                    onClick={() => {
-                      setCurrentPage(item.id)
-                      setMobileSidebarOpen(false)
-                    }}
-                    className={`w-full flex items-center gap-3 px-4 py-2.5 mb-1 rounded-lg transition-all font-medium ${
-                      currentPage === item.id
-                        ? 'bg-slate-700 text-white shadow-sm'
-                        : 'text-gray-300 hover:bg-slate-700/50'
-                    }`}
-                  >
-                    <ItemIcon size={18} className="flex-shrink-0" />
-                    <span className="text-sm font-semibold truncate text-left">{item.label}</span>
-                  </button>
-                )
-              })
-            )}
+            {/* Mobile Menu Items */}
+            {menuItems.map((item) => {
+              const ItemIcon = item.icon
+              return (
+                <button
+                  key={item.id}
+                  onClick={() => {
+                    setCurrentPage(item.id)
+                    setMobileSidebarOpen(false)
+                  }}
+                  className={`w-full flex items-center gap-3 px-4 py-3 mb-1 rounded-lg transition-all font-medium ${
+                    currentPage === item.id
+                      ? 'bg-slate-700 text-white shadow-sm'
+                      : 'text-gray-300 hover:bg-slate-700/50'
+                  }`}
+                >
+                  <ItemIcon size={20} className="flex-shrink-0" />
+                  <span className="text-sm font-semibold">{item.label}</span>
+                </button>
+              )
+            })}
           </nav>
 
           {/* AI Assistant - Bottom of Mobile Sidebar */}
@@ -340,6 +302,7 @@ function HomePageContent() {
           {currentPage === 'customersReport' && <CustomersReport />}
           {currentPage === 'productsReport' && <ProductsReport />}
           {currentPage === 'ordersReport' && <OrdersReport />}
+          {currentPage === 'returnsWastage' && <ReturnsWastage />}
         </main>
       </div>
   )

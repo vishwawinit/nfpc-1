@@ -148,14 +148,25 @@ export function StoreUserVisitReport() {
     }
     
     if (startDate && endDate) {
-      const formatDate = (date: Date) => date.toISOString().split('T')[0]
+      const formatDate = (date: Date) => {
+        const year = date.getFullYear()
+        const month = String(date.getMonth() + 1).padStart(2, '0')
+        const day = String(date.getDate()).padStart(2, '0')
+        return `${year}-${month}-${day}`
+      }
       setDateRange(formatDate(startDate), formatDate(endDate))
     }
   }
 
-  // Initialize date range on mount
+  // Initialize date range on mount with thisMonth as default and clear unwanted filters
   useEffect(() => {
     if (!isInitialized) {
+      // Clear the default AREA, SUB AREA, and FIELD USER filters that come from dashboard
+      updateFilter('subAreaCode', null)
+      updateFilter('cityCode', null)
+      updateFilter('userCode', null)
+      updateFilter('areaCode', null)
+
       handleDateRangeSelect(selectedDateRange)
       setIsInitialized(true)
     }
@@ -345,9 +356,9 @@ export function StoreUserVisitReport() {
       .sort((a, b) => b.avgDuration - a.avgDuration)
       .slice(0, 10)
 
-    // Regional analysis - use all visits
+    // Regional analysis - use sub_area_code (stored in teamLeaderName)
     const regionalVisits = visits.reduce((acc, visit) => {
-      const region = visit.regionCode || 'Unknown'
+      const region = visit.teamLeaderName || 'Unknown'
       if (!acc[region]) {
         acc[region] = { count: 0, totalDuration: 0 }
       }
@@ -364,7 +375,7 @@ export function StoreUserVisitReport() {
       }))
       .sort((a, b) => b.visits - a.visits)
 
-    // Chain analysis - use all visits
+    // Chain analysis - use channel_name from database
     const chainVisits = visits.reduce((acc, visit) => {
       const chain = visit.chainName || 'Unknown'
       if (!acc[chain]) {
@@ -756,23 +767,20 @@ export function StoreUserVisitReport() {
 
     // All Visits sheet
     const visitsData = visits.map((v: StoreVisit) => ({
-      'TL Code': v.teamLeaderCode || 'N/A',
-      'TL Name': v.teamLeaderName || 'N/A',
+      'Route Code': v.teamLeaderCode || 'N/A',
+      'Route Name': v.teamLeaderName || 'N/A',
       'Field User': v.userName,
       'Field User Code': v.userCode,
       'Store Code': v.storeCode,
       'Store Name': v.storeName,
-      'Chain Name': v.chainName || '-',
-      'Latitude': v.latitude?.toFixed(6) || '-',
-      'Longitude': v.longitude?.toFixed(6) || '-',
       'Date': v.visitDate,
       'Check-in Time': v.arrivalTime,
       'Check-out Time': v.departureTime || '-',
       'Total Time Spent': v.durationMinutes > 0 ? `${v.durationMinutes} mins` : '-',
       'Reason': (() => {
         const reason = v.remarks || v.visitPurpose || v.visitOutcome || ''
-        return (reason && reason !== '[null]' && reason !== 'null' && reason.trim() !== '') 
-          ? reason 
+        return (reason && reason !== '[null]' && reason !== 'null' && reason.trim() !== '')
+          ? reason
           : 'N/A'
       })()
     }))
@@ -950,7 +958,11 @@ export function StoreUserVisitReport() {
       ) : visits.length === 0 ? (
         <div className="bg-white rounded-lg shadow p-8 text-center">
           <MapPin className="mx-auto text-gray-400" size={48} />
-          <p className="mt-4 text-gray-600">No store visits found for the selected period</p>
+          <p className="mt-4 text-gray-600">
+            {filters.startDate && filters.endDate
+              ? 'No store visits found for the selected period'
+              : 'Please select a date range to view store visits'}
+          </p>
         </div>
       ) : viewMode === 'map' ? (
         <div className="space-y-6">
@@ -1632,15 +1644,12 @@ export function StoreUserVisitReport() {
                 boxShadow: '0 1px 3px 0 rgba(0, 0, 0, 0.1)'
               }}>
                 <tr style={{ borderBottom: '1px solid rgb(229, 231, 235)' }}>
-                  <th style={{ padding: '12px 16px', textAlign: 'left', fontSize: '12px', fontWeight: 600, color: 'rgb(107, 114, 128)', whiteSpace: 'nowrap', minWidth: '100px' }}>TL Code</th>
-                  <th style={{ padding: '12px 16px', textAlign: 'left', fontSize: '12px', fontWeight: 600, color: 'rgb(107, 114, 128)', whiteSpace: 'nowrap', minWidth: '180px' }}>TL Name</th>
+                  <th style={{ padding: '12px 16px', textAlign: 'left', fontSize: '12px', fontWeight: 600, color: 'rgb(107, 114, 128)', whiteSpace: 'nowrap', minWidth: '100px' }}>Route Code</th>
+                  <th style={{ padding: '12px 16px', textAlign: 'left', fontSize: '12px', fontWeight: 600, color: 'rgb(107, 114, 128)', whiteSpace: 'nowrap', minWidth: '180px' }}>Route Name</th>
                   <th style={{ padding: '12px 16px', textAlign: 'left', fontSize: '12px', fontWeight: 600, color: 'rgb(107, 114, 128)', whiteSpace: 'nowrap', minWidth: '180px' }}>Field User</th>
                   <th style={{ padding: '12px 16px', textAlign: 'left', fontSize: '12px', fontWeight: 600, color: 'rgb(107, 114, 128)', whiteSpace: 'nowrap', minWidth: '120px' }}>Field User Code</th>
                   <th style={{ padding: '12px 16px', textAlign: 'left', fontSize: '12px', fontWeight: 600, color: 'rgb(107, 114, 128)', whiteSpace: 'nowrap', minWidth: '120px' }}>Store Code</th>
                   <th style={{ padding: '12px 16px', textAlign: 'left', fontSize: '12px', fontWeight: 600, color: 'rgb(107, 114, 128)', whiteSpace: 'nowrap', minWidth: '200px' }}>Store Name</th>
-                  <th style={{ padding: '12px 16px', textAlign: 'left', fontSize: '12px', fontWeight: 600, color: 'rgb(107, 114, 128)', whiteSpace: 'nowrap', minWidth: '150px' }}>Chain Name</th>
-                  <th style={{ padding: '12px 16px', textAlign: 'right', fontSize: '12px', fontWeight: 600, color: 'rgb(107, 114, 128)', whiteSpace: 'nowrap', minWidth: '100px' }}>Latitude</th>
-                  <th style={{ padding: '12px 16px', textAlign: 'right', fontSize: '12px', fontWeight: 600, color: 'rgb(107, 114, 128)', whiteSpace: 'nowrap', minWidth: '100px' }}>Longitude</th>
                   <th style={{ padding: '12px 16px', textAlign: 'left', fontSize: '12px', fontWeight: 600, color: 'rgb(107, 114, 128)', whiteSpace: 'nowrap', minWidth: '120px' }}>Date</th>
                   <th style={{ padding: '12px 16px', textAlign: 'right', fontSize: '12px', fontWeight: 600, color: 'rgb(107, 114, 128)', whiteSpace: 'nowrap', minWidth: '100px' }}>Check-in Time</th>
                   <th style={{ padding: '12px 16px', textAlign: 'right', fontSize: '12px', fontWeight: 600, color: 'rgb(107, 114, 128)', whiteSpace: 'nowrap', minWidth: '100px' }}>Check-out Time</th>
@@ -1698,13 +1707,6 @@ export function StoreUserVisitReport() {
                         </span>
                       </td>
                       <td style={{ padding: '12px 16px', fontSize: '14px', fontWeight: 500 }}>{visit.storeName}</td>
-                      <td style={{ padding: '12px 16px', fontSize: '14px' }}>{visit.chainName || '-'}</td>
-                      <td style={{ padding: '12px 16px', fontSize: '13px', textAlign: 'right', color: 'rgb(107, 114, 128)', fontFamily: 'monospace' }}>
-                        {visit.latitude ? visit.latitude.toFixed(6) : '-'}
-                      </td>
-                      <td style={{ padding: '12px 16px', fontSize: '13px', textAlign: 'right', color: 'rgb(107, 114, 128)', fontFamily: 'monospace' }}>
-                        {visit.longitude ? visit.longitude.toFixed(6) : '-'}
-                      </td>
                       <td style={{ padding: '12px 16px', fontSize: '14px', fontWeight: 500 }}>
                         {new Date(visit.visitDate).toLocaleDateString('en-IN', {
                           day: 'numeric',

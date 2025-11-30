@@ -1,65 +1,47 @@
--- Create indexes for flat_daily_sales_report table to optimize Orders Report queries
--- This will significantly speed up queries from 75-120 seconds to under 1 second
+SET statement_timeout = '30min';
 
--- Core filter indexes
-CREATE INDEX IF NOT EXISTS idx_flat_sales_trxtype_date
-ON flat_daily_sales_report(trx_trxtype, trx_trxdate);
+BEGIN;
 
-CREATE INDEX IF NOT EXISTS idx_flat_sales_trxdate
-ON flat_daily_sales_report(trx_trxdate);
+CREATE INDEX IF NOT EXISTS idx_returns_main_composite
+ON flat_daily_sales_report (trx_trxtype, trx_trxdate, trx_collectiontype)
+WHERE trx_trxtype = 4;
 
--- Hierarchical filter indexes
-CREATE INDEX IF NOT EXISTS idx_flat_sales_areacode
-ON flat_daily_sales_report(route_areacode);
+CREATE INDEX IF NOT EXISTS idx_returns_region
+ON flat_daily_sales_report (route_areacode, trx_trxtype, trx_trxdate)
+WHERE trx_trxtype = 4 AND route_areacode IS NOT NULL;
 
-CREATE INDEX IF NOT EXISTS idx_flat_sales_subareacode
-ON flat_daily_sales_report(route_subareacode);
+CREATE INDEX IF NOT EXISTS idx_returns_route
+ON flat_daily_sales_report (trx_routecode, trx_trxtype, trx_trxdate)
+WHERE trx_trxtype = 4 AND trx_routecode IS NOT NULL;
 
-CREATE INDEX IF NOT EXISTS idx_flat_sales_teamleader
-ON flat_daily_sales_report(route_salesmancode);
+CREATE INDEX IF NOT EXISTS idx_returns_salesman
+ON flat_daily_sales_report (trx_usercode, trx_trxtype, trx_trxdate)
+WHERE trx_trxtype = 4 AND trx_usercode IS NOT NULL;
 
-CREATE INDEX IF NOT EXISTS idx_flat_sales_usertype
-ON flat_daily_sales_report(user_usertype);
+CREATE INDEX IF NOT EXISTS idx_returns_product_brand
+ON flat_daily_sales_report (line_itemcode, item_brand_description, trx_trxtype, trx_collectiontype)
+WHERE trx_trxtype = 4 AND line_itemcode IS NOT NULL;
 
-CREATE INDEX IF NOT EXISTS idx_flat_sales_usercode
-ON flat_daily_sales_report(trx_usercode);
+CREATE INDEX IF NOT EXISTS idx_returns_category
+ON flat_daily_sales_report (item_grouplevel1, trx_trxtype, trx_collectiontype)
+WHERE trx_trxtype = 4 AND item_grouplevel1 IS NOT NULL;
 
-CREATE INDEX IF NOT EXISTS idx_flat_sales_channelcode
-ON flat_daily_sales_report(customer_channelcode);
+CREATE INDEX IF NOT EXISTS idx_returns_date_trend
+ON flat_daily_sales_report (DATE(trx_trxdate), trx_trxtype, trx_collectiontype)
+WHERE trx_trxtype = 4;
 
-CREATE INDEX IF NOT EXISTS idx_flat_sales_customercode
-ON flat_daily_sales_report(customer_code);
+CREATE INDEX IF NOT EXISTS idx_returns_transaction_code
+ON flat_daily_sales_report (trx_trxcode, trx_trxtype)
+WHERE trx_trxtype = 4;
 
-CREATE INDEX IF NOT EXISTS idx_flat_sales_category
-ON flat_daily_sales_report(item_category_description);
+CREATE INDEX IF NOT EXISTS idx_returns_customer
+ON flat_daily_sales_report (customer_code, trx_trxtype, trx_trxdate)
+WHERE trx_trxtype = 4 AND customer_code IS NOT NULL;
 
--- Transaction code index for order details lookup
-CREATE INDEX IF NOT EXISTS idx_flat_sales_trxcode
-ON flat_daily_sales_report(trx_trxcode);
+CREATE INDEX IF NOT EXISTS idx_returns_brand
+ON flat_daily_sales_report (item_brand_description, trx_trxtype)
+WHERE trx_trxtype = 4 AND item_brand_description IS NOT NULL;
 
--- Composite indexes for common filter combinations
-CREATE INDEX IF NOT EXISTS idx_flat_sales_type_date_area
-ON flat_daily_sales_report(trx_trxtype, trx_trxdate, route_areacode);
-
-CREATE INDEX IF NOT EXISTS idx_flat_sales_type_date_subarea
-ON flat_daily_sales_report(trx_trxtype, trx_trxdate, route_subareacode);
-
-CREATE INDEX IF NOT EXISTS idx_flat_sales_type_date_user
-ON flat_daily_sales_report(trx_trxtype, trx_trxdate, trx_usercode);
-
--- Index for search queries
-CREATE INDEX IF NOT EXISTS idx_flat_sales_customer_desc
-ON flat_daily_sales_report(customer_description);
-
--- Analyze table to update statistics
 ANALYZE flat_daily_sales_report;
 
--- Display index sizes
-SELECT
-    schemaname,
-    tablename,
-    indexname,
-    pg_size_pretty(pg_relation_size(indexname::regclass)) as index_size
-FROM pg_indexes
-WHERE tablename = 'flat_daily_sales_report'
-ORDER BY pg_relation_size(indexname::regclass) DESC;
+COMMIT;
