@@ -94,12 +94,21 @@ module.exports = {
   				to: {
   					transform: 'translateY(0)'
   				}
+  			},
+  			'shimmer': {
+  				'0%': {
+  					backgroundPosition: '200% 0'
+  				},
+  				'100%': {
+  					backgroundPosition: '-200% 0'
+  				}
   			}
   		},
   		animation: {
   			'accordion-down': 'accordion-down 0.2s ease-out',
   			'accordion-up': 'accordion-up 0.2s ease-out',
-  			'in': 'fade-in 0.15s ease-out, slide-in-from-top 0.15s ease-out'
+  			'in': 'fade-in 0.15s ease-out, slide-in-from-top 0.15s ease-out',
+  			'shimmer': 'shimmer 3s ease-in-out infinite'
   		}
   	}
   },

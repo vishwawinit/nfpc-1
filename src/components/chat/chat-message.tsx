@@ -106,19 +106,18 @@ export function ChatMessage({ message, onEdit, isEditable = true, isStreaming = 
               </div>
             ) : (
               <div className="group relative">
-                <div className="flex items-start gap-2">
+                <div className="flex items-start gap-3">
                   <p className="text-base text-gray-700 whitespace-pre-wrap break-words flex-1">
                     {message.content}
                   </p>
                   {isEditable && onEdit && (
-                    <Button
-                      size="lg"
-                      variant="ghost"
+                    <button
                       onClick={() => setIsEditing(true)}
-                      className="opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer h-10 w-10 p-0 flex-shrink-0"
+                      className="flex items-center justify-center h-9 w-9 rounded-md hover:bg-blue-100 transition-colors cursor-pointer flex-shrink-0 text-gray-500 hover:text-blue-600 border border-gray-300 hover:border-blue-500"
+                      title="Edit message"
                     >
                       <Edit2 className="h-5 w-5" />
-                    </Button>
+                    </button>
                   )}
                 </div>
               </div>

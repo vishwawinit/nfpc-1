@@ -71,7 +71,7 @@ export function SqlQuerySidebar({ sqlHistory, isOpen, onToggle }: SqlQuerySideba
                   <p className="text-xs text-gray-400">Developer Tools</p>
                 </div>
               </div>
-              <Badge variant="outline" className="bg-gray-800 text-gray-300 border-gray-700">
+              <Badge variant="outline" className="bg-gray-800 text-white border-gray-700">
                 {sqlHistory.length} queries
               </Badge>
             </div>
@@ -101,7 +101,7 @@ export function SqlQuerySidebar({ sqlHistory, isOpen, onToggle }: SqlQuerySideba
                         <div className="flex items-center gap-2">
                           <Badge
                             variant="outline"
-                            className="bg-gray-800 text-gray-300 border-gray-700"
+                            className="bg-gray-800 text-white border-gray-700"
                           >
                             Query #{sqlHistory.length - index}
                           </Badge>
@@ -110,18 +110,17 @@ export function SqlQuerySidebar({ sqlHistory, isOpen, onToggle }: SqlQuerySideba
                             {item.timestamp.toLocaleTimeString()}
                           </div>
                         </div>
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          className="h-9 w-9 p-0 cursor-pointer hover:bg-gray-700 text-gray-400 hover:text-white"
+                        <button
+                          className="h-10 w-10 flex items-center justify-center cursor-pointer bg-transparent hover:bg-gray-700/50 text-gray-300 hover:text-blue-400 transition-all duration-200 rounded-md"
                           onClick={() => handleCopy(item.query, item.id)}
+                          title="Copy query"
                         >
                           {copiedId === item.id ? (
-                            <Check className="h-4 w-4 text-green-500" />
+                            <Check className="h-5 w-5 text-green-400" />
                           ) : (
-                            <Copy className="h-4 w-4" />
+                            <Copy className="h-5 w-5" />
                           )}
-                        </Button>
+                        </button>
                       </div>
                     </CardHeader>
                     <CardContent>
@@ -145,7 +144,7 @@ export function SqlQuerySidebar({ sqlHistory, isOpen, onToggle }: SqlQuerySideba
         variant="outline"
         size="sm"
         className={cn(
-          "fixed top-[88px] z-20 bg-[#1e293b] border-gray-700 text-gray-300 hover:bg-gray-800 hover:text-white shadow-lg hover:shadow-xl transition-all duration-300 cursor-pointer",
+          "fixed top-[88px] z-20 bg-gray-200 border-gray-400 text-black hover:bg-gray-300 hover:text-black shadow-lg hover:shadow-xl transition-all duration-300 cursor-pointer",
           isOpen ? "right-[400px]" : "right-0 rounded-r-none"
         )}
       >

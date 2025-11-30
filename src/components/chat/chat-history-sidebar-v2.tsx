@@ -238,13 +238,14 @@ export function ChatHistorySidebar({
           {/* Search */}
           <div className="p-4 bg-[#1e293b] border-b border-gray-700 w-full max-w-full box-border">
             <div className="relative w-full max-w-full">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-500" />
               <Input
                 type="text"
                 placeholder="Search conversations..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="pl-10 bg-gray-800/50 border-gray-700 text-white placeholder:text-gray-500 focus:border-indigo-500 focus:ring-indigo-500 w-full max-w-full"
+                className="pl-10 !bg-gray-800/70 border-gray-600 !text-white placeholder:text-gray-600 focus:border-gray-500 focus:ring-gray-500 focus:!bg-gray-800 w-full max-w-full"
+                style={{ backgroundColor: 'rgba(31, 41, 55, 0.7)', color: '#ffffff' }}
               />
             </div>
           </div>
@@ -365,7 +366,7 @@ export function ChatHistorySidebar({
                                               "text-xs px-1 py-0 flex-shrink-0 border-0",
                                               currentConversationId === conversation.id
                                                 ? "bg-white/20 text-white"
-                                                : "bg-gray-700 text-gray-400"
+                                                : "bg-gray-700 text-white"
                                             )}>
                                               {conversation.message_count} msgs
                                             </Badge>
@@ -434,7 +435,7 @@ export function ChatHistorySidebar({
         variant="outline"
         size="sm"
         className={cn(
-          "fixed top-[88px] z-20 bg-[#1e293b] border-gray-700 text-gray-300 hover:bg-gray-800 hover:text-white shadow-lg hover:shadow-xl transition-all duration-300 cursor-pointer",
+          "fixed top-[88px] z-20 bg-gray-200 border-gray-400 text-black hover:bg-gray-300 hover:text-black shadow-lg hover:shadow-xl transition-all duration-300 cursor-pointer",
           isOpen ? "left-80" : "left-0 rounded-l-none"
         )}
       >

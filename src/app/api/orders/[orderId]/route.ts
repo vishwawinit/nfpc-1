@@ -79,7 +79,7 @@ async function fetchOrderDetails(orderId: string) {
       const totalAmount = parseFloat(order.total_amount)
       const defaultProducts = [
         { code: 'P008', name: 'Aquafina 1L', category: 'Beverages', base_price: 1.50 },
-        { code: 'P002', name: 'Pepsi 500ml', category: 'Beverages', base_price: 3.00 },
+        { code: 'P002', name: 'NFPC Beverage 500ml', category: 'Beverages', base_price: 3.00 },
         { code: 'P005', name: 'Oreo Cookies', category: 'Snacks', base_price: 4.50 },
         { code: 'P010', name: 'Doritos Nacho', category: 'Snacks', base_price: 6.00 },
         { code: 'P006', name: 'Kit Kat', category: 'Confectionery', base_price: 3.50 }

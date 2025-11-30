@@ -35,13 +35,13 @@ Then provide:
 
 ## EXAMPLE:
 CONVERSATION SUMMARY:
-Key questions: User asked about top customers in Q4 2024, payment mode distribution, and product preferences by customer type.
-Important findings: BIG BUY MARKET led with AED 500K (25% of total), followed by TAYBA TRADING with AED 450K. Grocery segment dominates with 52% of revenue. ZEF payment mode accounts for 60% of transactions.
-Data analyzed: Queried transactions_new table for customer performance, payment modes, and product mix across 2024.
-SQL queries: 
-1. SELECT customer_name, SUM(net_value) FROM transactions_new WHERE document_date >= '2024-10-01' AND document_date <= '2024-12-31' GROUP BY customer_name ORDER BY total_collection DESC LIMIT 10
-2. SELECT sales_document_type, COUNT(*) FROM transactions_new WHERE document_date >= '2024-10-01' AND document_date <= '2024-12-31' GROUP BY sales_document_type
-3. SELECT customer_type, material_description, SUM(net_value) FROM transactions_new WHERE document_date >= '2024-10-01' AND document_date <= '2024-12-31' GROUP BY customer_type, material_description
+Key questions: User asked about top customers by sales volume, product category distribution, and regional performance analysis.
+Important findings: Top customer led with AED 500K (25% of total sales), followed by second customer with AED 450K. Grocery category dominates with 52% of revenue. Region A accounts for 60% of total transactions.
+Data analyzed: Queried flat_daily_sales_report table for customer performance, product categories, and regional distribution across date range.
+SQL queries:
+1. SELECT customer_description, SUM(trx_totalamount) FROM flat_daily_sales_report WHERE trx_trxdate >= '2024-10-01' AND trx_trxdate <= '2024-12-31' AND trx_trxstatus = 200 GROUP BY customer_description ORDER BY SUM(trx_totalamount) DESC LIMIT 10
+2. SELECT item_category_description, COUNT(*) FROM flat_daily_sales_report WHERE trx_trxdate >= '2024-10-01' AND trx_trxdate <= '2024-12-31' AND trx_trxstatus = 200 GROUP BY item_category_description
+3. SELECT region_description, item_brand_description, SUM(trx_totalamount) FROM flat_daily_sales_report WHERE trx_trxdate >= '2024-10-01' AND trx_trxdate <= '2024-12-31' AND trx_trxstatus = 200 GROUP BY region_description, item_brand_description
 Current context: User is analyzing business performance and customer segments. Ready to answer follow-up questions about specific metrics or drill into particular segments.`;
 
 /**

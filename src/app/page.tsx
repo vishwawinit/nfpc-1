@@ -119,12 +119,12 @@ function HomePageContent() {
       <div className="flex h-screen overflow-hidden">
         {/* Sidebar - Desktop */}
         <aside
-          className={`hidden md:flex flex-col bg-white border-r border-gray-200 shadow-lg transition-all duration-300 ease-in-out ${
+          className={`hidden md:flex flex-col bg-[#1e293b] border-r border-gray-700 shadow-lg transition-all duration-300 ease-in-out ${
             sidebarExpanded ? 'w-80' : 'w-20'
           }`}
         >
           {/* Sidebar Header */}
-          <div className="flex items-center justify-between p-5 border-b border-gray-200 bg-gray-50">
+          <div className="flex items-center justify-between p-5 border-b border-gray-700 bg-[#1e293b]">
             {sidebarExpanded && (
               <div className="flex items-center gap-3">
                 <img
@@ -133,16 +133,16 @@ function HomePageContent() {
                   className="h-8 w-auto rounded-sm border border-gray-200 bg-white"
                 />
                 <div>
-                  <h1 className="text-xl font-bold text-gray-800">
+                  <h1 className="text-xl font-bold text-white">
                     NFPC Analytics
                   </h1>
-                  <p className="text-xs text-gray-500 mt-0.5">Reports Dashboard</p>
+                  <p className="text-xs text-gray-400 mt-0.5">Reports Dashboard</p>
                 </div>
               </div>
             )}
             <button
               onClick={() => setSidebarExpanded(!sidebarExpanded)}
-              className="p-2 hover:bg-gray-200 rounded-lg transition-all duration-200 ml-auto text-gray-600"
+              className="p-2 hover:bg-slate-700 rounded-lg transition-all duration-200 ml-auto text-gray-400 hover:text-white"
               title={sidebarExpanded ? 'Collapse sidebar' : 'Expand sidebar'}
             >
               {sidebarExpanded ? <ChevronLeft size={20} /> : <ChevronRight size={20} />}
@@ -156,8 +156,8 @@ function HomePageContent() {
               onClick={() => setCurrentPage('dashboard')}
               className={`w-full flex items-center gap-3 px-4 py-3 mb-2 rounded-lg transition-all duration-200 font-medium ${
                 currentPage === 'dashboard'
-                  ? 'bg-gray-800 text-white shadow-sm'
-                  : 'text-gray-700 hover:bg-gray-100'
+                  ? 'bg-slate-700 text-white shadow-sm'
+                  : 'text-gray-300 hover:bg-slate-700/50'
               }`}
               title={!sidebarExpanded ? 'Dashboard' : ''}
             >
@@ -167,86 +167,56 @@ function HomePageContent() {
               )}
             </button>
 
-            {/* Ask AI - AI Chatbot */}
+            {/* Divider */}
+            {sidebarExpanded && (
+              <div className="my-3 border-t border-gray-700"></div>
+            )}
+
+            {/* All Reports - Direct Buttons */}
+            {menuCategories.map((category) =>
+              category.items.map((item) => {
+                const ItemIcon = item.icon
+                return (
+                  <button
+                    key={item.id}
+                    onClick={() => setCurrentPage(item.id)}
+                    className={`w-full flex items-center gap-3 px-4 py-2.5 mb-1 rounded-lg transition-all duration-200 font-medium ${
+                      currentPage === item.id
+                        ? 'bg-slate-700 text-white shadow-sm'
+                        : 'text-gray-300 hover:bg-slate-700/50'
+                    }`}
+                    title={!sidebarExpanded ? item.label : ''}
+                  >
+                    <ItemIcon size={18} className="flex-shrink-0" />
+                    {sidebarExpanded && (
+                      <span className="text-sm font-semibold truncate text-left">{item.label}</span>
+                    )}
+                  </button>
+                )
+              })
+            )}
+          </nav>
+
+          {/* AI Assistant - Bottom of Sidebar */}
+          <div className="p-2 border-t border-gray-700">
             <a
               href="/ask-ai"
-              className="w-full flex items-center gap-3 px-4 py-3 mb-2 rounded-lg transition-all duration-200 font-medium text-gray-700 hover:bg-gray-100"
-              title={!sidebarExpanded ? 'Ask AI' : ''}
+              className="w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all duration-200 font-medium text-gray-300 hover:bg-slate-700/50"
+              title={!sidebarExpanded ? 'AI Assistant' : ''}
             >
               <MessageSquare size={20} className="flex-shrink-0" />
               {sidebarExpanded && (
-                <span className="text-sm font-semibold">Ask AI</span>
+                <span className="text-sm font-semibold">AI Assistant</span>
               )}
             </a>
-
-            {/* Divider */}
-            {sidebarExpanded && (
-              <div className="my-3 border-t border-gray-200"></div>
-            )}
-
-            {/* Categories */}
-            {menuCategories.map((category) => {
-              const CategoryIcon = category.icon
-              const isExpanded = expandedCategories.includes(category.id)
-
-              return (
-                <div key={category.id} className="mb-1">
-                  {/* Category Header */}
-                  <button
-                    onClick={() => toggleCategory(category.id)}
-                    className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-lg transition-all duration-200 font-medium text-gray-700 hover:bg-gray-100`}
-                    title={!sidebarExpanded ? category.label : ''}
-                  >
-                    <CategoryIcon size={18} className="flex-shrink-0" />
-                    {sidebarExpanded && (
-                      <>
-                        <span className="text-sm font-medium flex-1 text-left">{category.label}</span>
-                        <ChevronDown
-                          size={16}
-                          className={`transition-transform duration-200 ${
-                            isExpanded ? 'rotate-180' : ''
-                          }`}
-                        />
-                      </>
-                    )}
-                  </button>
-
-                  {/* Category Items - Show when expanded */}
-                  {isExpanded && (
-                    <div className={`mt-1 space-y-0.5 ${sidebarExpanded ? 'ml-4' : ''}`}>
-                      {category.items.map((item) => {
-                        const ItemIcon = item.icon
-                        return (
-                          <button
-                            key={item.id}
-                            onClick={() => setCurrentPage(item.id)}
-                            className={`w-full flex items-center gap-3 ${
-                              sidebarExpanded ? 'px-4' : 'px-2 justify-center'
-                            } py-2.5 rounded-lg text-sm transition-all duration-200 ${
-                              currentPage === item.id
-                                ? 'bg-gray-200 text-gray-900 font-medium border-l-3 border-gray-800'
-                                : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900 border-l-3 border-transparent'
-                            }`}
-                            title={!sidebarExpanded ? item.label : ''}
-                          >
-                            <ItemIcon size={16} className="flex-shrink-0" />
-                            {sidebarExpanded && <span className="truncate text-left">{item.label}</span>}
-                          </button>
-                        )
-                      })}
-                    </div>
-                  )}
-                </div>
-              )
-            })}
-          </nav>
+          </div>
 
           {/* Sidebar Footer */}
-          <div className="p-4 border-t border-gray-200 bg-gray-50">
-            <div className="text-xs text-gray-600 text-center">
+          <div className="p-4 border-t border-gray-700 bg-[#1e293b]">
+            <div className="text-xs text-gray-400 text-center">
               {sidebarExpanded ? (
                 <div>
-                  <div className="font-semibold text-gray-800">
+                  <div className="font-semibold text-gray-200">
                     {currentDate.fullDate || 'Loading...'}
                   </div>
                   <div className="mt-1 text-gray-500">
@@ -254,7 +224,7 @@ function HomePageContent() {
                   </div>
                 </div>
               ) : (
-                <div className="font-semibold text-gray-800">
+                <div className="font-semibold text-gray-200">
                   {currentDate.day || '...'}
                 </div>
               )}
@@ -277,12 +247,12 @@ function HomePageContent() {
 
         {/* Mobile Sidebar */}
         <aside
-          className={`md:hidden fixed left-0 top-0 bottom-0 z-50 w-80 bg-white shadow-2xl transform transition-transform duration-300 ${
+          className={`md:hidden fixed left-0 top-0 bottom-0 z-50 w-80 bg-[#1e293b] shadow-2xl transform transition-transform duration-300 ${
             mobileSidebarOpen ? 'translate-x-0' : '-translate-x-full'
           }`}
         >
           {/* Mobile Sidebar Header */}
-          <div className="flex items-center justify-between p-5 border-b border-gray-200 bg-gray-50">
+          <div className="flex items-center justify-between p-5 border-b border-gray-700 bg-[#1e293b]">
             <div className="flex items-center gap-3">
               <img
                 src="https://nfpcsfalive.winitsoftware.com/nfpcsfa-92/Img/logoNew1.jpg?v=2"
@@ -290,15 +260,15 @@ function HomePageContent() {
                 className="h-8 w-auto rounded-sm border border-gray-200 bg-white"
               />
               <div>
-                <h1 className="text-xl font-bold text-gray-800">
+                <h1 className="text-xl font-bold text-white">
                   NFPC Analytics
                 </h1>
-                <p className="text-xs text-gray-500 mt-0.5">Reports Dashboard</p>
+                <p className="text-xs text-gray-400 mt-0.5">Reports Dashboard</p>
               </div>
             </div>
             <button
               onClick={() => setMobileSidebarOpen(false)}
-              className="p-2 hover:bg-gray-200 rounded-lg transition-colors text-gray-600"
+              className="p-2 hover:bg-slate-700 rounded-lg transition-colors text-gray-400 hover:text-white"
             >
               <X size={20} />
             </button>
@@ -313,73 +283,52 @@ function HomePageContent() {
               }}
               className={`w-full flex items-center gap-3 px-4 py-3 mb-2 rounded-lg transition-all font-medium ${
                 currentPage === 'dashboard'
-                  ? 'bg-gray-800 text-white shadow-sm'
-                  : 'text-gray-700 hover:bg-gray-100'
+                  ? 'bg-slate-700 text-white shadow-sm'
+                  : 'text-gray-300 hover:bg-slate-700/50'
               }`}
             >
               <LayoutDashboard size={20} className="flex-shrink-0" />
               <span className="text-sm font-semibold">Dashboard</span>
             </button>
 
-            {/* Ask AI - AI Chatbot (Mobile) */}
+            <div className="my-3 border-t border-gray-700"></div>
+
+            {/* All Reports - Direct Buttons (Mobile) */}
+            {menuCategories.map((category) =>
+              category.items.map((item) => {
+                const ItemIcon = item.icon
+                return (
+                  <button
+                    key={item.id}
+                    onClick={() => {
+                      setCurrentPage(item.id)
+                      setMobileSidebarOpen(false)
+                    }}
+                    className={`w-full flex items-center gap-3 px-4 py-2.5 mb-1 rounded-lg transition-all font-medium ${
+                      currentPage === item.id
+                        ? 'bg-slate-700 text-white shadow-sm'
+                        : 'text-gray-300 hover:bg-slate-700/50'
+                    }`}
+                  >
+                    <ItemIcon size={18} className="flex-shrink-0" />
+                    <span className="text-sm font-semibold truncate text-left">{item.label}</span>
+                  </button>
+                )
+              })
+            )}
+          </nav>
+
+          {/* AI Assistant - Bottom of Mobile Sidebar */}
+          <div className="p-2 border-t border-gray-700 bg-[#1e293b]">
             <a
               href="/ask-ai"
-              className="w-full flex items-center gap-3 px-4 py-3 mb-2 rounded-lg transition-all font-medium text-gray-700 hover:bg-gray-100"
+              className="w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all font-medium text-gray-300 hover:bg-slate-700/50"
               onClick={() => setMobileSidebarOpen(false)}
             >
               <MessageSquare size={20} className="flex-shrink-0" />
-              <span className="text-sm font-semibold">Ask AI</span>
+              <span className="text-sm font-semibold">AI Assistant</span>
             </a>
-
-            <div className="my-3 border-t border-gray-200"></div>
-
-            {/* Mobile Categories */}
-            {menuCategories.map((category) => {
-              const CategoryIcon = category.icon
-              const isExpanded = expandedCategories.includes(category.id)
-
-              return (
-                <div key={category.id} className="mb-1">
-                  <button
-                    onClick={() => toggleCategory(category.id)}
-                    className="w-full flex items-center gap-3 px-4 py-2.5 rounded-lg font-medium text-gray-700 hover:bg-gray-100 transition-all"
-                  >
-                    <CategoryIcon size={18} className="flex-shrink-0" />
-                    <span className="text-sm font-medium flex-1 text-left">{category.label}</span>
-                    <ChevronDown
-                      size={16}
-                      className={`transition-transform ${isExpanded ? 'rotate-180' : ''}`}
-                    />
-                  </button>
-
-                  {isExpanded && (
-                    <div className="ml-4 mt-1 space-y-0.5">
-                      {category.items.map((item) => {
-                        const ItemIcon = item.icon
-                        return (
-                          <button
-                            key={item.id}
-                            onClick={() => {
-                              setCurrentPage(item.id)
-                              setMobileSidebarOpen(false)
-                            }}
-                            className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-lg text-sm transition-all ${
-                              currentPage === item.id
-                                ? 'bg-gray-200 text-gray-900 font-medium border-l-3 border-gray-800'
-                                : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900 border-l-3 border-transparent'
-                            }`}
-                          >
-                            <ItemIcon size={16} className="flex-shrink-0" />
-                            <span className="truncate text-left">{item.label}</span>
-                          </button>
-                        )
-                      })}
-                    </div>
-                  )}
-                </div>
-              )
-            })}
-          </nav>
+          </div>
         </aside>
 
         {/* Main Content */}
