@@ -131,7 +131,8 @@ export async function GET(request: NextRequest) {
       filterConditionsCount: filterConditions.length
     })
 
-    // HYPER-OPTIMIZED main query with materialized CTEs for better performance
+    // OPTIMIZED main query - Using LEFT JOIN instead of FULL OUTER JOIN for better performance
+    // All data is preserved by using UNION to get all unique combinations first
     const mainQueryText = `
       WITH mtd_data AS MATERIALIZED (
         SELECT
@@ -164,17 +165,22 @@ export async function GET(request: NextRequest) {
           AND trx_trxtype = 1
           ${whereClause}
         GROUP BY trx_usercode, customer_code, line_itemcode
+      ),
+      all_keys AS (
+        SELECT trx_usercode, customer_code, line_itemcode FROM mtd_data
+        UNION
+        SELECT trx_usercode, customer_code, line_itemcode FROM lmtd_data
       )
       SELECT
         $2::date as "date",
         COALESCE(m.tl_code, '') as "tlCode",
         COALESCE(m.tl_code, '') as "tlName",
-        COALESCE(m.trx_usercode, l.trx_usercode) as "fieldUserCode",
-        COALESCE(m.trx_usercode, l.trx_usercode) as "fieldUserName",
-        COALESCE(m.customer_code, l.customer_code) as "storeCode",
+        COALESCE(m.trx_usercode, l.trx_usercode, ak.trx_usercode) as "fieldUserCode",
+        COALESCE(m.trx_usercode, l.trx_usercode, ak.trx_usercode) as "fieldUserName",
+        COALESCE(m.customer_code, l.customer_code, ak.customer_code) as "storeCode",
         COALESCE(m.store_name, '') as "storeName",
         COALESCE(m.chain_name, '') as "chainName",
-        COALESCE(m.line_itemcode, l.line_itemcode) as "productCode",
+        COALESCE(m.line_itemcode, l.line_itemcode, ak.line_itemcode) as "productCode",
         COALESCE(m.product_name, '') as "productName",
         COALESCE(m.mtd_quantity, 0) as "secondarySalesCurrentMonth",
         COALESCE(m.mtd_revenue, 0) as "secondarySalesRevenueCurrentMonth",
@@ -194,11 +200,15 @@ export async function GET(request: NextRequest) {
           WHEN COALESCE(m.mtd_quantity, 0) > 0 THEN 100
           ELSE 0
         END as "quantityVariancePercent"
-      FROM mtd_data m
-      FULL OUTER JOIN lmtd_data l
-        ON m.trx_usercode = l.trx_usercode
-        AND m.customer_code = l.customer_code
-        AND m.line_itemcode = l.line_itemcode
+      FROM all_keys ak
+      LEFT JOIN mtd_data m
+        ON ak.trx_usercode = m.trx_usercode
+        AND ak.customer_code = m.customer_code
+        AND ak.line_itemcode = m.line_itemcode
+      LEFT JOIN lmtd_data l
+        ON ak.trx_usercode = l.trx_usercode
+        AND ak.customer_code = l.customer_code
+        AND ak.line_itemcode = l.line_itemcode
       WHERE COALESCE(m.mtd_revenue, 0) > 0 OR COALESCE(l.lmtd_revenue, 0) > 0
       ORDER BY COALESCE(m.mtd_revenue, 0) DESC
       LIMIT ${limit}
@@ -246,7 +256,7 @@ export async function GET(request: NextRequest) {
       FROM mtd_summary m, lmtd_summary l
     `
 
-    // HYPER-OPTIMIZED daily trend query with materialized CTEs
+    // OPTIMIZED daily trend query - Using LEFT JOIN for better performance
     const dailyTrendQueryText = `
       WITH mtd_trend AS MATERIALIZED (
         SELECT
@@ -269,14 +279,20 @@ export async function GET(request: NextRequest) {
           AND trx_trxtype = 1
           ${whereClause}
         GROUP BY EXTRACT(DAY FROM trx_trxdate)
+      ),
+      all_days AS (
+        SELECT day FROM mtd_trend
+        UNION
+        SELECT day FROM lmtd_trend
       )
       SELECT
-        COALESCE(m.day, l.day) as day,
+        ad.day,
         COALESCE(m.revenue, 0) as mtd_revenue,
         COALESCE(l.revenue, 0) as lmtd_revenue
-      FROM mtd_trend m
-      FULL OUTER JOIN lmtd_trend l ON m.day = l.day
-      WHERE COALESCE(m.day, l.day) IS NOT NULL
+      FROM all_days ad
+      LEFT JOIN mtd_trend m ON ad.day = m.day
+      LEFT JOIN lmtd_trend l ON ad.day = l.day
+      WHERE ad.day IS NOT NULL
       ORDER BY day
     `
 

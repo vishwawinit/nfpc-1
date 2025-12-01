@@ -731,7 +731,7 @@ export function CustomersReportUpdated() {
               <CardContent>
                 <div style={{ width: '100%', height: '400px' }}>
                   <ResponsiveContainer width="100%" height="100%">
-                    <BarChart data={data.salesByBrand.slice(0, 10)} margin={{ bottom: 100, left: 20, right: 20, top: 10 }}>
+                    <BarChart data={data.salesByBrand.slice(0, 10)} margin={{ bottom: 100, left: 20, right: 30, top: 10 }}>
                       <CartesianGrid strokeDasharray="3 3" />
                       <XAxis
                         dataKey="brand"
@@ -741,8 +741,13 @@ export function CustomersReportUpdated() {
                         interval={0}
                         tick={{ fontSize: 12 }}
                         tickFormatter={(value) => truncateName(value, 20)}
+                        label={{ value: 'Brand', position: 'insideBottom', offset: -5, style: { fontSize: 13, fill: '#1f2937', fontWeight: 700 } }}
                       />
-                      <YAxis tickFormatter={(value) => `${(value / 1000).toFixed(0)}K`} tick={{ fontSize: 11 }} />
+                      <YAxis
+                        tickFormatter={(value) => `${(value / 1000).toFixed(0)}K`}
+                        tick={{ fontSize: 11 }}
+                        label={{ value: 'Sales (AED)', angle: -90, position: 'insideLeft', offset: -5, style: { fontSize: 12, fill: '#1f2937', fontWeight: 700, textAnchor: 'middle' } }}
+                      />
                       <Tooltip
                         formatter={(value: any) => [`Sales: ${formatCurrency(value)}`, 'Amount']}
                         labelFormatter={(label) => {
@@ -771,13 +776,22 @@ export function CustomersReportUpdated() {
                 </CardTitle>
               </CardHeader>
               <CardContent>
-                <ResponsiveContainer width="100%" height={300}>
-                  <BarChart data={data.salesByCity.slice(0, 10)}>
+                <ResponsiveContainer width="100%" height={350}>
+                  <BarChart data={data.salesByCity.slice(0, 10)} margin={{ top: 10, right: 30, left: 20, bottom: 60 }}>
                     <CartesianGrid strokeDasharray="3 3" />
-                    <XAxis dataKey="city" angle={-45} textAnchor="end" height={80} />
-                    <YAxis tickFormatter={(value) => `${(value / 1000).toFixed(0)}K`} />
+                    <XAxis
+                      dataKey="city"
+                      angle={-45}
+                      textAnchor="end"
+                      height={80}
+                      label={{ value: 'City', position: 'insideBottom', offset: -5, style: { fontSize: 13, fill: '#1f2937', fontWeight: 700 } }}
+                    />
+                    <YAxis
+                      tickFormatter={(value) => `${(value / 1000).toFixed(0)}K`}
+                      label={{ value: 'Sales (AED)', angle: -90, position: 'insideLeft', offset: -5, style: { fontSize: 12, fill: '#1f2937', fontWeight: 700, textAnchor: 'middle' } }}
+                    />
                     <Tooltip formatter={(value: any) => formatCurrency(value)} />
-                    <Bar dataKey="sales" fill="#10b981" />
+                    <Bar dataKey="sales" fill="#10b981" radius={[6, 6, 0, 0]} />
                   </BarChart>
                 </ResponsiveContainer>
               </CardContent>
@@ -874,16 +888,20 @@ export function CustomersReportUpdated() {
                 </CardTitle>
               </CardHeader>
               <CardContent>
-                <ResponsiveContainer width="100%" height={300}>
-                  <BarChart data={data.topCustomers.slice(0, 10)}>
+                <ResponsiveContainer width="100%" height={350}>
+                  <BarChart data={data.topCustomers.slice(0, 10)} margin={{ top: 10, right: 30, left: 20, bottom: 60 }}>
                     <CartesianGrid strokeDasharray="3 3" />
                     <XAxis
                       dataKey="customerCode"
                       angle={-45}
                       textAnchor="end"
                       height={100}
+                      label={{ value: 'Customer Code', position: 'insideBottom', offset: -5, style: { fontSize: 13, fill: '#1f2937', fontWeight: 700 } }}
                     />
-                    <YAxis tickFormatter={(value) => `${(value / 1000).toFixed(0)}K`} />
+                    <YAxis
+                      tickFormatter={(value) => `${(value / 1000).toFixed(0)}K`}
+                      label={{ value: 'Sales (AED)', angle: -90, position: 'insideLeft', offset: -5, style: { fontSize: 12, fill: '#1f2937', fontWeight: 700, textAnchor: 'middle' } }}
+                    />
                     <Tooltip
                       formatter={(value: any) => [`Sales: ${formatCurrency(value)}`, 'Amount']}
                       labelFormatter={(label) => {
@@ -894,7 +912,7 @@ export function CustomersReportUpdated() {
                         return label
                       }}
                     />
-                    <Bar dataKey="totalSales" fill="#f59e0b" />
+                    <Bar dataKey="totalSales" fill="#f59e0b" radius={[6, 6, 0, 0]} />
                   </BarChart>
                 </ResponsiveContainer>
               </CardContent>

@@ -1399,13 +1399,24 @@ export function StoreUserVisitReport() {
               {/* Top 10 Users by Visits */}
               <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4">
                 <h3 className="text-sm font-medium text-gray-700 mb-3">Top 10 Users by Visit Count</h3>
-                <ResponsiveContainer width="100%" height={300}>
-                  <BarChart data={metrics.top20Users.slice(0, 10)}>
-                    <CartesianGrid strokeDasharray="3 3" />
-                    <XAxis dataKey="userName" angle={-45} textAnchor="end" height={100} fontSize={12} />
-                    <YAxis />
+                <ResponsiveContainer width="100%" height={420}>
+                  <BarChart data={metrics.top20Users.slice(0, 10)} margin={{ top: 10, right: 20, left: 50, bottom: 70 }}>
+                    <CartesianGrid strokeDasharray="3 3" className="stroke-gray-200" />
+                    <XAxis
+                      dataKey="userName"
+                      angle={-45}
+                      textAnchor="end"
+                      height={80}
+                      tick={{ fontSize: 11 }}
+                      label={{ value: 'User', position: 'insideBottom', offset: -10, style: { fontSize: 12, fill: '#1f2937', fontWeight: 600 } }}
+                    />
+                    <YAxis
+                      tick={{ fontSize: 11 }}
+                      width={55}
+                      label={{ value: 'Visits', angle: -90, position: 'insideLeft', offset: 5, style: { fontSize: 12, fill: '#1f2937', fontWeight: 600, textAnchor: 'middle' } }}
+                    />
                     <RechartsTooltip />
-                    <Bar dataKey="visitCount" fill="#3b82f6" name="Visits" />
+                    <Bar dataKey="visitCount" fill="#3b82f6" name="Visits" radius={[6, 6, 0, 0]} />
                   </BarChart>
                 </ResponsiveContainer>
               </div>
@@ -1413,13 +1424,24 @@ export function StoreUserVisitReport() {
               {/* Daily Visit Trend */}
               <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4">
                 <h3 className="text-sm font-medium text-gray-700 mb-3">Daily Visit Trend</h3>
-                <ResponsiveContainer width="100%" height={300}>
-                  <LineChart data={metrics.dailyTrend}>
-                    <CartesianGrid strokeDasharray="3 3" />
-                    <XAxis dataKey="date" angle={-45} textAnchor="end" height={100} fontSize={12} />
-                    <YAxis />
+                <ResponsiveContainer width="100%" height={420}>
+                  <LineChart data={metrics.dailyTrend} margin={{ top: 10, right: 20, left: 50, bottom: 70 }}>
+                    <CartesianGrid strokeDasharray="3 3" className="stroke-gray-200" />
+                    <XAxis
+                      dataKey="date"
+                      angle={-45}
+                      textAnchor="end"
+                      height={80}
+                      tick={{ fontSize: 11 }}
+                      label={{ value: 'Days', position: 'insideBottom', offset: -10, style: { fontSize: 12, fill: '#1f2937', fontWeight: 600 } }}
+                    />
+                    <YAxis
+                      tick={{ fontSize: 11 }}
+                      width={55}
+                      label={{ value: 'Visits', angle: -90, position: 'insideLeft', offset: 5, style: { fontSize: 12, fill: '#1f2937', fontWeight: 600, textAnchor: 'middle' } }}
+                    />
                     <RechartsTooltip />
-                    <Line type="monotone" dataKey="visits" stroke="#10b981" strokeWidth={2} name="Visits" />
+                    <Line type="monotone" dataKey="visits" stroke="#10b981" strokeWidth={2} name="Visits" dot={{ r: 4 }} activeDot={{ r: 6 }} />
                   </LineChart>
                 </ResponsiveContainer>
               </div>
@@ -1454,13 +1476,24 @@ export function StoreUserVisitReport() {
               {/* Average Duration by User */}
               <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4">
                 <h3 className="text-sm font-medium text-gray-700 mb-3">Top 10 Users by Avg Visit Duration</h3>
-                <ResponsiveContainer width="100%" height={300}>
-                  <BarChart data={metrics.avgDurationByUser}>
-                    <CartesianGrid strokeDasharray="3 3" />
-                    <XAxis dataKey="userName" angle={-45} textAnchor="end" height={100} fontSize={12} />
-                    <YAxis />
+                <ResponsiveContainer width="100%" height={420}>
+                  <BarChart data={metrics.avgDurationByUser} margin={{ top: 10, right: 20, left: 50, bottom: 70 }}>
+                    <CartesianGrid strokeDasharray="3 3" className="stroke-gray-200" />
+                    <XAxis
+                      dataKey="userName"
+                      angle={-45}
+                      textAnchor="end"
+                      height={80}
+                      tick={{ fontSize: 11 }}
+                      label={{ value: 'User', position: 'insideBottom', offset: -10, style: { fontSize: 12, fill: '#1f2937', fontWeight: 600 } }}
+                    />
+                    <YAxis
+                      tick={{ fontSize: 11 }}
+                      width={55}
+                      label={{ value: 'Duration (mins)', angle: -90, position: 'insideLeft', offset: 5, style: { fontSize: 12, fill: '#1f2937', fontWeight: 600, textAnchor: 'middle' } }}
+                    />
                     <RechartsTooltip />
-                    <Bar dataKey="avgDuration" fill="#f59e0b" name="Avg Duration (mins)" />
+                    <Bar dataKey="avgDuration" fill="#f59e0b" name="Avg Duration (mins)" radius={[6, 6, 0, 0]} />
                   </BarChart>
                 </ResponsiveContainer>
               </div>

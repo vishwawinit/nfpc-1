@@ -864,13 +864,25 @@ export function OrdersReport() {
                 </CardTitle>
               </CardHeader>
               <CardContent>
-                <ResponsiveContainer width="100%" height={300}>
-                  <BarChart data={data.charts.areaWise.slice(0, 10)}>
-                    <CartesianGrid strokeDasharray="3 3" />
-                    <XAxis dataKey="area" angle={-45} textAnchor="end" height={80} />
-                    <YAxis tickFormatter={(value) => `${(value / 1000).toFixed(0)}K`} />
+                <ResponsiveContainer width="100%" height={420}>
+                  <BarChart data={data.charts.areaWise.slice(0, 10)} margin={{ top: 10, right: 20, left: 55, bottom: 10 }}>
+                    <CartesianGrid strokeDasharray="3 3" className="stroke-gray-200" />
+                    <XAxis
+                      dataKey="area"
+                      angle={-45}
+                      textAnchor="end"
+                      height={80}
+                      tick={{ fontSize: 11 }}
+                      label={{ value: 'Area', position: 'insideBottom', offset: -5, style: { fontSize: 12, fill: '#1f2937', fontWeight: 600 } }}
+                    />
+                    <YAxis
+                      tickFormatter={(value) => `${(value / 1000).toFixed(0)}K`}
+                      tick={{ fontSize: 11 }}
+                      width={60}
+                      label={{ value: 'Sales (AED)', angle: -90, position: 'left', style: { fontSize: 12, fill: '#1f2937', fontWeight: 600, textAnchor: 'middle' } }}
+                    />
                     <Tooltip formatter={(value: any) => formatCurrency(value)} />
-                    <Bar dataKey="totalSales" fill="#3b82f6" />
+                    <Bar dataKey="totalSales" fill="#3b82f6" radius={[4, 4, 0, 0]} />
                   </BarChart>
                 </ResponsiveContainer>
               </CardContent>
@@ -887,13 +899,25 @@ export function OrdersReport() {
                 </CardTitle>
               </CardHeader>
               <CardContent>
-                <ResponsiveContainer width="100%" height={300}>
-                  <BarChart data={data.charts.subAreaWise.slice(0, 10)}>
-                    <CartesianGrid strokeDasharray="3 3" />
-                    <XAxis dataKey="subArea" angle={-45} textAnchor="end" height={80} />
-                    <YAxis tickFormatter={(value) => `${(value / 1000).toFixed(0)}K`} />
+                <ResponsiveContainer width="100%" height={420}>
+                  <BarChart data={data.charts.subAreaWise.slice(0, 10)} margin={{ top: 10, right: 20, left: 55, bottom: 10 }}>
+                    <CartesianGrid strokeDasharray="3 3" className="stroke-gray-200" />
+                    <XAxis
+                      dataKey="subArea"
+                      angle={-45}
+                      textAnchor="end"
+                      height={80}
+                      tick={{ fontSize: 11 }}
+                      label={{ value: 'Region', position: 'insideBottom', offset: -5, style: { fontSize: 12, fill: '#1f2937', fontWeight: 600 } }}
+                    />
+                    <YAxis
+                      tickFormatter={(value) => `${(value / 1000).toFixed(0)}K`}
+                      tick={{ fontSize: 11 }}
+                      width={60}
+                      label={{ value: 'Sales (AED)', angle: -90, position: 'left', style: { fontSize: 12, fill: '#1f2937', fontWeight: 600, textAnchor: 'middle' } }}
+                    />
                     <Tooltip formatter={(value: any) => formatCurrency(value)} />
-                    <Bar dataKey="totalSales" fill="#8b5cf6" />
+                    <Bar dataKey="totalSales" fill="#8b5cf6" radius={[4, 4, 0, 0]} />
                   </BarChart>
                 </ResponsiveContainer>
               </CardContent>
@@ -910,13 +934,24 @@ export function OrdersReport() {
                 </CardTitle>
               </CardHeader>
               <CardContent>
-                <ResponsiveContainer width="100%" height={300}>
-                  <BarChart data={data.charts.chainWise.slice(0, 10)}>
-                    <CartesianGrid strokeDasharray="3 3" />
-                    <XAxis dataKey="chain" angle={-45} textAnchor="end" height={80} />
-                    <YAxis tickFormatter={(value) => `${(value / 1000).toFixed(0)}K`} />
+                <ResponsiveContainer width="100%" height={420}>
+                  <BarChart data={data.charts.chainWise.slice(0, 10)} margin={{ top: 10, right: 20, left: 15, bottom: 10 }}>
+                    <CartesianGrid strokeDasharray="3 3" className="stroke-gray-200" />
+                    <XAxis
+                      dataKey="chain"
+                      angle={-45}
+                      textAnchor="end"
+                      height={80}
+                      tick={{ fontSize: 11 }}
+                      label={{ value: 'Chain', position: 'insideBottom', offset: -5, style: { fontSize: 12, fill: '#1f2937', fontWeight: 600 } }}
+                    />
+                    <YAxis
+                      tickFormatter={(value) => `${(value / 1000).toFixed(0)}K`}
+                      tick={{ fontSize: 11 }}
+                      label={{ value: 'Sales (AED)', angle: -90, position: 'insideLeft', offset: 10, style: { fontSize: 12, fill: '#1f2937', fontWeight: 600, textAnchor: 'middle' } }}
+                    />
                     <Tooltip formatter={(value: any) => formatCurrency(value)} />
-                    <Bar dataKey="totalSales" fill="#f59e0b" />
+                    <Bar dataKey="totalSales" fill="#f59e0b" radius={[4, 4, 0, 0]} />
                   </BarChart>
                 </ResponsiveContainer>
               </CardContent>
@@ -933,7 +968,7 @@ export function OrdersReport() {
             </CardHeader>
             <CardContent>
               {data?.charts?.categoryWise && data.charts.categoryWise.length > 0 ? (
-                <ResponsiveContainer width="100%" height={350}>
+                <ResponsiveContainer width="100%" height={420}>
                   <PieChart>
                     <Pie
                       data={[...data.charts.categoryWise].sort((a: any, b: any) => b.totalSales - a.totalSales)}
@@ -985,17 +1020,23 @@ export function OrdersReport() {
                 </CardTitle>
               </CardHeader>
               <CardContent>
-                <ResponsiveContainer width="100%" height={300}>
-                  <BarChart data={data.charts.topCustomers.slice(0, 10)}>
-                    <CartesianGrid strokeDasharray="3 3" />
+                <ResponsiveContainer width="100%" height={530}>
+                  <BarChart data={data.charts.topCustomers.slice(0, 10)} margin={{ top: 10, right: 20, left: 15, bottom: 10 }}>
+                    <CartesianGrid strokeDasharray="3 3" className="stroke-gray-200" />
                     <XAxis
                       dataKey="customerName"
                       angle={-45}
                       textAnchor="end"
                       height={100}
+                      tick={{ fontSize: 11 }}
                       tickFormatter={(value) => truncateName(value, 15)}
+                      label={{ value: 'Customer', position: 'insideBottom', offset: -10, style: { fontSize: 12, fill: '#1f2937', fontWeight: 600 } }}
                     />
-                    <YAxis tickFormatter={(value) => `${(value / 1000).toFixed(0)}K`} />
+                    <YAxis
+                      tickFormatter={(value) => `${(value / 1000).toFixed(0)}K`}
+                      tick={{ fontSize: 11 }}
+                      label={{ value: 'Sales (AED)', angle: -90, position: 'insideLeft', offset: 10, style: { fontSize: 12, fill: '#1f2937', fontWeight: 600, textAnchor: 'middle' } }}
+                    />
                     <Tooltip
                       formatter={(value: any, name: string) => {
                         if (name === 'totalSales') return formatCurrency(value)
@@ -1003,7 +1044,7 @@ export function OrdersReport() {
                       }}
                       labelFormatter={(label) => label}
                     />
-                    <Bar dataKey="totalSales" fill="#ef4444" name="Total Sales" />
+                    <Bar dataKey="totalSales" fill="#ef4444" name="Total Sales" radius={[4, 4, 0, 0]} />
                   </BarChart>
                 </ResponsiveContainer>
               </CardContent>
@@ -1020,19 +1061,25 @@ export function OrdersReport() {
                 </CardTitle>
               </CardHeader>
               <CardContent>
-                <ResponsiveContainer width="100%" height={300}>
-                  <BarChart data={data.charts.topProducts.slice(0, 10)}>
-                    <CartesianGrid strokeDasharray="3 3" />
-                    <XAxis 
-                      dataKey="productName" 
-                      angle={-45} 
-                      textAnchor="end" 
+                <ResponsiveContainer width="100%" height={530}>
+                  <BarChart data={data.charts.topProducts.slice(0, 10)} margin={{ top: 10, right: 20, left: 15, bottom: 10 }}>
+                    <CartesianGrid strokeDasharray="3 3" className="stroke-gray-200" />
+                    <XAxis
+                      dataKey="productName"
+                      angle={-45}
+                      textAnchor="end"
                       height={100}
+                      tick={{ fontSize: 11 }}
                       tickFormatter={(value) => truncateName(value, 15)}
+                      label={{ value: 'Product', position: 'insideBottom', offset: -10, style: { fontSize: 12, fill: '#1f2937', fontWeight: 600 } }}
                     />
-                    <YAxis tickFormatter={(value) => `${(value / 1000).toFixed(0)}K`} />
+                    <YAxis
+                      tickFormatter={(value) => `${(value / 100000).toFixed(0)}L`}
+                      tick={{ fontSize: 11 }}
+                      label={{ value: 'Sales (AED)', angle: -90, position: 'insideLeft', offset: -5, style: { fontSize: 12, fill: '#1f2937', fontWeight: 600, textAnchor: 'middle' } }}
+                    />
                     <Tooltip formatter={(value: any) => formatCurrency(value)} />
-                    <Bar dataKey="totalSales" fill="#8b5cf6" />
+                    <Bar dataKey="totalSales" fill="#8b5cf6" radius={[4, 4, 0, 0]} />
                   </BarChart>
                 </ResponsiveContainer>
               </CardContent>

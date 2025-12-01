@@ -2748,6 +2748,16 @@ export function ReturnsWastage() {
                         tickLine={false}
                         axisLine={{ stroke: '#cbd5e1', strokeWidth: 1.5 }}
                         height={60}
+                        label={{
+                          value: 'Brand',
+                          position: 'insideBottom',
+                          offset: -5,
+                          style: {
+                            fill: '#1f2937',
+                            fontWeight: 700,
+                            fontSize: isMobile ? 12 : 13
+                          }
+                        }}
                       />
                       <YAxis
                         tick={{
@@ -2762,10 +2772,12 @@ export function ReturnsWastage() {
                           value: 'Return Value (AED)',
                           angle: -90,
                           position: 'insideLeft',
+                          offset: -5,
                           style: {
-                            fill: '#475569',
-                            fontWeight: 600,
-                            fontSize: isMobile ? 11 : 13
+                            fill: '#1f2937',
+                            fontWeight: 700,
+                            fontSize: isMobile ? 11 : 12,
+                            textAnchor: 'middle'
                           }
                         }}
                       />
@@ -3146,8 +3158,8 @@ export function ReturnsWastage() {
                 </div>
               </CardHeader>
               <CardContent>
-                <ResponsiveContainer width="100%" height={isMobile ? 250 : 300}>
-                  <ComposedChart data={data?.periodReturns?.dailyTrend || []}>
+                <ResponsiveContainer width="100%" height={isMobile ? 280 : 350}>
+                  <ComposedChart data={data?.periodReturns?.dailyTrend || []} margin={{ top: 10, right: 50, left: 20, bottom: 40 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
                     <XAxis
                       dataKey="date"
@@ -3155,9 +3167,19 @@ export function ReturnsWastage() {
                       angle={-45}
                       textAnchor="end"
                       height={80}
+                      label={{ value: 'Date', position: 'insideBottom', offset: -5, style: { fontSize: isMobile ? 12 : 13, fill: '#1f2937', fontWeight: 700 } }}
                     />
-                    <YAxis yAxisId="left" label={{ value: 'Count', angle: -90, position: 'insideLeft', fill: '#6b7280' }} tick={{ fontSize: isMobile ? 10 : 12, fill: '#6b7280' }} />
-                    <YAxis yAxisId="right" orientation="right" label={{ value: getCurrency(), angle: 90, position: 'insideRight', fill: '#6b7280' }} tick={{ fontSize: isMobile ? 10 : 12, fill: '#6b7280' }} />
+                    <YAxis
+                      yAxisId="left"
+                      tick={{ fontSize: isMobile ? 10 : 12, fill: '#6b7280' }}
+                      label={{ value: 'Return Count', angle: -90, position: 'insideLeft', offset: -5, style: { fontSize: isMobile ? 11 : 12, fill: '#1f2937', fontWeight: 700, textAnchor: 'middle' } }}
+                    />
+                    <YAxis
+                      yAxisId="right"
+                      orientation="right"
+                      tick={{ fontSize: isMobile ? 10 : 12, fill: '#6b7280' }}
+                      label={{ value: `Value (${getCurrency()})`, angle: 90, position: 'insideRight', offset: -5, style: { fontSize: isMobile ? 11 : 12, fill: '#1f2937', fontWeight: 700, textAnchor: 'middle' } }}
+                    />
                     <RechartsTooltip contentStyle={{ backgroundColor: '#ffffff', border: '1px solid #e5e7eb' }} />
                     <Legend
                       wrapperStyle={{ fontSize: isMobile ? '12px' : '14px' }}

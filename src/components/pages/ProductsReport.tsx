@@ -721,17 +721,29 @@ export function ProductsReport() {
               </CardHeader>
               <CardContent>
                 {analyticsLoading ? (
-                  <div className="h-[300px] flex items-center justify-center text-gray-500">Loading...</div>
+                  <div className="h-[480px] flex items-center justify-center text-gray-500">Loading...</div>
                 ) : analytics?.salesByChannel.length === 0 ? (
-                  <div className="h-[300px] flex items-center justify-center text-gray-500">No data available</div>
+                  <div className="h-[480px] flex items-center justify-center text-gray-500">No data available</div>
                 ) : (
-                  <ResponsiveContainer width="100%" height={300}>
-                    <BarChart data={analytics?.salesByChannel.slice(0, 10)}>
-                      <CartesianGrid strokeDasharray="3 3" />
-                      <XAxis dataKey="channel" angle={-45} textAnchor="end" height={100} />
-                      <YAxis tickFormatter={formatYAxis} />
+                  <ResponsiveContainer width="100%" height={480}>
+                    <BarChart data={analytics?.salesByChannel.slice(0, 10)} margin={{ top: 10, right: 15, left: 45, bottom: 70 }}>
+                      <CartesianGrid strokeDasharray="3 3" className="stroke-gray-200" />
+                      <XAxis
+                        dataKey="channel"
+                        angle={-45}
+                        textAnchor="end"
+                        height={80}
+                        tick={{ fontSize: 11 }}
+                        label={{ value: 'Channel', position: 'insideBottom', offset: -10, style: { fontSize: 12, fill: '#1f2937', fontWeight: 600 } }}
+                      />
+                      <YAxis
+                        tickFormatter={formatYAxis}
+                        tick={{ fontSize: 11 }}
+                        width={60}
+                        label={{ value: 'Sales (AED)', angle: -90, position: 'left', style: { fontSize: 12, fill: '#1f2937', fontWeight: 600, textAnchor: 'middle' } }}
+                      />
                       <Tooltip formatter={(value: number) => formatCurrency(value, 'AED')} />
-                      <Bar dataKey="sales" fill="#0088FE" name="Sales" />
+                      <Bar dataKey="sales" fill="#0088FE" name="Sales" radius={[6, 6, 0, 0]} />
                     </BarChart>
                   </ResponsiveContainer>
                 )}
@@ -755,7 +767,28 @@ export function ProductsReport() {
                       <ResponsiveContainer width="100%" height={280}>
                         <PieChart>
                           <Pie
-                            data={analytics?.brandSalesDistribution.slice(0, 8)}
+                            data={(() => {
+                              const brands = analytics?.brandSalesDistribution || []
+                              const mainBrands = brands.filter(b => b.percentage >= 10)
+                              const otherBrands = brands.filter(b => b.percentage < 10)
+
+                              if (otherBrands.length > 0) {
+                                const othersTotal = otherBrands.reduce((sum, b) => sum + b.sales, 0)
+                                const othersPercentage = otherBrands.reduce((sum, b) => sum + b.percentage, 0)
+                                const othersProducts = otherBrands.reduce((sum, b) => sum + b.products, 0)
+
+                                return [
+                                  ...mainBrands,
+                                  {
+                                    brand: 'Others',
+                                    sales: othersTotal,
+                                    percentage: othersPercentage,
+                                    products: othersProducts
+                                  }
+                                ]
+                              }
+                              return brands
+                            })()}
                             cx="50%"
                             cy="50%"
                             outerRadius={90}
@@ -764,18 +797,25 @@ export function ProductsReport() {
                             nameKey="brand"
                             label={({ brand, percentage }) => percentage > 5 ? `${formatPercentage(percentage)}` : ''}
                           >
-                            {analytics?.brandSalesDistribution.slice(0, 8).map((entry, index) => (
-                              <Cell key={`cell-${index}`} fill={CHART_COLORS[index % CHART_COLORS.length]} />
-                            ))}
+                            {(() => {
+                              const brands = analytics?.brandSalesDistribution || []
+                              const mainBrands = brands.filter(b => b.percentage >= 10)
+                              const otherBrands = brands.filter(b => b.percentage < 10)
+                              const pieData = otherBrands.length > 0 ? [...mainBrands, { brand: 'Others' }] : brands
+
+                              return pieData.map((entry, index) => (
+                                <Cell key={`cell-${index}`} fill={CHART_COLORS[index % CHART_COLORS.length]} />
+                              ))
+                            })()}
                           </Pie>
                           <Tooltip formatter={(value: number) => formatCurrency(value, 'AED')} />
                         </PieChart>
                       </ResponsiveContainer>
                     </div>
 
-                    {/* List */}
-                    <div className="space-y-2">
-                      {analytics?.brandSalesDistribution.slice(0, 8).map((brand, index) => (
+                    {/* List - Show all brands */}
+                    <div className="space-y-2 max-h-[280px] overflow-y-auto">
+                      {analytics?.brandSalesDistribution.map((brand, index) => (
                         <div
                           key={brand.brand}
                           className="flex items-center justify-between p-2 border rounded hover:bg-gray-50 transition-colors"
@@ -783,7 +823,11 @@ export function ProductsReport() {
                           <div className="flex items-center space-x-2">
                             <div
                               className="w-3 h-3 rounded"
-                              style={{ backgroundColor: CHART_COLORS[index % CHART_COLORS.length] }}
+                              style={{
+                                backgroundColor: brand.percentage >= 10
+                                  ? CHART_COLORS[analytics.brandSalesDistribution.filter(b => b.percentage >= 10).findIndex(b => b.brand === brand.brand) % CHART_COLORS.length]
+                                  : CHART_COLORS[analytics.brandSalesDistribution.filter(b => b.percentage >= 10).length % CHART_COLORS.length]
+                              }}
                             />
                             <div>
                               <div className="font-medium text-sm text-gray-900">{brand.brand}</div>

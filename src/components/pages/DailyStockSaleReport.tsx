@@ -624,19 +624,19 @@ export const DailyStockSaleReport: React.FC = () => {
                   </div>
                 </div>
               ) : (
-                <ResponsiveContainer width="100%" height={300}>
-                  <ComposedChart data={trendChartData} margin={{ top: 5, right: 50, left: 20, bottom: 20 }}>
+                <ResponsiveContainer width="100%" height={350}>
+                  <ComposedChart data={trendChartData} margin={{ top: 10, right: 50, left: 20, bottom: 40 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
                     <XAxis
                       dataKey="date"
-                      label={{ value: 'Date', position: 'insideBottom', offset: -10, style: { fontSize: 12, fill: '#374151', fontWeight: 600 } }}
+                      label={{ value: 'Date', position: 'insideBottom', offset: -5, style: { fontSize: 13, fill: '#1f2937', fontWeight: 700 } }}
                       tick={{ fontSize: isMobile ? 10 : 12, fill: '#6b7280' }}
                     />
                     {/* Left Y-Axis for Sales Amount in INR */}
                     <YAxis
                       yAxisId="left"
                       tickFormatter={(value) => `AED${(value / 1000).toFixed(0)}K`}
-                      label={{ value: 'Sales (AED)', angle: -90, position: 'insideLeft', style: { fontSize: 11, fill: '#374151', fontWeight: 600 } }}
+                      label={{ value: 'Sales (AED)', angle: -90, position: 'insideLeft', offset: -5, style: { fontSize: 12, fill: '#1f2937', fontWeight: 700, textAnchor: 'middle' } }}
                       tick={{ fontSize: isMobile ? 10 : 12, fill: '#6b7280' }}
                     />
                     {/* Right Y-Axis for Orders, Customers */}
@@ -644,7 +644,7 @@ export const DailyStockSaleReport: React.FC = () => {
                       yAxisId="right"
                       orientation="right"
                       tickFormatter={(value) => value >= 1000 ? `${(value / 1000).toFixed(0)}K` : value.toString()}
-                      label={{ value: 'Orders/Customers', angle: 90, position: 'insideRight', style: { fontSize: 11, fill: '#374151', fontWeight: 600 } }}
+                      label={{ value: 'Orders/Customers', angle: 90, position: 'insideRight', offset: 5, style: { fontSize: 12, fill: '#1f2937', fontWeight: 700, textAnchor: 'middle' } }}
                       tick={{ fontSize: isMobile ? 10 : 12, fill: '#6b7280' }}
                     />
                     <Tooltip
@@ -808,20 +808,22 @@ export const DailyStockSaleReport: React.FC = () => {
                   </div>
                 </div>
               ) : (
-                <ResponsiveContainer width="100%" height={300}>
-                  <BarChart data={topStoresChart}>
+                <ResponsiveContainer width="100%" height={350}>
+                  <BarChart data={topStoresChart} margin={{ top: 10, right: 30, left: 20, bottom: 60 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" vertical={false} />
                     <XAxis
-                      dataKey="name"
+                      dataKey="storeCode"
                       angle={-45}
                       textAnchor="end"
-                      height={100}
+                      height={80}
                       style={{ fontSize: '11px', fill: '#374151' }}
                       interval={0}
+                      label={{ value: 'Store Code', position: 'insideBottom', offset: -5, style: { fontSize: 13, fill: '#1f2937', fontWeight: 700 } }}
                     />
                     <YAxis
                       tickFormatter={(value) => `AED${(value / 1000).toFixed(0)}K`}
                       style={{ fontSize: '12px', fill: '#6b7280' }}
+                      label={{ value: 'Sales (AED)', angle: -90, position: 'insideLeft', offset: -5, style: { fontSize: 12, fill: '#1f2937', fontWeight: 700, textAnchor: 'middle' } }}
                     />
                     <Tooltip
                       content={({ active, payload, label }) => {
@@ -838,7 +840,7 @@ export const DailyStockSaleReport: React.FC = () => {
                             }}>
                               <div style={{ marginBottom: '8px' }}>
                                 <div style={{ fontWeight: '600', color: '#374151', marginBottom: '4px' }}>{data.fullName}</div>
-                                {data.storeCode && <div style={{ fontSize: '11px', color: '#6b7280' }}>Code: {data.storeCode}</div>}
+                                {data.storeCode && <div style={{ fontSize: '11px', color: '#6b7280' }}>Store Code: {data.storeCode}</div>}
                               </div>
                               <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                                 <span style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: '#3b82f6', display: 'inline-block' }}></span>
@@ -892,6 +894,7 @@ export const DailyStockSaleReport: React.FC = () => {
                             const shortName = channel.length > 12 ? channel.substring(0, 12) + '...' : channel
                             return `${shortName} ${percentage.toFixed(1)}%`
                           }}
+                          style={{ fontSize: isMobile ? '10px' : '11px' }}
                           outerRadius={isMobile ? 60 : 80}
                           fill="#8884d8"
                           dataKey="sales"
@@ -989,16 +992,16 @@ export const DailyStockSaleReport: React.FC = () => {
                             <span style={{
                               fontWeight: '500',
                               color: '#374151',
-                              fontSize: isMobile ? '13px' : '14px'
+                              fontSize: isMobile ? '11px' : '12px'
                             }}>
                               {channel.channel}
                             </span>
                           </div>
                           <div style={{ textAlign: 'right' }}>
-                            <div style={{ fontWeight: '600', color: '#1f2937', fontSize: isMobile ? '13px' : '14px' }}>
+                            <div style={{ fontWeight: '600', color: '#1f2937', fontSize: isMobile ? '11px' : '12px' }}>
                               {formatCurrency(Number(channel.sales))}
                             </div>
-                            <div style={{ fontSize: isMobile ? '11px' : '12px', color: '#6b7280', marginTop: '2px' }}>
+                            <div style={{ fontSize: isMobile ? '10px' : '11px', color: '#6b7280', marginTop: '2px' }}>
                               {percentage.toFixed(2)}% • {channel.orders} orders
                             </div>
                           </div>

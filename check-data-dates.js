@@ -1,59 +1,63 @@
-const { Pool } = require('pg')
+const { Pool } = require('pg');
+require('dotenv').config({ path: '.env.local' });
 
 const pool = new Pool({
-  host: '10.20.53.130',
-  port: 5432,
-  user: 'choithram',
-  password: 'choithram',
-  database: 'flat_nfpc_test'
-})
+  connectionString: process.env.DATABASE_URL,
+  ssl: process.env.DATABASE_URL?.includes('localhost') ? false : { rejectUnauthorized: false }
+});
 
 async function checkDataDates() {
-  const client = await pool.connect()
-
   try {
-    // Check date range of data
-    const dateRangeSQL = `
+    console.log('🔍 Checking date ranges with data in flat_daily_sales_report...\n');
+
+    const query = `
       SELECT
         MIN(trx_trxdate) as min_date,
         MAX(trx_trxdate) as max_date,
-        COUNT(*) as total_rows,
-        COUNT(DISTINCT trx_trxcode) as total_transactions
+        COUNT(*) as total_records,
+        COUNT(DISTINCT trx_trxdate) as unique_dates,
+        COUNT(DISTINCT customer_code) as unique_customers,
+        COUNT(DISTINCT line_itemcode) as unique_products
       FROM flat_daily_sales_report
       WHERE trx_trxtype = 1
-    `
+    `;
 
-    const dateResult = await client.query(dateRangeSQL)
-    console.log('📅 DATE RANGE IN DATABASE:')
-    console.log('Min Date:', dateResult.rows[0].min_date)
-    console.log('Max Date:', dateResult.rows[0].max_date)
-    console.log('Total Rows:', dateResult.rows[0].total_rows)
-    console.log('Total Transactions:', dateResult.rows[0].total_transactions)
-    console.log('')
+    const result = await pool.query(query);
+    const stats = result.rows[0];
 
-    // Check available areas
-    const areasSQL = `
-      SELECT DISTINCT route_areacode, route_subareacode
+    console.log('📊 Database Statistics:');
+    console.log(\`   Earliest Date: \${stats.min_date}\`);
+    console.log(\`   Latest Date: \${stats.max_date}\`);
+    console.log(\`   Total Records: \${parseInt(stats.total_records).toLocaleString()}\`);
+    console.log(\`   Unique Dates: \${stats.unique_dates}\`);
+    console.log(\`   Unique Customers: \${stats.unique_customers}\`);
+    console.log(\`   Unique Products: \${stats.unique_products}\`);
+
+    const recentQuery = \`
+      SELECT
+        DATE_TRUNC('month', trx_trxdate) as month,
+        COUNT(*) as record_count,
+        SUM(CASE WHEN trx_totalamount > 0 THEN trx_totalamount ELSE 0 END) as total_revenue
       FROM flat_daily_sales_report
-      WHERE route_areacode IS NOT NULL
-        AND route_subareacode IS NOT NULL
-        AND trx_trxtype = 1
-      ORDER BY route_areacode, route_subareacode
-      LIMIT 10
-    `
+      WHERE trx_trxtype = 1
+        AND trx_trxdate >= DATE_TRUNC('month', CURRENT_DATE - INTERVAL '6 months')
+      GROUP BY DATE_TRUNC('month', trx_trxdate)
+      ORDER BY month DESC
+      LIMIT 6
+    \`;
 
-    const areasResult = await client.query(areasSQL)
-    console.log('📍 SAMPLE AREAS IN DATABASE:')
-    areasResult.rows.forEach(row => {
-      console.log(`  Area: ${row.route_areacode}, SubArea: ${row.route_subareacode}`)
-    })
+    const recentResult = await pool.query(recentQuery);
+
+    console.log('\n📅 Recent Months with Data:');
+    recentResult.rows.forEach(row => {
+      console.log(\`   \${row.month.toISOString().split('T')[0]}: \${parseInt(row.record_count).toLocaleString()} records\`);
+    });
 
   } catch (error) {
-    console.error('Error:', error)
+    console.error('❌ Error:', error.message);
   } finally {
-    client.release()
-    await pool.end()
+    await pool.end();
   }
 }
 
-checkDataDates()
+checkDataDates();

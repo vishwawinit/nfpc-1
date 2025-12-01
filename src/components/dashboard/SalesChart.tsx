@@ -45,6 +45,26 @@ const CustomTooltip = ({ active, payload, label }: any) => {
   return null
 }
 
+const CustomYAxisLabel = ({ viewBox }: any) => {
+  if (!viewBox) return null
+  const { y = 0, height = 0 } = viewBox
+  const xPos = 15
+  const yPos = y + height / 2
+  return (
+    <text
+      x={xPos}
+      y={yPos}
+      transform={`rotate(-90, ${xPos}, ${yPos})`}
+      textAnchor="middle"
+      fill="#374151"
+      fontSize="14px"
+      fontWeight="600"
+    >
+      Sales (AED)
+    </text>
+  )
+}
+
 export const SalesChart: React.FC<SalesChartProps> = ({
   data,
   loading = false,
@@ -81,31 +101,34 @@ export const SalesChart: React.FC<SalesChartProps> = ({
   const renderChart = () => {
     const commonProps = {
       data: filteredData,
-      margin: { top: 5, right: 30, left: 20, bottom: 5 }
+      margin: { top: 5, right: 30, left: 100, bottom: 5 }
     }
 
     switch (chartType) {
       case 'line':
         return (
-          <LineChart {...commonProps}>
+          <LineChart data={filteredData} margin={{ top: 10, right: 50, left: 60, bottom: 40 }}>
             <CartesianGrid strokeDasharray="3 3" className="stroke-gray-200" />
             <XAxis
               dataKey="date"
               tickFormatter={(value) => formatDateShort(value)}
               tick={{ fontSize: 14 }}
               height={50}
+              label={{ value: 'Date', position: 'insideBottom', offset: -5, style: { fontSize: 13, fill: '#1f2937', fontWeight: 700 } }}
             />
             <YAxis
               yAxisId="left"
               tickFormatter={(value) => `AED ${(value / 1000).toFixed(0)}k`}
               tick={{ fontSize: 14 }}
-              width={80}
+              width={100}
+              label={{ value: 'Sales (AED)', angle: -90, position: 'left', style: { fontSize: 12, fill: '#1f2937', fontWeight: 700, textAnchor: 'middle' } }}
             />
             <YAxis
               yAxisId="right"
               orientation="right"
               tick={{ fontSize: 14 }}
               width={60}
+              label={{ value: 'Orders', angle: 90, position: 'insideRight', offset: -5, style: { fontSize: 12, fill: '#1f2937', fontWeight: 700, textAnchor: 'middle' } }}
             />
             <Tooltip content={<CustomTooltip />} />
             <Legend wrapperStyle={{ fontSize: '14px', paddingTop: '10px' }} iconSize={14} />
@@ -132,18 +155,20 @@ export const SalesChart: React.FC<SalesChartProps> = ({
 
       case 'bar':
         return (
-          <BarChart {...commonProps}>
+          <BarChart data={filteredData} margin={{ top: 10, right: 30, left: 60, bottom: 40 }}>
             <CartesianGrid strokeDasharray="3 3" className="stroke-gray-200" />
             <XAxis
               dataKey="date"
               tickFormatter={(value) => formatDateShort(value)}
               tick={{ fontSize: 14 }}
               height={50}
+              label={{ value: 'Date', position: 'insideBottom', offset: -5, style: { fontSize: 13, fill: '#1f2937', fontWeight: 700 } }}
             />
             <YAxis
               tickFormatter={(value) => `AED ${(value / 1000).toFixed(0)}k`}
               tick={{ fontSize: 14 }}
-              width={80}
+              width={100}
+              label={{ value: 'Sales (AED)', angle: -90, position: 'left', style: { fontSize: 12, fill: '#1f2937', fontWeight: 700, textAnchor: 'middle' } }}
             />
             <Tooltip content={<CustomTooltip />} />
             <Legend wrapperStyle={{ fontSize: '14px', paddingTop: '10px' }} iconSize={14} />
@@ -158,18 +183,20 @@ export const SalesChart: React.FC<SalesChartProps> = ({
 
       case 'area':
         return (
-          <AreaChart {...commonProps}>
+          <AreaChart data={filteredData} margin={{ top: 10, right: 30, left: 60, bottom: 40 }}>
             <CartesianGrid strokeDasharray="3 3" className="stroke-gray-200" />
             <XAxis
               dataKey="date"
               tickFormatter={(value) => formatDateShort(value)}
               tick={{ fontSize: 14 }}
               height={50}
+              label={{ value: 'Date', position: 'insideBottom', offset: -5, style: { fontSize: 13, fill: '#1f2937', fontWeight: 700 } }}
             />
             <YAxis
               tickFormatter={(value) => `AED ${(value / 1000).toFixed(0)}k`}
               tick={{ fontSize: 14 }}
-              width={80}
+              width={100}
+              label={{ value: 'Sales (AED)', angle: -90, position: 'left', style: { fontSize: 12, fill: '#1f2937', fontWeight: 700, textAnchor: 'middle' } }}
             />
             <Tooltip content={<CustomTooltip />} />
             <Legend wrapperStyle={{ fontSize: '14px', paddingTop: '10px' }} iconSize={14} />
@@ -188,25 +215,28 @@ export const SalesChart: React.FC<SalesChartProps> = ({
       case 'composed':
       default:
         return (
-          <ComposedChart {...commonProps}>
+          <ComposedChart data={filteredData} margin={{ top: 10, right: 50, left: 60, bottom: 40 }}>
             <CartesianGrid strokeDasharray="3 3" className="stroke-gray-200" />
             <XAxis
               dataKey="date"
               tickFormatter={(value) => formatDateShort(value)}
               tick={{ fontSize: 14 }}
               height={50}
+              label={{ value: 'Date', position: 'insideBottom', offset: -5, style: { fontSize: 13, fill: '#1f2937', fontWeight: 700 } }}
             />
             <YAxis
               yAxisId="left"
               tickFormatter={(value) => `AED ${(value / 1000).toFixed(0)}k`}
               tick={{ fontSize: 14 }}
-              width={80}
+              width={100}
+              label={{ value: 'Sales (AED)', angle: -90, position: 'left', style: { fontSize: 12, fill: '#1f2937', fontWeight: 700, textAnchor: 'middle' } }}
             />
             <YAxis
               yAxisId="right"
               orientation="right"
               tick={{ fontSize: 14 }}
               width={60}
+              label={{ value: 'Orders/Customers', angle: 90, position: 'insideRight', offset: -5, style: { fontSize: 12, fill: '#1f2937', fontWeight: 700, textAnchor: 'middle' } }}
             />
             <Tooltip content={<CustomTooltip />} />
             <Legend wrapperStyle={{ fontSize: '14px', paddingTop: '10px' }} iconSize={14} />
@@ -287,7 +317,7 @@ export const SalesChart: React.FC<SalesChartProps> = ({
         </div>
       </CardHeader>
       <CardContent className="p-4 sm:p-6 pt-0 sm:pt-0">
-        <ResponsiveContainer width="100%" height={300} className="sm:h-[350px]">
+        <ResponsiveContainer width="100%" height={350}>
           {renderChart()}
         </ResponsiveContainer>
       </CardContent>
