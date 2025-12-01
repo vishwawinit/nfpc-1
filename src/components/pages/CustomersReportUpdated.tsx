@@ -784,38 +784,85 @@ export function CustomersReportUpdated() {
             </Card>
           )}
 
-          {/* Sales by Product Category */}
-          {data?.salesByCategory && (
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <Package className="h-5 w-5" />
-                  Sales by Product Category
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <ResponsiveContainer width="100%" height={300}>
-                  <PieChart>
-                    <Pie
-                      data={data.salesByCategory}
-                      cx="50%"
-                      cy="50%"
-                      labelLine={false}
-                      label={(entry: any) => `${entry.name}: ${((entry.value / data.metrics.totalSales) * 100).toFixed(1)}%`}
-                      outerRadius={80}
-                      fill="#8884d8"
-                      dataKey="value"
-                    >
-                      {data.salesByCategory.map((entry: any, index: number) => (
-                        <Cell key={`cell-${index}`} fill={CHART_COLORS[index % CHART_COLORS.length]} />
+          {/* Sales by Product Channel */}
+          {data?.salesByCategory && (() => {
+            // Process categories to group those with less than 10% as "Others" for pie chart only
+            const totalSales = data.metrics.totalSales || 0
+            const threshold = 0.10 // 10%
+
+            let processedCategoriesForChart: any[] = []
+            let othersValue = 0
+
+            data.salesByCategory.forEach((category: any) => {
+              const percentage = (category.value / totalSales)
+              if (percentage < threshold) {
+                othersValue += category.value
+              } else {
+                processedCategoriesForChart.push(category)
+              }
+            })
+
+            // Add "Others" category if there are any grouped items
+            if (othersValue > 0) {
+              processedCategoriesForChart.push({
+                name: 'Others',
+                value: othersValue
+              })
+            }
+
+            return (
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <Package className="h-5 w-5" />
+                    Sales by Product Channel
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <ResponsiveContainer width="100%" height={300}>
+                    <PieChart>
+                      <Pie
+                        data={processedCategoriesForChart}
+                        cx="50%"
+                        cy="50%"
+                        labelLine={false}
+                        label={(entry: any) => `${entry.name}: ${((entry.value / totalSales) * 100).toFixed(1)}%`}
+                        outerRadius={80}
+                        fill="#8884d8"
+                        dataKey="value"
+                      >
+                        {processedCategoriesForChart.map((entry: any, index: number) => (
+                          <Cell key={`cell-${index}`} fill={CHART_COLORS[index % CHART_COLORS.length]} />
+                        ))}
+                      </Pie>
+                      <Tooltip formatter={(value: any) => formatCurrency(value)} />
+                    </PieChart>
+                  </ResponsiveContainer>
+
+                  {/* Custom Legend - Shows ALL channels */}
+                  <div className="mt-6 border-t pt-4">
+                    <div className="grid grid-cols-1 gap-3">
+                      {data.salesByCategory.map((item: any, index: number) => (
+                        <div
+                          key={index}
+                          className="flex items-center justify-between p-3 bg-gray-50 rounded-lg hover:bg-gray-100 transition-colors"
+                        >
+                          <div className="flex items-center gap-3">
+                            <div
+                              className="w-4 h-4 rounded-full flex-shrink-0"
+                              style={{ backgroundColor: CHART_COLORS[index % CHART_COLORS.length] }}
+                            />
+                            <span className="text-sm font-medium text-gray-700">{item.name}</span>
+                          </div>
+                          <span className="text-sm font-semibold text-gray-900">{formatCurrency(item.value)}</span>
+                        </div>
                       ))}
-                    </Pie>
-                    <Tooltip formatter={(value: any) => formatCurrency(value)} />
-                  </PieChart>
-                </ResponsiveContainer>
-              </CardContent>
-            </Card>
-          )}
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            )
+          })()}
 
           {/* Top 10 Customers */}
           {data?.topCustomers && (
@@ -831,19 +878,18 @@ export function CustomersReportUpdated() {
                   <BarChart data={data.topCustomers.slice(0, 10)}>
                     <CartesianGrid strokeDasharray="3 3" />
                     <XAxis
-                      dataKey="customerName"
+                      dataKey="customerCode"
                       angle={-45}
                       textAnchor="end"
                       height={100}
-                      tickFormatter={(value) => truncateName(value, 15)}
                     />
                     <YAxis tickFormatter={(value) => `${(value / 1000).toFixed(0)}K`} />
                     <Tooltip
                       formatter={(value: any) => [`Sales: ${formatCurrency(value)}`, 'Amount']}
                       labelFormatter={(label) => {
-                        const customer = data.topCustomers.find((c: any) => c.customerName === label)
+                        const customer = data.topCustomers.find((c: any) => c.customerCode === label)
                         if (customer) {
-                          return `${customer.customerCode} - ${customer.customerName}`
+                          return `${customer.customerName}`
                         }
                         return label
                       }}

@@ -281,16 +281,16 @@ export async function GET(request: NextRequest) {
       orderCount: parseInt(row.order_count || '0')
     }))
 
-    // Sales by Product Category
+    // Sales by Product Channel
     const salesByCategoryQuery = `
       SELECT
-        COALESCE(item_grouplevel1, 'Others') as category,
+        COALESCE(customer_channel_description, 'Others') as category,
         SUM(CASE WHEN trx_totalamount > 0 THEN trx_totalamount ELSE 0 END) as sales,
         COUNT(DISTINCT line_itemcode) as product_count,
         SUM(ABS(line_quantitybu)) as units_sold
       FROM ${SALES_TABLE}
       ${whereClause}
-      GROUP BY item_grouplevel1
+      GROUP BY customer_channel_description
       ORDER BY sales DESC
       LIMIT 10
     `

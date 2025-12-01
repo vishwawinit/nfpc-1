@@ -369,7 +369,6 @@ export async function GET(request: NextRequest) {
            FROM returns
            WHERE trx_collectiontype = '1'
            ORDER BY trx_date DESC, line_itemcode
-           LIMIT 100
          ) x
         ) as good_returns_detail,
 
@@ -396,7 +395,6 @@ export async function GET(request: NextRequest) {
            FROM returns
            WHERE trx_collectiontype = '0'
            ORDER BY trx_date DESC, line_itemcode
-           LIMIT 100
          ) x
         ) as bad_returns_detail
     `
