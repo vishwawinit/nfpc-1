@@ -92,18 +92,11 @@ function HomePageContent() {
           {/* Sidebar Header */}
           <div className="flex items-center justify-between p-5 border-b border-gray-700 bg-[#1e293b]">
             {sidebarExpanded && (
-              <div className="flex items-center gap-3">
-                <img
-                  src="https://nfpcsfalive.winitsoftware.com/nfpcsfa-92/Img/logoNew1.jpg?v=2"
-                  alt="NFPC Logo"
-                  className="h-8 w-auto rounded-sm border border-gray-700 bg-white"
-                />
-                <div>
-                  <h1 className="text-xl font-bold text-white">
-                    NFPC Analytics
-                  </h1>
-                  <p className="text-xs text-gray-400 mt-0.5">Reports Dashboard</p>
-                </div>
+              <div>
+                <h1 className="text-xl font-bold text-white">
+                  NFPC Analytics
+                </h1>
+                <p className="text-xs text-gray-400 mt-0.5">Reports Dashboard</p>
               </div>
             )}
             <button
@@ -159,13 +152,11 @@ function HomePageContent() {
                 </button>
               )
             })}
-          </nav>
 
-          {/* AI Assistant - Bottom of Sidebar */}
-          <div className="p-2 border-t border-gray-700">
+            {/* AI Assistant - Under Orders Report */}
             <a
               href="/ask-ai"
-              className="w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all duration-200 font-medium text-gray-300 hover:bg-slate-700/50"
+              className="w-full flex items-center gap-3 px-4 py-3 mb-1 rounded-lg transition-all duration-200 font-medium text-gray-300 hover:bg-slate-700/50"
               title={!sidebarExpanded ? 'AI Assistant' : ''}
             >
               <MessageSquare size={20} className="flex-shrink-0" />
@@ -173,7 +164,7 @@ function HomePageContent() {
                 <span className="text-sm font-semibold">AI Assistant</span>
               )}
             </a>
-          </div>
+          </nav>
 
           {/* Sidebar Footer */}
           <div className="p-4 border-t border-gray-700 bg-[#1e293b]">
@@ -217,18 +208,11 @@ function HomePageContent() {
         >
           {/* Mobile Sidebar Header */}
           <div className="flex items-center justify-between p-5 border-b border-gray-700 bg-[#1e293b]">
-            <div className="flex items-center gap-3">
-              <img
-                src="https://nfpcsfalive.winitsoftware.com/nfpcsfa-92/Img/logoNew1.jpg?v=2"
-                alt="NFPC Logo"
-                className="h-8 w-auto rounded-sm border border-gray-700 bg-white"
-              />
-              <div>
-                <h1 className="text-xl font-bold text-white">
-                  NFPC Analytics
-                </h1>
-                <p className="text-xs text-gray-400 mt-0.5">Reports Dashboard</p>
-              </div>
+            <div>
+              <h1 className="text-xl font-bold text-white">
+                NFPC Analytics
+              </h1>
+              <p className="text-xs text-gray-400 mt-0.5">Reports Dashboard</p>
             </div>
             <button
               onClick={() => setMobileSidebarOpen(false)}
@@ -278,19 +262,17 @@ function HomePageContent() {
                 </button>
               )
             })}
-          </nav>
 
-          {/* AI Assistant - Bottom of Mobile Sidebar */}
-          <div className="p-2 border-t border-gray-700 bg-[#1e293b]">
+            {/* AI Assistant - Under Orders Report */}
             <a
               href="/ask-ai"
-              className="w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all font-medium text-gray-300 hover:bg-slate-700/50"
+              className="w-full flex items-center gap-3 px-4 py-3 mb-1 rounded-lg transition-all font-medium text-gray-300 hover:bg-slate-700/50"
               onClick={() => setMobileSidebarOpen(false)}
             >
               <MessageSquare size={20} className="flex-shrink-0" />
               <span className="text-sm font-semibold">AI Assistant</span>
             </a>
-          </div>
+          </nav>
         </aside>
 
         {/* Main Content */}
