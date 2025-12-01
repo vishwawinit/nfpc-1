@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { query, db } from '@/lib/database'
+import { apiCache } from '@/lib/apiCache'
 
 export const dynamic = 'force-dynamic'
-export const revalidate = 0 // Disable static generation, use Next.js caching headers instead
+export const revalidate = false // Disable automatic revalidation, use manual caching
 
 const SALES_TABLE = 'flat_daily_sales_report'
 
@@ -55,6 +56,12 @@ export async function GET(request: NextRequest) {
     const routeCode = searchParams.get('route') || 'all'
     const salesmanCode = searchParams.get('salesman') || 'all'
 
+    // Check cache first - each unique filter combination gets its own cache entry
+    const cachedData = apiCache.get('/api/returns-wastage', searchParams)
+    if (cachedData) {
+      return NextResponse.json(cachedData)
+    }
+
     const { startDate, endDate } = getDateRangeFromString(dateRange)
     const filterParams = {
       startDate: toLocalDateString(startDate),
@@ -64,7 +71,7 @@ export async function GET(request: NextRequest) {
 
     const whereClause = buildWhereClause(filterParams)
 
-    console.log('🔍 Returns Query - Start:', new Date().toISOString())
+    console.log('🔄 Fetching fresh returns data from database...')
     console.log('📋 Filters:', filterParams)
 
     // DB-OPTIMIZED: Single CTE scan with all derivations
@@ -75,14 +82,17 @@ export async function GET(request: NextRequest) {
           trx_usercode,
           user_description,
           customer_code,
+          customer_description,
           customer_channel_description,
           trx_trxdate::date as trx_date,
           trx_collectiontype,
           ABS(trx_totalamount) as amount,
+          ABS(line_baseprice * line_quantitybu) as line_amount,
           line_itemcode,
           line_itemdescription,
           item_brand_description,
           item_description,
+          item_grouplevel1,
           line_quantitybu,
           route_subareacode,
           trx_routecode
@@ -193,18 +203,23 @@ export async function GET(request: NextRequest) {
          ) x
         ) as brands,
 
-        -- Top 20 Returned Products by Reason (using transaction amounts)
+        -- Top 20 Returned Products by Reason (using line amounts)
         (SELECT json_agg(x ORDER BY return_value DESC)
          FROM (
            SELECT
              line_itemcode as product_code,
              MAX(line_itemdescription) as product_name,
-             SUM(amount) FILTER (WHERE trx_collectiontype = '1') as good_return_value,
-             COUNT(DISTINCT customer_code) FILTER (WHERE trx_collectiontype = '1') as good_return_count,
-             SUM(amount) FILTER (WHERE trx_collectiontype = '0') as bad_return_value,
-             COUNT(DISTINCT customer_code) FILTER (WHERE trx_collectiontype = '0') as bad_return_count,
-             SUM(amount) as return_value,
-             COUNT(DISTINCT customer_code) as return_count
+             MAX(item_brand_description) as brand,
+             MAX(customer_channel_description) as customer_channel,
+             SUM(ABS(line_quantitybu)) as return_qty,
+             SUM(line_amount) FILTER (WHERE trx_collectiontype = '1') as good_return_value,
+             COUNT(*) FILTER (WHERE trx_collectiontype = '1') as good_return_count,
+             SUM(ABS(line_quantitybu)) FILTER (WHERE trx_collectiontype = '1') as good_return_qty,
+             SUM(line_amount) FILTER (WHERE trx_collectiontype = '0') as bad_return_value,
+             COUNT(*) FILTER (WHERE trx_collectiontype = '0') as bad_return_count,
+             SUM(ABS(line_quantitybu)) FILTER (WHERE trx_collectiontype = '0') as bad_return_qty,
+             SUM(line_amount) as return_value,
+             COUNT(*) as return_count
            FROM returns
            WHERE line_itemcode IS NOT NULL AND line_itemcode != ''
            GROUP BY line_itemcode
@@ -213,24 +228,24 @@ export async function GET(request: NextRequest) {
          ) x
         ) as products,
 
-        -- Returns by Category (customer channel)
+        -- Returns by Customer Channel
         (SELECT json_agg(x ORDER BY return_value DESC)
          FROM (
            SELECT
-             customer_channel_description as category_name,
-             SUM(amount) FILTER (WHERE trx_collectiontype = '1') as good_return_value,
+             COALESCE(customer_channel_description, 'Unknown') as channel_name,
+             SUM(ABS(line_quantitybu)) as return_qty,
+             SUM(line_amount) FILTER (WHERE trx_collectiontype = '1') as good_return_value,
              COUNT(*) FILTER (WHERE trx_collectiontype = '1') as good_return_count,
-             SUM(amount) FILTER (WHERE trx_collectiontype = '0') as bad_return_value,
+             SUM(line_amount) FILTER (WHERE trx_collectiontype = '0') as bad_return_value,
              COUNT(*) FILTER (WHERE trx_collectiontype = '0') as bad_return_count,
-             SUM(amount) as return_value,
+             SUM(line_amount) as return_value,
              COUNT(*) as return_count
            FROM returns
-           WHERE customer_channel_description IS NOT NULL AND customer_channel_description != ''
            GROUP BY customer_channel_description
            ORDER BY return_value DESC
            LIMIT 10
          ) x
-        ) as categories,
+        ) as channels,
 
         -- SKU-wise Return Percentage (using item_description)
         (SELECT row_to_json(sku_result) FROM (
@@ -329,7 +344,61 @@ export async function GET(request: NextRequest) {
                WHERE ret_summary.return_value > 0
              ) s
             ) as summary
-        ) sku_result) as sku_returns
+        ) sku_result) as sku_returns,
+
+        -- Good Returns Detail (Sellable)
+        (SELECT json_agg(x ORDER BY trx_date DESC, product_code)
+         FROM (
+           SELECT
+             trx_routecode as trx_code,
+             trx_date,
+             line_itemcode as product_code,
+             line_itemdescription as product_name,
+             item_grouplevel1 as category_name,
+             item_brand_description as brand,
+             customer_code,
+             customer_description as customer_name,
+             customer_channel_description as customer_channel,
+             route_subareacode as area,
+             trx_routecode as route_code,
+             trx_usercode as salesman_code,
+             user_description as salesman_name,
+             ABS(line_quantitybu) as quantity,
+             line_amount as return_value,
+             NULL as return_reason
+           FROM returns
+           WHERE trx_collectiontype = '1'
+           ORDER BY trx_date DESC, line_itemcode
+           LIMIT 100
+         ) x
+        ) as good_returns_detail,
+
+        -- Bad Returns Detail (Wastage)
+        (SELECT json_agg(x ORDER BY trx_date DESC, product_code)
+         FROM (
+           SELECT
+             trx_routecode as trx_code,
+             trx_date,
+             line_itemcode as product_code,
+             line_itemdescription as product_name,
+             item_grouplevel1 as category_name,
+             item_brand_description as brand,
+             customer_code,
+             customer_description as customer_name,
+             customer_channel_description as customer_channel,
+             route_subareacode as area,
+             trx_routecode as route_code,
+             trx_usercode as salesman_code,
+             user_description as salesman_name,
+             ABS(line_quantitybu) as quantity,
+             line_amount as return_value,
+             NULL as return_reason
+           FROM returns
+           WHERE trx_collectiontype = '0'
+           ORDER BY trx_date DESC, line_itemcode
+           LIMIT 100
+         ) x
+        ) as bad_returns_detail
     `
 
     const startTime = Date.now()
@@ -351,13 +420,22 @@ export async function GET(request: NextRequest) {
       const trendData = data.trends || []
       const brandData = data.brands || []
       const productData = data.products || []
-      const categoryData = data.categories || []
+      const channelData = data.channels || []
       const skuReturns = data.sku_returns || { sku_data: [], summary: { total_products_with_returns: 0, avg_return_rate: 0 } }
+      const goodReturnsDetailData = data.good_returns_detail || []
+      const badReturnsDetailData = data.bad_returns_detail || []
 
       console.log('📦 SKU Returns Data:', {
         hasData: !!data.sku_returns,
         skuDataCount: skuReturns.sku_data?.length || 0,
         summary: skuReturns.summary
+      })
+
+      console.log('📋 Good/Bad Returns Detail Debug:', {
+        goodReturnsCount: goodReturnsDetailData.length,
+        badReturnsCount: badReturnsDetailData.length,
+        goodSample: goodReturnsDetailData[0],
+        badSample: badReturnsDetailData[0]
       })
 
       // Extract sales metrics
@@ -402,11 +480,13 @@ export async function GET(request: NextRequest) {
                 flattenedProducts.push({
                   product_code: p.product_code,
                   product_name: p.product_name,
+                  brand: p.brand || 'Unknown',
+                  category_name: p.category_name || 'Others',
                   return_category: 'GOOD',
                   reason: 'Sellable Returns',
                   return_count: parseInt(p.good_return_count || 0),
                   return_value: parseFloat(p.good_return_value || 0),
-                  return_qty: parseInt(p.good_return_count || 0),
+                  return_qty: parseFloat(p.good_return_qty || 0),
                   good_return_value: parseFloat(p.good_return_value || 0),
                   good_return_count: parseInt(p.good_return_count || 0)
                 })
@@ -416,11 +496,13 @@ export async function GET(request: NextRequest) {
                 flattenedProducts.push({
                   product_code: p.product_code,
                   product_name: p.product_name,
+                  brand: p.brand || 'Unknown',
+                  category_name: p.category_name || 'Others',
                   return_category: 'BAD',
                   reason: 'Wastage',
                   return_count: parseInt(p.bad_return_count || 0),
                   return_value: parseFloat(p.bad_return_value || 0),
-                  return_qty: parseInt(p.bad_return_count || 0),
+                  return_qty: parseFloat(p.bad_return_qty || 0),
                   bad_return_value: parseFloat(p.bad_return_value || 0),
                   bad_return_count: parseInt(p.bad_return_count || 0)
                 })
@@ -445,38 +527,24 @@ export async function GET(request: NextRequest) {
             net_order_count: netOrderCount,
             currency_code: 'AED'
           },
-          byProduct: (() => {
-            const flattenedProducts: any[] = []
-            productData.forEach((p: any) => {
-              // Add GOOD return entry if exists
-              if (parseFloat(p.good_return_value || 0) > 0) {
-                flattenedProducts.push({
-                  product_code: p.product_code,
-                  product_name: p.product_name,
-                  return_category: 'GOOD',
-                  reason: 'Sellable Returns',
-                  return_count: parseInt(p.good_return_count || 0),
-                  return_value: parseFloat(p.good_return_value || 0),
-                  return_qty: parseInt(p.good_return_count || 0)
-                })
-              }
-              // Add BAD return entry if exists
-              if (parseFloat(p.bad_return_value || 0) > 0) {
-                flattenedProducts.push({
-                  product_code: p.product_code,
-                  product_name: p.product_name,
-                  return_category: 'BAD',
-                  reason: 'Wastage',
-                  return_count: parseInt(p.bad_return_count || 0),
-                  return_value: parseFloat(p.bad_return_value || 0),
-                  return_qty: parseInt(p.bad_return_count || 0)
-                })
-              }
-            })
-            return flattenedProducts.sort((a, b) => b.return_value - a.return_value).slice(0, 20)
-          })(),
-          byCategory: categoryData.map((c: any) => ({
-            category_name: c.category_name,
+          byProduct: productData.map((p: any) => ({
+            product_code: p.product_code,
+            product_name: p.product_name,
+            brand: p.brand || 'Unknown',
+            customer_channel: p.customer_channel || 'Unknown',
+            return_qty: parseFloat(p.return_qty || 0),
+            return_value: parseFloat(p.return_value || 0),
+            return_count: parseInt(p.return_count || 0),
+            good_return_value: parseFloat(p.good_return_value || 0),
+            good_return_count: parseInt(p.good_return_count || 0),
+            good_return_qty: parseFloat(p.good_return_qty || 0),
+            bad_return_value: parseFloat(p.bad_return_value || 0),
+            bad_return_count: parseInt(p.bad_return_count || 0),
+            bad_return_qty: parseFloat(p.bad_return_qty || 0)
+          })),
+          byChannel: channelData.map((c: any) => ({
+            channel_name: c.channel_name,
+            return_qty: parseFloat(c.return_qty || 0),
             good_return_value: parseFloat(c.good_return_value || 0),
             good_return_count: parseInt(c.good_return_count || 0),
             bad_return_value: parseFloat(c.bad_return_value || 0),
@@ -566,16 +634,60 @@ export async function GET(request: NextRequest) {
             return_percentage: parseFloat(s.return_percentage || 0)
           }))
         },
-        goodReturnsDetail: [],
-        badReturnsDetail: []
+        goodReturnsDetail: {
+          data: goodReturnsDetailData.map((r: any) => ({
+            trx_code: r.trx_code || '',
+            trx_date: r.trx_date,
+            product_code: r.product_code,
+            product_name: r.product_name,
+            category_name: r.category_name || 'Unknown',
+            brand: r.brand || 'Unknown',
+            customer_code: r.customer_code,
+            customer_name: r.customer_name || r.customer_code,
+            customer_channel: r.customer_channel || 'Unknown',
+            area: r.area || 'Unknown',
+            route_code: r.route_code || '',
+            salesman_code: r.salesman_code,
+            salesman_name: r.salesman_name || r.salesman_code,
+            quantity: parseFloat(r.quantity || 0),
+            return_value: parseFloat(r.return_value || 0),
+            return_reason: r.return_reason || null
+          }))
+        },
+        badReturnsDetail: {
+          data: badReturnsDetailData.map((r: any) => ({
+            trx_code: r.trx_code || '',
+            trx_date: r.trx_date,
+            product_code: r.product_code,
+            product_name: r.product_name,
+            category_name: r.category_name || 'Unknown',
+            brand: r.brand || 'Unknown',
+            customer_code: r.customer_code,
+            customer_name: r.customer_name || r.customer_code,
+            customer_channel: r.customer_channel || 'Unknown',
+            area: r.area || 'Unknown',
+            route_code: r.route_code || '',
+            salesman_code: r.salesman_code,
+            salesman_name: r.salesman_name || r.salesman_code,
+            quantity: parseFloat(r.quantity || 0),
+            return_value: parseFloat(r.return_value || 0),
+            return_reason: r.return_reason || null
+          }))
+        }
       }
 
-      const response = NextResponse.json({
+      const responseJson = {
         success: true,
         data: responseData,
         metadata: { dateRange, startDate: filterParams.startDate, endDate: filterParams.endDate, filters: { regionCode, routeCode, salesmanCode } },
-        timestamp: new Date().toISOString()
-      })
+        timestamp: new Date().toISOString(),
+        cached: false
+      }
+
+      // Store in cache
+      apiCache.set('/api/returns-wastage', searchParams, responseJson)
+
+      const response = NextResponse.json(responseJson)
 
       // Cache for 5 minutes - data loads fast now
       response.headers.set('Cache-Control', 'public, s-maxage=300, stale-while-revalidate=600, max-age=180')

@@ -18,6 +18,7 @@ import {
 import * as ExcelJS from 'exceljs'
 import { CustomDatePicker } from '@/components/ui/CustomDatePicker'
 import { CustomerTransactionsModal } from '@/components/CustomerTransactionsModal'
+import { clientCache } from '@/lib/clientCache'
 
 const CHART_COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#06b6d4', '#84cc16']
 
@@ -55,7 +56,7 @@ interface CustomerData {
 }
 
 export function CustomersReportUpdated() {
-  const [selectedPeriod, setSelectedPeriod] = useState('thisMonth')
+  const [selectedPeriod, setSelectedPeriod] = useState('lastMonth')
   const [activeView, setActiveView] = useState<'summary' | 'detailed'>('summary')
   const [loading, setLoading] = useState(false)
   const [data, setData] = useState<any>(null)
@@ -103,8 +104,20 @@ export function CustomersReportUpdated() {
         params.append('range', selectedPeriod)
       }
 
+      // Check client cache first
+      const cached = clientCache.get('/api/customers/filters-v3', params)
+      if (cached) {
+        if (cached.success) {
+          setFilterOptions(cached.filters)
+        }
+        return
+      }
+
       const response = await fetch(`/api/customers/filters-v3?${params.toString()}`)
       const result = await response.json()
+
+      // Store in client cache
+      clientCache.set('/api/customers/filters-v3', result, params, 5 * 60 * 1000)
 
       if (result.success) {
         setFilterOptions(result.filters)
@@ -140,8 +153,27 @@ export function CustomersReportUpdated() {
       params.append('page', currentPage.toString())
       params.append('limit', itemsPerPage.toString())
 
+      // Check client cache first
+      const cached = clientCache.get('/api/customers/analytics-v3', params)
+      if (cached) {
+        if (cached.success) {
+          if (cached.data && (cached.data.metrics || cached.data.topCustomers?.length > 0)) {
+            setData(cached.data)
+          } else {
+            setData(null)
+          }
+        } else {
+          setData(null)
+        }
+        setLoading(false)
+        return
+      }
+
       const response = await fetch(`/api/customers/analytics-v3?${params.toString()}`)
       const result = await response.json()
+
+      // Store in client cache
+      clientCache.set('/api/customers/analytics-v3', result, params, 5 * 60 * 1000)
 
       console.log('📊 Customer Analytics API Response:', {
         success: result.success,

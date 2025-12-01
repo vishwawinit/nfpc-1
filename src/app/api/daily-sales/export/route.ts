@@ -26,11 +26,16 @@ export async function GET(request: NextRequest) {
       chainName: searchParams.get('chainName') || undefined
     }
 
-    // Fetch all data - get ALL transactions without limit
-    const [summary, transactions] = await Promise.all([
+    // Fetch all data - get ALL transactions without limit (set very high limit for export)
+    const exportFilters = { ...filters, limit: 999999, page: 1 }
+
+    const [summary, transactionResult] = await Promise.all([
       getDailySalesSummary(filters),
-      getTransactionDetails(filters) // This will get ALL transactions
+      getTransactionDetails(exportFilters) // Get ALL transactions for export
     ])
+
+    // Extract transactions array from result
+    const transactions = transactionResult.transactions || []
 
     // Create workbook
     const workbook = XLSX.utils.book_new()
@@ -68,6 +73,7 @@ export async function GET(request: NextRequest) {
     reportInfo.push(['Total Discount', summary.totalDiscount?.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) || 0])
     reportInfo.push(['Net Sales', summary.totalNetSales?.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) || 0])
     reportInfo.push(['Average Order Value', summary.avgOrderValue?.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) || 0])
+    reportInfo.push(['Total Transactions Exported', transactions.length.toLocaleString('en-IN')])
 
     const infoSheet = XLSX.utils.aoa_to_sheet(reportInfo)
 

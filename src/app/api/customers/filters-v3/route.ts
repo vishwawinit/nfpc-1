@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { query } from '@/lib/database'
+import { apiCache } from '@/lib/apiCache'
 
 // Force dynamic rendering for routes that use searchParams
 export const dynamic = 'force-dynamic'
@@ -69,6 +70,13 @@ function getDateRange(rangeStr: string) {
 export async function GET(request: NextRequest) {
   try {
     const searchParams = request.nextUrl.searchParams
+
+    // Check cache first
+    const cachedData = apiCache.get('/api/customers/filters-v3', searchParams)
+    if (cachedData) {
+      return NextResponse.json(cachedData)
+    }
+
     const range = searchParams.get('range') || 'thisMonth'
     const startDateParam = searchParams.get('startDate')
     const endDateParam = searchParams.get('endDate')
@@ -104,7 +112,6 @@ export async function GET(request: NextRequest) {
       AND customer_code IS NOT NULL
       GROUP BY customer_code
       ORDER BY count DESC
-      LIMIT 100
     `
 
     // Get distinct regions (route_areacode)
@@ -221,7 +228,7 @@ export async function GET(request: NextRequest) {
       categories: filterData.productCategories.length
     })
 
-    return NextResponse.json({
+    const responseData = {
       success: true,
       filters: filterData,
       dateRange: {
@@ -234,7 +241,12 @@ export async function GET(request: NextRequest) {
         duration: 0,
         reason: range === 'today' ? 'today' : 'custom-range'
       }
-    }, {
+    }
+
+    // Store in cache
+    apiCache.set('/api/customers/filters-v3', responseData, searchParams)
+
+    return NextResponse.json(responseData, {
       headers: {
         'Cache-Control': range === 'today'
           ? 'no-cache, no-store, must-revalidate'

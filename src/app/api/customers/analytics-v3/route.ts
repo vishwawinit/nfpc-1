@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { query } from '@/lib/database'
+import { apiCache } from '@/lib/apiCache'
 
 // Force dynamic rendering for routes that use searchParams
 export const dynamic = 'force-dynamic'
@@ -151,6 +152,13 @@ const buildWhereClause = (params: any) => {
 export async function GET(request: NextRequest) {
   try {
     const searchParams = request.nextUrl.searchParams
+
+    // Check cache first
+    const cachedData = apiCache.get('/api/customers/analytics-v3', searchParams)
+    if (cachedData) {
+      return NextResponse.json(cachedData)
+    }
+
     const dateRange = searchParams.get('range') || 'thisMonth'
     const startDateParam = searchParams.get('startDate')
     const endDateParam = searchParams.get('endDate')
@@ -381,7 +389,7 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    return NextResponse.json({
+    const finalResponse = {
       success: true,
       data: responseData,
       dateRange: {
@@ -395,7 +403,12 @@ export async function GET(request: NextRequest) {
         dateRange,
         hasCustomDates
       }
-    }, {
+    }
+
+    // Store in cache
+    apiCache.set('/api/customers/analytics-v3', finalResponse, searchParams)
+
+    return NextResponse.json(finalResponse, {
       headers: {
         'Cache-Control': `public, s-maxage=${cacheDuration}, stale-while-revalidate=${cacheDuration * 2}`
       }

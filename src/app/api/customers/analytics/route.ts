@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { query } from '@/lib/database'
+import { apiCache } from '@/lib/apiCache'
 
 // Force dynamic rendering
 export const dynamic = 'force-dynamic'
@@ -51,6 +52,13 @@ const getDateRangeFromString = (dateRange: string) => {
 export async function GET(request: NextRequest) {
   try {
     const searchParams = request.nextUrl.searchParams
+
+    // Check cache first
+    const cachedData = apiCache.get('/api/customers/analytics', searchParams)
+    if (cachedData) {
+      return NextResponse.json(cachedData)
+    }
+
     const dateRange = searchParams.get('range') || 'thisMonth'
 
     // Get filter parameters
@@ -63,63 +71,75 @@ export async function GET(request: NextRequest) {
     const startDateStr = startDate.toISOString().split('T')[0]
     const endDateStr = endDate.toISOString().split('T')[0]
 
-    // Build filter conditions using real tblTrxHeader table
+    // Build filter conditions using flat_daily_sales_report table
     const conditions: string[] = [
-      `t."TrxDate" >= $1::timestamp`,
-      `t."TrxDate" < ($2::timestamp + INTERVAL '1 day')`,
-      `t."TrxType" = 1`
+      `trx_trxdate::date >= $1::date`,
+      `trx_trxdate::date <= $2::date`,
+      `trx_trxtype = '1'`
     ]
     const params: any[] = [startDateStr, endDateStr]
     let paramIndex = 3
 
     if (routeCode) {
-      conditions.push(`t."RouteCode" = $${paramIndex}`)
+      conditions.push(`trx_routecode = $${paramIndex}`)
       params.push(routeCode)
       paramIndex++
     }
 
     if (userCode) {
-      conditions.push(`t."UserCode" = $${paramIndex}`)
+      conditions.push(`trx_usercode = $${paramIndex}`)
       params.push(userCode)
       paramIndex++
     }
 
     if (customerCode) {
-      conditions.push(`t."ClientCode" = $${paramIndex}`)
+      conditions.push(`customer_code = $${paramIndex}`)
       params.push(customerCode)
       paramIndex++
     }
 
     if (channelCode) {
-      conditions.push(`c."RegionCode" = $${paramIndex}`)
+      conditions.push(`route_areacode = $${paramIndex}`)
       params.push(channelCode)
       paramIndex++
     }
 
     const whereClause = `WHERE ${conditions.join(' AND ')}`
 
-    // Get customer summary from real tables
+    // Get customer summary from flat_daily_sales_report table
+    // Use same logic as details route to handle duplicate transaction amounts
     const customerSummaryQuery = `
       SELECT
-        t."ClientCode" as customer_code,
-        MAX(c."Description") as customer_name,
-        MAX(c."RegionCode") as region,
-        MAX(c."RouteCode") as route_code,
-        MAX(c."RegionCode") as channel_code,
+        customer_code,
+        MAX(customer_description) as customer_name,
+        MAX(route_areacode) as region,
+        MAX(trx_routecode) as route_code,
+        MAX(customer_channelcode) as channel_code,
         'Active' as status,
-        SUM(t."TotalAmount") as total_sales,
-        COUNT(DISTINCT t."TrxCode") as total_orders,
+        COALESCE(SUM(transaction_total), 0) as total_sales,
+        COUNT(DISTINCT trx_trxcode) as total_orders,
         CASE
-          WHEN COUNT(DISTINCT t."TrxCode") > 0
-          THEN SUM(t."TotalAmount") / COUNT(DISTINCT t."TrxCode")
+          WHEN COUNT(DISTINCT trx_trxcode) > 0
+          THEN COALESCE(SUM(transaction_total), 0) / COUNT(DISTINCT trx_trxcode)
           ELSE 0
         END as avg_order_value,
-        'AED' as currency_code,
-        MAX(DATE(t."TrxDate")) as last_order_date
-      FROM "tblTrxHeader" t
-      LEFT JOIN "tblCustomer" c ON t."ClientCode" = c."Code"
-      ${whereClause}
-      GROUP BY t."ClientCode"
+        MAX(trx_currencycode) as currency_code,
+        MAX(trx_trxdate::date) as last_order_date
+      FROM (
+        SELECT DISTINCT ON (customer_code, trx_trxcode)
+          customer_code,
+          customer_description,
+          route_areacode,
+          trx_routecode,
+          customer_channelcode,
+          trx_currencycode,
+          trx_trxcode,
+          trx_trxdate,
+          trx_totalamount as transaction_total
+        FROM flat_daily_sales_report
+        ${whereClause}
+      ) AS distinct_transactions
+      GROUP BY customer_code
       ORDER BY total_sales DESC
     `
 
@@ -174,7 +194,7 @@ export async function GET(request: NextRequest) {
       contribution: totalSales > 0 ? (data.sales / totalSales * 100) : 0
     })).sort((a, b) => b.sales - a.sales)
 
-    return NextResponse.json({
+    const responseData = {
       success: true,
       data: {
         metrics: {
@@ -187,7 +207,7 @@ export async function GET(request: NextRequest) {
         },
         regionAnalysis,
         channelCodeAnalysis,
-        customers: customers.slice(0, 50).map(c => ({
+        customers: customers.map(c => ({
           customerCode: c.customer_code,
           customerName: c.customer_name,
           region: c.region,
@@ -200,7 +220,12 @@ export async function GET(request: NextRequest) {
       },
       timestamp: new Date().toISOString(),
       source: 'postgresql-real-tables'
-    })
+    }
+
+    // Store in cache
+    apiCache.set('/api/customers/analytics', responseData, searchParams)
+
+    return NextResponse.json(responseData)
 
   } catch (error) {
     console.error('Customer analytics API error:', error)

@@ -43,7 +43,7 @@ export const DashboardFilters: React.FC<DashboardFiltersProps> = ({
   showCityFilter = true,
   hierarchyInfo
 }) => {
-  const [isExpanded, setIsExpanded] = useState(true)
+  const [isExpanded, setIsExpanded] = useState(false)
   const [showCustomDateRange, setShowCustomDateRange] = useState(false)
 
   // Count active filters

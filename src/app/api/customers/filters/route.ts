@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { query } from '@/lib/database'
+import { apiCache } from '@/lib/apiCache'
 
 // Force dynamic rendering
 export const dynamic = 'force-dynamic'
@@ -63,6 +64,13 @@ function getDateRange(range: string) {
 export async function GET(request: NextRequest) {
   try {
     const searchParams = request.nextUrl.searchParams
+
+    // Check cache first
+    const cachedData = apiCache.get('/api/customers/filters', searchParams)
+    if (cachedData) {
+      return NextResponse.json(cachedData)
+    }
+
     const dateRange = searchParams.get('range') || 'lastMonth'
     const regionCode = searchParams.get('region') || searchParams.get('regionCode')
 
@@ -85,61 +93,64 @@ export async function GET(request: NextRequest) {
       ? `AND ${regionConditions.join(' AND ')}`
       : ''
 
-    // Fetch all filter options in parallel using real tables
+    // Fetch all filter options in parallel using flat_daily_sales_report table
     const [regionsResult, salesmenResult, routesResult, channelsResult] = await Promise.all([
-      // Get regions from tblRegion with customer counts
+      // Get regions/areas from transactions
       query(`
         SELECT DISTINCT
-          r."Code" as code,
-          r."Description" as name,
-          COUNT(DISTINCT c."Code") as route_count
-        FROM "tblRegion" r
-        LEFT JOIN "tblCustomer" c ON r."Code" = c."RegionCode" AND c."IsActive" = true
-        WHERE r."IsActive" = true
-        GROUP BY r."Code", r."Description"
-        ORDER BY r."Description"
-      `),
+          route_areacode as code,
+          route_areaname as name,
+          COUNT(DISTINCT trx_routecode) as route_count
+        FROM flat_daily_sales_report
+        WHERE trx_trxtype = '1'
+          AND trx_trxdate::date >= $1::date
+          AND trx_trxdate::date <= $2::date
+          AND route_areacode IS NOT NULL
+        GROUP BY route_areacode, route_areaname
+        ORDER BY route_areaname
+      `, [startDateStr, endDateStr]),
 
       // Get salesmen/users who have transactions in the date range
       query(`
         SELECT DISTINCT
-          u."Code" as code,
-          u."Description" as name
-        FROM "tblUser" u
-        INNER JOIN "tblTrxHeader" t ON u."Code" = t."UserCode"
-        WHERE t."TrxType" = 1
-          AND t."TrxDate" >= $1::timestamp
-          AND t."TrxDate" < ($2::timestamp + INTERVAL '1 day')
-          AND u."IsActive" = true
-        ORDER BY u."Description"
+          trx_usercode as code,
+          trx_username as name
+        FROM flat_daily_sales_report
+        WHERE trx_trxtype = '1'
+          AND trx_trxdate::date >= $1::date
+          AND trx_trxdate::date <= $2::date
+          AND trx_usercode IS NOT NULL
+        ORDER BY trx_username
       `, [startDateStr, endDateStr]),
 
       // Get routes with transactions in the date range
       query(`
         SELECT DISTINCT
-          rt."Code" as code,
-          rt."Name" as name
-        FROM "tblRoute" rt
-        INNER JOIN "tblTrxHeader" t ON rt."Code" = t."RouteCode"
-        WHERE t."TrxType" = 1
-          AND t."TrxDate" >= $1::timestamp
-          AND t."TrxDate" < ($2::timestamp + INTERVAL '1 day')
-          AND rt."IsActive" = true
-        ORDER BY rt."Name"
+          trx_routecode as code,
+          route_name as name
+        FROM flat_daily_sales_report
+        WHERE trx_trxtype = '1'
+          AND trx_trxdate::date >= $1::date
+          AND trx_trxdate::date <= $2::date
+          AND trx_routecode IS NOT NULL
+        ORDER BY route_name
       `, [startDateStr, endDateStr]),
 
-      // Get channels from tblChannel
+      // Get channels from transactions
       query(`
         SELECT DISTINCT
-          ch."Code" as code,
-          ch."Description" as name
-        FROM "tblChannel" ch
-        WHERE ch."IsActive" = true
-        ORDER BY ch."Description"
-      `)
+          customer_channelcode as code,
+          customer_channel_description as name
+        FROM flat_daily_sales_report
+        WHERE trx_trxtype = '1'
+          AND trx_trxdate::date >= $1::date
+          AND trx_trxdate::date <= $2::date
+          AND customer_channelcode IS NOT NULL
+        ORDER BY customer_channel_description
+      `, [startDateStr, endDateStr])
     ])
 
-    return NextResponse.json({
+    const responseData = {
       success: true,
       regions: regionsResult.rows || [],
       salesmen: salesmenResult.rows || [],
@@ -147,7 +158,12 @@ export async function GET(request: NextRequest) {
       channels: channelsResult.rows || [],
       timestamp: new Date().toISOString(),
       source: 'postgresql-real-tables'
-    })
+    }
+
+    // Store in cache
+    apiCache.set('/api/customers/filters', responseData, searchParams)
+
+    return NextResponse.json(responseData)
 
   } catch (error) {
     console.error('Customer filters API error:', error)

@@ -21,28 +21,31 @@ import {
 import { businessColors } from '@/styles/businessColors'
 import { useResponsive } from '@/hooks/useResponsive'
 import ExcelJS from 'exceljs'
+import { clientCache } from '@/lib/clientCache'
 
 export function ReturnsWastage() {
   const [activeTab, setActiveTab] = useState('return-reasons')
-  const [dateRange, setDateRange] = useState('thisMonth')
-  const [selectedRegion, setSelectedRegion] = useState('all')
-  const [selectedSalesman, setSelectedSalesman] = useState('all')
-  const [selectedRoute, setSelectedRoute] = useState('all')
+  const [dateRange, setDateRange] = useState('lastMonth')
+  const [areaCode, setAreaCode] = useState<string | null>(null)
+  const [subAreaCode, setSubAreaCode] = useState<string | null>(null)
+  const [teamLeaderCode, setTeamLeaderCode] = useState<string | null>(null)
+  const [fieldUserRole, setFieldUserRole] = useState<string | null>(null)
+  const [fieldUser, setFieldUser] = useState<string | null>('187219') // Default to a specific user for faster loading
+  const [routeCode, setRouteCode] = useState<string | null>(null)
   const { isMobile} = useResponsive()
 
   // State for data
   const [data, setData] = useState<any>(null)
-  const [filters, setFilters] = useState<any>({ regions: [], salesmen: [], routes: [] })
+  const [filters, setFilters] = useState<any>({
+    areas: [],
+    subAreas: [],
+    fieldUserRoles: [],
+    teamLeaders: [],
+    fieldUsers: [],
+    routes: []
+  })
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
-
-  // Pagination state for SKU Return % table
-  const [skuCurrentPage, setSkuCurrentPage] = useState(1)
-  const skuItemsPerPage = 20
-
-  // Pagination state for Return on Sales by Salesman table
-  const [rosCurrentPage, setRosCurrentPage] = useState(1)
-  const rosItemsPerPage = 20
 
   // Pagination state for Good Returns Detail table
   const [goodReturnsCurrentPage, setGoodReturnsCurrentPage] = useState(1)
@@ -55,58 +58,57 @@ export function ReturnsWastage() {
   // Fetch filter options when date range changes
   useEffect(() => {
     fetchFilters()
-    setSelectedRegion('all')
-    setSelectedSalesman('all')
-    setSelectedRoute('all')
   }, [dateRange])
 
-  // Fetch filter options when region changes (cascading filter)
+  // Fetch filter options when any filter changes (for cascading updates)
   useEffect(() => {
-    if (selectedRegion !== 'all') {
-      fetchFilters()
-      setSelectedRoute('all')
-      setSelectedSalesman('all')
-    }
-  }, [selectedRegion])
-
-  // Fetch filter options when route changes (cascading filter)
-  useEffect(() => {
-    if (selectedRoute !== 'all') {
-      fetchFilters()
-      setSelectedSalesman('all')
-    }
-  }, [selectedRoute])
+    fetchFilters()
+  }, [areaCode, subAreaCode, teamLeaderCode, fieldUserRole])
 
   // Fetch data when filters change
   useEffect(() => {
     fetchData()
-  }, [dateRange, selectedRegion, selectedSalesman, selectedRoute])
+  }, [dateRange, areaCode, subAreaCode, teamLeaderCode, fieldUserRole, fieldUser, routeCode])
 
-  // Reset SKU pagination when data changes
-  useEffect(() => {
-    setSkuCurrentPage(1)
-  }, [data])
-
-  // Reset ROS pagination when data changes
-  useEffect(() => {
-    setRosCurrentPage(1)
-  }, [data])
 
   const fetchFilters = async () => {
     try {
-      const params = new URLSearchParams({
-        range: dateRange,
-        region: selectedRegion,
-        route: selectedRoute
-      })
+      const params = new URLSearchParams({ range: dateRange })
+
+      if (areaCode) params.append('areaCode', areaCode)
+      if (subAreaCode) params.append('subAreaCode', subAreaCode)
+      if (teamLeaderCode) params.append('teamLeaderCode', teamLeaderCode)
+      if (fieldUserRole) params.append('fieldUserRole', fieldUserRole)
+
+      // Check client cache first
+      const cached = clientCache.get('/api/returns-wastage/filters', params)
+      if (cached && cached.success) {
+        setFilters({
+          areas: cached.areas || [],
+          subAreas: cached.subAreas || [],
+          fieldUserRoles: cached.fieldUserRoles || [],
+          teamLeaders: cached.teamLeaders || [],
+          fieldUsers: cached.fieldUsers || [],
+          routes: cached.routes || []
+        })
+        return
+      }
+
       const response = await fetch(`/api/returns-wastage/filters?${params}`, {
         cache: 'default' // Use browser cache
       })
       const result = await response.json()
+
+      // Store in client cache
+      clientCache.set('/api/returns-wastage/filters', result, params, 5 * 60 * 1000)
+
       if (result.success) {
         setFilters({
-          regions: result.regions || [],
-          salesmen: result.salesmen || [],
+          areas: result.areas || [],
+          subAreas: result.subAreas || [],
+          fieldUserRoles: result.fieldUserRoles || [],
+          teamLeaders: result.teamLeaders || [],
+          fieldUsers: result.fieldUsers || [],
           routes: result.routes || []
         })
       }
@@ -118,17 +120,30 @@ export function ReturnsWastage() {
   const fetchData = async () => {
     try {
       setLoading(true)
-      const params = new URLSearchParams({
-        range: dateRange,
-        region: selectedRegion,
-        salesman: selectedSalesman,
-        route: selectedRoute
-      })
+      const params = new URLSearchParams({ range: dateRange })
+
+      if (areaCode) params.append('areaCode', areaCode)
+      if (subAreaCode) params.append('subAreaCode', subAreaCode)
+      if (teamLeaderCode) params.append('teamLeaderCode', teamLeaderCode)
+      if (fieldUserRole) params.append('fieldUserRole', fieldUserRole)
+      if (fieldUser) params.append('fieldUser', fieldUser)
+      if (routeCode) params.append('routeCode', routeCode)
+
+      // Check client cache first
+      const cached = clientCache.get('/api/returns-wastage', params)
+      if (cached && cached.success) {
+        setData(cached.data)
+        setLoading(false)
+        return
+      }
 
       const response = await fetch(`/api/returns-wastage?${params}`, {
         cache: 'default' // Use browser cache
       })
       const result = await response.json()
+
+      // Store in client cache
+      clientCache.set('/api/returns-wastage', result, params, 5 * 60 * 1000)
 
       if (result.success) {
         setData(result.data)
@@ -145,21 +160,22 @@ export function ReturnsWastage() {
     setRefreshing(true)
     // Invalidate cache and refetch
     await fetch('/api/returns-wastage', {
-      method: 'POST',
-      cache: 'no-store' // Don't cache the POST request
+      method: 'POST'
+      // POST requests are not cached by default
     })
     // Force fresh data fetch by adding cache-busting timestamp
     const timestamp = Date.now()
-    const params = new URLSearchParams({
-      range: dateRange,
-      region: selectedRegion,
-      salesman: selectedSalesman,
-      route: selectedRoute,
-      _t: timestamp.toString()
-    })
-    const response = await fetch(`/api/returns-wastage?${params}`, {
-      cache: 'no-store' // Force fresh fetch on manual refresh
-    })
+    const params = new URLSearchParams({ range: dateRange, _t: timestamp.toString() })
+
+    if (areaCode) params.append('areaCode', areaCode)
+    if (subAreaCode) params.append('subAreaCode', subAreaCode)
+    if (teamLeaderCode) params.append('teamLeaderCode', teamLeaderCode)
+    if (fieldUserRole) params.append('fieldUserRole', fieldUserRole)
+    if (fieldUser) params.append('fieldUser', fieldUser)
+    if (routeCode) params.append('routeCode', routeCode)
+
+    const response = await fetch(`/api/returns-wastage?${params}`)
+    // Cache-busting timestamp forces fresh fetch on manual refresh
     const result = await response.json()
     if (result.success) {
       setData(result.data)
@@ -175,20 +191,41 @@ export function ReturnsWastage() {
     }).format(value)
   }
 
-  // Helper to get region full name from code
-  const getRegionName = (code: string): string => {
-    const regionNames: { [key: string]: string } = {
-      'AUH': 'Abu Dhabi',
-      'DXB': 'Dubai',
-      'SHJ': 'Sharjah',
-      'RAK': 'Ras Al Khaimah',
-      'FUJ': 'Fujairah',
-      'AJM': 'Ajman',
-      'AIN': 'Al Ain',
-      'UAQ': 'Umm Al Quwain',
-      'all': 'All Regions'
-    }
-    return regionNames[code] || code
+  // Helper functions to get filter labels for export
+  const getAreaLabel = () => {
+    if (!areaCode) return 'All Areas'
+    const area = filters.areas.find((a: any) => a.value === areaCode)
+    return area?.label || areaCode
+  }
+
+  const getSubAreaLabel = () => {
+    if (!subAreaCode) return 'All Sub Areas'
+    const subArea = filters.subAreas.find((s: any) => s.value === subAreaCode)
+    return subArea?.label || subAreaCode
+  }
+
+  const getTeamLeaderLabel = () => {
+    if (!teamLeaderCode) return 'All Team Leaders'
+    const tl = filters.teamLeaders.find((t: any) => t.value === teamLeaderCode)
+    return tl?.label || teamLeaderCode
+  }
+
+  const getFieldUserRoleLabel = () => {
+    if (!fieldUserRole) return 'All Roles'
+    const role = filters.fieldUserRoles.find((r: any) => r.value === fieldUserRole)
+    return role?.label || fieldUserRole
+  }
+
+  const getFieldUserLabel = () => {
+    if (!fieldUser) return 'All Field Users'
+    const user = filters.fieldUsers.find((u: any) => u.value === fieldUser)
+    return user?.label || fieldUser
+  }
+
+  const getRouteLabel = () => {
+    if (!routeCode) return 'All Routes'
+    const route = filters.routes.find((r: any) => r.value === routeCode)
+    return route?.label || routeCode
   }
 
   // Helper to get currency code from data
@@ -209,6 +246,16 @@ export function ReturnsWastage() {
     return new Intl.NumberFormat('en-US').format(value)
   }
 
+  // Format values with K/M suffix for compact display
+  const formatCompactValue = (value: number) => {
+    if (value >= 1000000) {
+      return `${(value / 1000000).toFixed(1)}M`
+    } else if (value >= 1000) {
+      return `${(value / 1000).toFixed(1)}K`
+    }
+    return value.toFixed(0)
+  }
+
   const exportToExcel = async () => {
     if (!data?.returnReasons?.byProduct) return
 
@@ -223,9 +270,8 @@ export function ReturnsWastage() {
       { width: 15 },  // Product Code
       { width: 35 },  // Product Name
       { width: 25 },  // Reason
-      { width: 12 },  // Count
-      { width: 18 },  // Value
-      { width: 12 }   // Quantity
+      { width: 12 },  // Quantity
+      { width: 18 }   // Value
     ]
 
     let currentRow = 1
@@ -254,11 +300,12 @@ export function ReturnsWastage() {
       'thisYear': 'This Year'
     }
 
-    const selectedSalesmanName = selectedSalesman === 'all' ? 'All Salesmen' :
-      filters.salesmen.find((s: any) => s.code === selectedSalesman)?.name || selectedSalesman
-    const selectedRouteName = selectedRoute === 'all' ? 'All Routes' :
-      filters.routes.find((r: any) => r.code === selectedRoute)?.name || selectedRoute
-    const selectedRegionName = getRegionName(selectedRegion)
+    const selectedAreaName = getAreaLabel()
+    const selectedSubAreaName = getSubAreaLabel()
+    const selectedTeamLeaderName = getTeamLeaderLabel()
+    const selectedFieldUserRoleName = getFieldUserRoleLabel()
+    const selectedFieldUserName = getFieldUserLabel()
+    const selectedRouteName = getRouteLabel()
 
     const infoRow1 = worksheet.addRow([`Date Range: ${dateRangeLabels[dateRange] || dateRange}`, '', '', '', '', '', '', `Generated: ${new Date().toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' })}`])
     infoRow1.font = { size: 10, italic: true }
@@ -267,13 +314,14 @@ export function ReturnsWastage() {
     infoRow1.getCell(8).alignment = { horizontal: 'right' }
     currentRow++
 
-    const infoRow2 = worksheet.addRow([`Region: ${selectedRegionName}`, '', '', '', `Salesman: ${selectedSalesmanName}`])
+    const infoRow2 = worksheet.addRow([`AREA: ${selectedAreaName}`, '', '', '', `Sub AREA: ${selectedSubAreaName}`])
     infoRow2.font = { size: 10, italic: true }
     worksheet.mergeCells(`A${currentRow}:D${currentRow}`)
     worksheet.mergeCells(`E${currentRow}:H${currentRow}`)
     currentRow++
 
-    const infoRow3 = worksheet.addRow([`Route: ${selectedRouteName}`])
+    const infoRow3 = worksheet.addRow([`Team Leader: ${selectedTeamLeaderName}`, '', '', '', `Field User: ${selectedFieldUserName}`])
+    const infoRow4 = worksheet.addRow([`Route: ${selectedRouteName}`])
     infoRow2.font = { size: 10, italic: true }
     worksheet.mergeCells(`A${currentRow}:D${currentRow}`)
     worksheet.mergeCells(`E${currentRow}:H${currentRow}`)
@@ -369,7 +417,7 @@ export function ReturnsWastage() {
     currentRow++
 
     // Add header row
-    const headers = ['Rank', 'Category', 'Product Code', 'Product Name', 'Reason', 'Count', `Value (${currency})`, 'Quantity']
+    const headers = ['Rank', 'Category', 'Product Code', 'Product Name', 'Reason', 'Quantity', `Value (${currency})`]
     const headerRow = worksheet.addRow(headers)
     headerRow.font = { bold: true, color: { argb: 'FFFFFFFF' } }
     headerRow.fill = {
@@ -388,9 +436,8 @@ export function ReturnsWastage() {
         item.product_code,
         item.product_name,
         item.reason,
-        parseInt(item.return_count),
-        parseFloat(item.return_value),
-        parseFloat(item.return_qty)
+        parseFloat(item.return_qty),
+        parseFloat(item.return_value)
       ])
 
       // Style based on category
@@ -472,9 +519,10 @@ export function ReturnsWastage() {
     link.href = url
 
     // Create descriptive filename
-    const salesmanPart = selectedSalesman === 'all' ? 'AllSalesmen' : selectedSalesman
-    const routePart = selectedRoute === 'all' ? 'AllRoutes' : selectedRoute
-    link.download = `Returns_Analysis_${dateRangeLabels[dateRange]?.replace(/\s+/g, '')}_${salesmanPart}_${routePart}_${new Date().toISOString().split('T')[0]}.xlsx`
+    const areaPart = areaCode || 'AllAreas'
+    const fieldUserPart = fieldUser || 'AllFieldUsers'
+    const routePart = routeCode || 'AllRoutes'
+    link.download = `Returns_Analysis_${dateRangeLabels[dateRange]?.replace(/\s+/g, '')}_${areaPart}_${fieldUserPart}_${routePart}_${new Date().toISOString().split('T')[0]}.xlsx`
 
     link.click()
     window.URL.revokeObjectURL(url)
@@ -492,7 +540,7 @@ export function ReturnsWastage() {
 
       console.log('Data available:', {
         byProduct: data.periodReturns.byProduct?.length || 0,
-        byCategory: data.periodReturns.byCategory?.length || 0,
+        byChannel: data.periodReturns.byChannel?.length || 0,
         dailyTrend: data.periodReturns.dailyTrend?.length || 0
       })
 
@@ -527,11 +575,12 @@ export function ReturnsWastage() {
       'lastQuarter': 'Last Quarter', 'thisYear': 'This Year'
     }
 
-    const selectedSalesmanName = selectedSalesman === 'all' ? 'All Salesmen' :
-      filters.salesmen.find((s: any) => s.code === selectedSalesman)?.name || selectedSalesman
-    const selectedRouteName = selectedRoute === 'all' ? 'All Routes' :
-      filters.routes.find((r: any) => r.code === selectedRoute)?.name || selectedRoute
-    const selectedRegionName = getRegionName(selectedRegion)
+    const selectedAreaName = getAreaLabel()
+    const selectedSubAreaName = getSubAreaLabel()
+    const selectedTeamLeaderName = getTeamLeaderLabel()
+    const selectedFieldUserRoleName = getFieldUserRoleLabel()
+    const selectedFieldUserName = getFieldUserLabel()
+    const selectedRouteName = getRouteLabel()
 
     const infoRow1 = summarySheet.addRow([`Date Range: ${dateRangeLabels[dateRange] || dateRange}`, '', '', '', `Generated: ${new Date().toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' })}`])
     infoRow1.font = { size: 10, italic: true }
@@ -540,13 +589,14 @@ export function ReturnsWastage() {
     infoRow1.getCell(5).alignment = { horizontal: 'right' }
     row++
 
-    const infoRow2 = summarySheet.addRow([`Region: ${selectedRegionName}`, '', '', `Salesman: ${selectedSalesmanName}`])
+    const infoRow2 = summarySheet.addRow([`AREA: ${selectedAreaName}`, '', '', `Sub AREA: ${selectedSubAreaName}`])
     infoRow2.font = { size: 10, italic: true }
     summarySheet.mergeCells(`A${row}:C${row}`)
     summarySheet.mergeCells(`D${row}:E${row}`)
     row++
 
-    const infoRow3 = summarySheet.addRow([`Route: ${selectedRouteName}`])
+    const infoRow3 = summarySheet.addRow([`Team Leader: ${selectedTeamLeaderName}`, '', '', `Field User: ${selectedFieldUserName}`])
+    const infoRow4 = summarySheet.addRow([`Route: ${selectedRouteName}`])
     infoRow2.font = { size: 10, italic: true }
     summarySheet.mergeCells(`A${row}:C${row}`)
     summarySheet.mergeCells(`D${row}:E${row}`)
@@ -731,10 +781,10 @@ export function ReturnsWastage() {
 
     console.log('✓ Sheet 2 (Top 20 Products) created with', data.periodReturns.byProduct?.length || 0, 'products')
 
-    // ============ SHEET 3: RETURNS BY CATEGORY ============
-    const categorySheet = workbook.addWorksheet('Returns by Category')
-    categorySheet.columns = [
-      { width: 20 },  // Category
+    // ============ SHEET 3: RETURNS BY CUSTOMER CHANNEL ============
+    const channelSheet = workbook.addWorksheet('Returns by Customer Channel')
+    channelSheet.columns = [
+      { width: 20 },  // Channel
       { width: 12 },  // Qty
       { width: 15 },  // Total Value
       { width: 15 },  // Good Value
@@ -747,31 +797,31 @@ export function ReturnsWastage() {
 
     row = 1
 
-    const catTitleRow = categorySheet.addRow(['Returns by Category - Good vs Bad Breakdown'])
+    const catTitleRow = channelSheet.addRow(['Returns by Customer Channel - Good vs Bad Breakdown'])
     catTitleRow.font = { size: 14, bold: true, color: { argb: 'FF1F2937' } }
     catTitleRow.alignment = { horizontal: 'center' }
-    categorySheet.mergeCells(`A${row}:I${row}`)
+    channelSheet.mergeCells(`A${row}:I${row}`)
     catTitleRow.height = 30
     catTitleRow.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF3F4F6' } }
     row++
 
-    categorySheet.addRow([])
+    channelSheet.addRow([])
     row++
 
-    const catHeaders = ['Category', 'Qty Returned', 'Total Value', 'Good Value', 'Good Txns', 'Bad Value', 'Bad Txns', 'Total Txns', '% of Total']
-    const catHeaderRow = categorySheet.addRow(catHeaders)
+    const catHeaders = ['Customer Channel', 'Qty Returned', 'Total Value', 'Good Value', 'Good Txns', 'Bad Value', 'Bad Txns', 'Total Txns', '% of Total']
+    const catHeaderRow = channelSheet.addRow(catHeaders)
     catHeaderRow.font = { bold: true, color: { argb: 'FFFFFFFF' } }
     catHeaderRow.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF2563EB' } }
     catHeaderRow.alignment = { horizontal: 'center', vertical: 'middle' }
     catHeaderRow.height = 25
     row++
 
-    const totalReturnValue = data.periodReturns.byCategory?.reduce((sum: number, item: any) => sum + parseFloat(item.return_value || 0), 0) || 1
+    const totalReturnValue = data.periodReturns.byChannel?.reduce((sum: number, item: any) => sum + parseFloat(item.return_value || 0), 0) || 1
 
-    data.periodReturns.byCategory?.forEach((item: any) => {
+    data.periodReturns.byChannel?.forEach((item: any) => {
       const percentage = ((parseFloat(item.return_value || 0) / totalReturnValue) * 100).toFixed(1)
-      const dataRow = categorySheet.addRow([
-        item.category_name,
+      const dataRow = channelSheet.addRow([
+        item.channel_name,
         parseInt(item.return_qty),
         parseFloat(item.return_value),
         parseFloat(item.good_return_value || 0),
@@ -813,7 +863,7 @@ export function ReturnsWastage() {
       })
     })
 
-    console.log('✓ Sheet 3 (Returns by Category) created with', data.periodReturns.byCategory?.length || 0, 'categories')
+    console.log('✓ Sheet 3 (Returns by Customer Channel) created with', data.periodReturns.byChannel?.length || 0, 'channels')
 
     // ============ SHEET 4: DAILY TREND ============
     const trendSheet = workbook.addWorksheet('Daily Trend')
@@ -888,10 +938,11 @@ export function ReturnsWastage() {
       const link = document.createElement('a')
       link.href = url
 
-      const salesmanPart = selectedSalesman === 'all' ? 'AllSalesmen' : selectedSalesman
-      const routePart = selectedRoute === 'all' ? 'AllRoutes' : selectedRoute
+      const areaPart = areaCode || 'AllAreas'
+      const fieldUserPart = fieldUser || 'AllFieldUsers'
+      const routePart = routeCode || 'AllRoutes'
       const dateLabel = dateRangeLabels[dateRange]?.replace(/\s+/g, '') || 'Custom'
-      const filename = `Period_Returns_${dateLabel}_${salesmanPart}_${routePart}_${new Date().toISOString().split('T')[0]}.xlsx`
+      const filename = `Period_Returns_${dateLabel}_${areaPart}_${fieldUserPart}_${routePart}_${new Date().toISOString().split('T')[0]}.xlsx`
       link.download = filename
 
       console.log('Downloading file:', filename)
@@ -901,6 +952,173 @@ export function ReturnsWastage() {
 
     } catch (error) {
       console.error('Error exporting Period Returns to Excel:', error)
+      alert(`Failed to export Excel file: ${error instanceof Error ? error.message : 'Unknown error'}`)
+    }
+  }
+
+  const exportTop20ProductsToExcel = async () => {
+    if (!data?.periodReturns?.topProducts) return
+
+    try {
+      const currency = getCurrency()
+      const workbook = new ExcelJS.Workbook()
+      const worksheet = workbook.addWorksheet('Top 20 Returned Products')
+
+      worksheet.columns = [
+        { width: 8 },   // Rank
+        { width: 35 },  // Product
+        { width: 20 },  // Brand
+        { width: 20 },  // Customer Channel
+        { width: 15 },  // Qty
+        { width: 15 },  // Value
+        { width: 12 }   // Transactions
+      ]
+
+      const titleRow = worksheet.addRow(['Top 20 Returned Products'])
+      titleRow.font = { size: 14, bold: true, color: { argb: 'FF1F2937' } }
+      titleRow.alignment = { horizontal: 'center' }
+      worksheet.mergeCells('A1:G1')
+      titleRow.height = 30
+      titleRow.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF3F4F6' } }
+
+      worksheet.addRow([])
+
+      const headers = ['Rank', 'Product', 'Brand', 'Customer Channel', 'Qty Returned', `Value (${currency})`, 'Transactions']
+      const headerRow = worksheet.addRow(headers)
+      headerRow.font = { bold: true, color: { argb: 'FFFFFFFF' } }
+      headerRow.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF2563EB' } }
+      headerRow.alignment = { horizontal: 'center', vertical: 'middle' }
+      headerRow.height = 25
+
+      data.periodReturns.topProducts.slice(0, 20).forEach((item: any, index: number) => {
+        const dataRow = worksheet.addRow([
+          index + 1,
+          item.product_name,
+          item.brand,
+          item.customer_channel || 'Unknown',
+          parseInt(item.return_qty || 0),
+          parseFloat(item.return_value || 0),
+          parseInt(item.return_count || 0)
+        ])
+
+        dataRow.getCell(5).numFmt = '#,##0'
+        dataRow.getCell(6).numFmt = '#,##0.00'
+        dataRow.getCell(7).numFmt = '#,##0'
+        dataRow.alignment = { horizontal: 'left' }
+        dataRow.getCell(1).alignment = { horizontal: 'center' }
+        dataRow.getCell(5).alignment = { horizontal: 'right' }
+        dataRow.getCell(6).alignment = { horizontal: 'right' }
+        dataRow.getCell(7).alignment = { horizontal: 'right' }
+
+        dataRow.eachCell((cell) => {
+          cell.border = {
+            top: { style: 'thin' }, left: { style: 'thin' },
+            bottom: { style: 'thin' }, right: { style: 'thin' }
+          }
+        })
+      })
+
+      const buffer = await workbook.xlsx.writeBuffer()
+      const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' })
+      const url = window.URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = url
+      link.download = `Top_20_Returned_Products_${new Date().toISOString().split('T')[0]}.xlsx`
+      link.click()
+      window.URL.revokeObjectURL(url)
+    } catch (error) {
+      console.error('Error exporting Top 20 Products to Excel:', error)
+      alert(`Failed to export Excel file: ${error instanceof Error ? error.message : 'Unknown error'}`)
+    }
+  }
+
+  const exportChannelAnalysisToExcel = async () => {
+    if (!data?.periodReturns?.byChannel) return
+
+    try {
+      const currency = getCurrency()
+      const workbook = new ExcelJS.Workbook()
+      const worksheet = workbook.addWorksheet('Returns by Customer Channel')
+
+      worksheet.columns = [
+        { width: 25 },  // Channel
+        { width: 15 },  // Qty
+        { width: 15 },  // Total Value
+        { width: 15 },  // Good Value
+        { width: 12 },  // Good Txns
+        { width: 15 },  // Bad Value
+        { width: 12 },  // Bad Txns
+        { width: 12 },  // Total Txns
+        { width: 12 }   // % of Total
+      ]
+
+      const titleRow = worksheet.addRow(['Returns by Customer Channel Analysis'])
+      titleRow.font = { size: 14, bold: true, color: { argb: 'FF1F2937' } }
+      titleRow.alignment = { horizontal: 'center' }
+      worksheet.mergeCells('A1:I1')
+      titleRow.height = 30
+      titleRow.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF3F4F6' } }
+
+      worksheet.addRow([])
+
+      const headers = ['Customer Channel', 'Qty Returned', `Total Value (${currency})`, `Good Value (${currency})`, 'Good Txns', `Bad Value (${currency})`, 'Bad Txns', 'Total Txns', '% of Total']
+      const headerRow = worksheet.addRow(headers)
+      headerRow.font = { bold: true, color: { argb: 'FFFFFFFF' } }
+      headerRow.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF2563EB' } }
+      headerRow.alignment = { horizontal: 'center', vertical: 'middle' }
+      headerRow.height = 25
+
+      const totalReturnValue = data.periodReturns.byChannel?.reduce((sum: number, item: any) => sum + parseFloat(item.return_value || 0), 0) || 1
+
+      data.periodReturns.byChannel?.forEach((item: any) => {
+        const percentage = ((parseFloat(item.return_value || 0) / totalReturnValue) * 100).toFixed(1)
+        const dataRow = worksheet.addRow([
+          item.channel_name,
+          parseInt(item.return_qty || 0),
+          parseFloat(item.return_value || 0),
+          parseFloat(item.good_return_value || 0),
+          parseInt(item.good_return_count || 0),
+          parseFloat(item.bad_return_value || 0),
+          parseInt(item.bad_return_count || 0),
+          parseInt(item.return_count || 0),
+          `${percentage}%`
+        ])
+
+        dataRow.getCell(2).numFmt = '#,##0'
+        dataRow.getCell(3).numFmt = '#,##0.00'
+        dataRow.getCell(4).numFmt = '#,##0.00'
+        dataRow.getCell(5).numFmt = '#,##0'
+        dataRow.getCell(6).numFmt = '#,##0.00'
+        dataRow.getCell(7).numFmt = '#,##0'
+        dataRow.getCell(8).numFmt = '#,##0'
+        dataRow.alignment = { horizontal: 'left' }
+        dataRow.getCell(2).alignment = { horizontal: 'right' }
+        dataRow.getCell(3).alignment = { horizontal: 'right' }
+        dataRow.getCell(4).alignment = { horizontal: 'right' }
+        dataRow.getCell(5).alignment = { horizontal: 'right' }
+        dataRow.getCell(6).alignment = { horizontal: 'right' }
+        dataRow.getCell(7).alignment = { horizontal: 'right' }
+        dataRow.getCell(8).alignment = { horizontal: 'right' }
+        dataRow.getCell(9).alignment = { horizontal: 'center' }
+
+        dataRow.eachCell((cell) => {
+          cell.border = {
+            top: { style: 'thin' }, left: { style: 'thin' },
+            bottom: { style: 'thin' }, right: { style: 'thin' }
+          }
+        })
+      })
+
+      const buffer = await workbook.xlsx.writeBuffer()
+      const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' })
+      const url = window.URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = url
+      link.download = `Returns_by_Customer_Channel_${new Date().toISOString().split('T')[0]}.xlsx`
+      link.click()
+      window.URL.revokeObjectURL(url)
+    } catch (error) {
+      console.error('Error exporting Channel Analysis to Excel:', error)
       alert(`Failed to export Excel file: ${error instanceof Error ? error.message : 'Unknown error'}`)
     }
   }
@@ -962,13 +1180,14 @@ export function ReturnsWastage() {
       infoRow1.getCell(3).alignment = { horizontal: 'right' }
       row++
 
-      const infoRow2 = summarySheet.addRow([`Region: ${selectedRegionName}`, '', `Salesman: ${selectedSalesmanName}`])
+      const infoRow2 = summarySheet.addRow([`AREA: ${selectedAreaName}`, '', `Sub AREA: ${selectedSubAreaName}`])
       infoRow2.font = { size: 10, italic: true }
       summarySheet.mergeCells(`A${row}:B${row}`)
       summarySheet.mergeCells(`C${row}:D${row}`)
       row++
 
-      const infoRow3 = summarySheet.addRow([`Route: ${selectedRouteName}`])
+      const infoRow3 = summarySheet.addRow([`Team Leader: ${selectedTeamLeaderName}`, '', '', `Field User: ${selectedFieldUserName}`])
+    const infoRow4 = summarySheet.addRow([`Route: ${selectedRouteName}`])
       infoRow3.font = { size: 10, italic: true }
       summarySheet.mergeCells(`A${row}:B${row}`)
       summarySheet.mergeCells(`C${row}:D${row}`)
@@ -1093,7 +1312,7 @@ export function ReturnsWastage() {
       weeklyInfoRow1.getCell(6).alignment = { horizontal: 'right' }
       row++
 
-      const weeklyInfoRow2 = weeklySheet.addRow([`Salesman: ${selectedSalesmanName}`, '', '', '', '', `Route: ${selectedRouteName}`])
+      const weeklyInfoRow2 = weeklySheet.addRow([`Field User: ${selectedFieldUserName}`, '', '', '', '', `Route: ${selectedRouteName}`])
       weeklyInfoRow2.font = { size: 10, italic: true }
       weeklySheet.mergeCells(`A${row}:E${row}`)
       weeklySheet.mergeCells(`F${row}:K${row}`)
@@ -1176,10 +1395,11 @@ export function ReturnsWastage() {
       const link = document.createElement('a')
       link.href = url
 
-      const salesmanPart = selectedSalesman === 'all' ? 'AllSalesmen' : selectedSalesman
-      const routePart = selectedRoute === 'all' ? 'AllRoutes' : selectedRoute
+      const areaPart = areaCode || 'AllAreas'
+      const fieldUserPart = fieldUser || 'AllFieldUsers'
+      const routePart = routeCode || 'AllRoutes'
       const dateLabel = dateRangeLabels[dateRange]?.replace(/\s+/g, '') || 'Custom'
-      const filename = `Weekly_History_${dateLabel}_${salesmanPart}_${routePart}_${new Date().toISOString().split('T')[0]}.xlsx`
+      const filename = `Weekly_History_${dateLabel}_${areaPart}_${fieldUserPart}_${routePart}_${new Date().toISOString().split('T')[0]}.xlsx`
       link.download = filename
 
       console.log('Downloading file:', filename)
@@ -1249,13 +1469,14 @@ export function ReturnsWastage() {
       infoRow1.getCell(3).alignment = { horizontal: 'right' }
       row++
 
-      const infoRow2 = summarySheet.addRow([`Region: ${selectedRegionName}`, '', `Salesman: ${selectedSalesmanName}`])
+      const infoRow2 = summarySheet.addRow([`AREA: ${selectedAreaName}`, '', `Sub AREA: ${selectedSubAreaName}`])
       infoRow2.font = { size: 10, italic: true }
       summarySheet.mergeCells(`A${row}:B${row}`)
       summarySheet.mergeCells(`C${row}:D${row}`)
       row++
 
-      const infoRow3 = summarySheet.addRow([`Route: ${selectedRouteName}`])
+      const infoRow3 = summarySheet.addRow([`Team Leader: ${selectedTeamLeaderName}`, '', '', `Field User: ${selectedFieldUserName}`])
+    const infoRow4 = summarySheet.addRow([`Route: ${selectedRouteName}`])
       infoRow3.font = { size: 10, italic: true }
       summarySheet.mergeCells(`A${row}:B${row}`)
       summarySheet.mergeCells(`C${row}:D${row}`)
@@ -1458,10 +1679,11 @@ export function ReturnsWastage() {
       const link = document.createElement('a')
       link.href = url
 
-      const salesmanPart = selectedSalesman === 'all' ? 'AllSalesmen' : selectedSalesman
-      const routePart = selectedRoute === 'all' ? 'AllRoutes' : selectedRoute
+      const areaPart = areaCode || 'AllAreas'
+      const fieldUserPart = fieldUser || 'AllFieldUsers'
+      const routePart = routeCode || 'AllRoutes'
       const dateLabel = dateRangeLabels[dateRange]?.replace(/\s+/g, '') || 'Custom'
-      const filename = `SKU_Return_Percentage_${dateLabel}_${salesmanPart}_${routePart}_${new Date().toISOString().split('T')[0]}.xlsx`
+      const filename = `SKU_Return_Percentage_${dateLabel}_${areaPart}_${fieldUserPart}_${routePart}_${new Date().toISOString().split('T')[0]}.xlsx`
       link.download = filename
 
       console.log('Downloading file:', filename)
@@ -1989,8 +2211,6 @@ export function ReturnsWastage() {
   const tabs = [
     { id: 'return-reasons', label: 'Return Reasons', icon: FileText },
     { id: 'mtd-returns', label: 'Period Returns', icon: PackageX },
-    { id: 'sku-return', label: 'SKU Return %', icon: BarChart3 },
-    { id: 'return-on-sales', label: 'Return on Sales', icon: DollarSign },
     { id: 'good-bad-details', label: 'Good/Bad Returns Details', icon: ListFilter }
   ]
 
@@ -2041,26 +2261,8 @@ export function ReturnsWastage() {
             )}
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-3 md:gap-4">
-            <div>
-              <label className="text-sm font-medium text-slate-700 mb-2 block">
-                Region <span className="text-xs text-slate-500 font-normal">(Available: {filters.regions.length})</span>
-              </label>
-              <Select value={selectedRegion} onValueChange={setSelectedRegion}>
-                <SelectTrigger className="w-full">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent className="max-h-[300px] overflow-y-auto">
-                  <SelectItem value="all">All Regions</SelectItem>
-                  {filters.regions.map((r: any, idx: number) => (
-                    <SelectItem key={`region-${r.code}-${idx}`} value={r.code}>
-                      {getRegionName(r.code)}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-
+          <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-3 md:gap-4">
+            {/* Date Range */}
             <div>
               <label className="text-sm font-medium text-slate-700 mb-2 block">Date Range</label>
               <Select value={dateRange} onValueChange={setDateRange}>
@@ -2070,48 +2272,130 @@ export function ReturnsWastage() {
                 <SelectContent>
                   <SelectItem value="today" disabled>Today</SelectItem>
                   <SelectItem value="yesterday" disabled>Yesterday</SelectItem>
-                  <SelectItem value="thisWeek" disabled>This Week</SelectItem>
+                  <SelectItem value="last7Days">Last 7 Days</SelectItem>
+                  <SelectItem value="last30Days">Last 30 Days</SelectItem>
                   <SelectItem value="thisMonth" disabled>This Month</SelectItem>
                   <SelectItem value="lastMonth">Last Month</SelectItem>
-                  <SelectItem value="thisQuarter" disabled>This Quarter</SelectItem>
-                  <SelectItem value="lastQuarter">Last Quarter</SelectItem>
+                  <SelectItem value="thisQuarter">This Quarter</SelectItem>
                   <SelectItem value="thisYear" disabled>This Year</SelectItem>
                 </SelectContent>
               </Select>
             </div>
 
+            {/* AREA */}
             <div>
               <label className="text-sm font-medium text-slate-700 mb-2 block">
-                Salesman <span className="text-xs text-slate-500 font-normal">(Available: {filters.salesmen.length})</span>
+                AREA <span className="text-xs text-slate-500 font-normal">(Available: {filters.areas.length})</span>
               </label>
-              <Select value={selectedSalesman} onValueChange={setSelectedSalesman}>
+              <Select value={areaCode || 'all'} onValueChange={(value) => setAreaCode(value === 'all' ? null : value)}>
                 <SelectTrigger className="w-full">
-                  <SelectValue />
+                  <SelectValue placeholder="All Areas" />
                 </SelectTrigger>
                 <SelectContent className="max-h-[300px] overflow-y-auto">
-                  <SelectItem value="all">All Salesmen</SelectItem>
-                  {filters.salesmen.map((s: any, idx: number) => (
-                    <SelectItem key={`salesman-${s.code}-${idx}`} value={s.code}>
-                      {s.code} - {s.name}
+                  <SelectItem value="all">All Areas</SelectItem>
+                  {filters.areas.map((a: any, idx: number) => (
+                    <SelectItem key={`area-${a.value}-${idx}`} value={a.value}>
+                      {a.label}
                     </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
             </div>
 
+            {/* Sub AREA */}
+            <div>
+              <label className="text-sm font-medium text-slate-700 mb-2 block">
+                Sub AREA <span className="text-xs text-slate-500 font-normal">(Available: {filters.subAreas.length})</span>
+              </label>
+              <Select value={subAreaCode || 'all'} onValueChange={(value) => setSubAreaCode(value === 'all' ? null : value)}>
+                <SelectTrigger className="w-full">
+                  <SelectValue placeholder="All Sub Areas" />
+                </SelectTrigger>
+                <SelectContent className="max-h-[300px] overflow-y-auto">
+                  <SelectItem value="all">All Sub Areas</SelectItem>
+                  {filters.subAreas.map((s: any, idx: number) => (
+                    <SelectItem key={`subarea-${s.value}-${idx}`} value={s.value}>
+                      {s.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            {/* Team Leader */}
+            <div>
+              <label className="text-sm font-medium text-slate-700 mb-2 block">
+                Team Leader <span className="text-xs text-slate-500 font-normal">(Available: {filters.teamLeaders.length})</span>
+              </label>
+              <Select value={teamLeaderCode || 'all'} onValueChange={(value) => setTeamLeaderCode(value === 'all' ? null : value)}>
+                <SelectTrigger className="w-full">
+                  <SelectValue placeholder="All Team Leaders" />
+                </SelectTrigger>
+                <SelectContent className="max-h-[300px] overflow-y-auto">
+                  <SelectItem value="all">All Team Leaders</SelectItem>
+                  {filters.teamLeaders.map((t: any, idx: number) => (
+                    <SelectItem key={`tl-${t.value}-${idx}`} value={t.value}>
+                      {t.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            {/* Field User Role */}
+            <div>
+              <label className="text-sm font-medium text-slate-700 mb-2 block">
+                Field User Role <span className="text-xs text-slate-500 font-normal">(Available: {filters.fieldUserRoles.length})</span>
+              </label>
+              <Select value={fieldUserRole || 'all'} onValueChange={(value) => setFieldUserRole(value === 'all' ? null : value)}>
+                <SelectTrigger className="w-full">
+                  <SelectValue placeholder="All Roles" />
+                </SelectTrigger>
+                <SelectContent className="max-h-[300px] overflow-y-auto">
+                  <SelectItem value="all">All Roles</SelectItem>
+                  {filters.fieldUserRoles.map((r: any, idx: number) => (
+                    <SelectItem key={`role-${r.value}-${idx}`} value={r.value}>
+                      {r.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            {/* Field User */}
+            <div>
+              <label className="text-sm font-medium text-slate-700 mb-2 block">
+                Field User <span className="text-xs text-slate-500 font-normal">(Available: {filters.fieldUsers.length})</span>
+              </label>
+              <Select value={fieldUser || 'all'} onValueChange={(value) => setFieldUser(value === 'all' ? null : value)}>
+                <SelectTrigger className="w-full">
+                  <SelectValue placeholder="All Field Users" />
+                </SelectTrigger>
+                <SelectContent className="max-h-[300px] overflow-y-auto">
+                  <SelectItem value="all">All Field Users</SelectItem>
+                  {filters.fieldUsers.map((u: any, idx: number) => (
+                    <SelectItem key={`user-${u.value}-${idx}`} value={u.value}>
+                      {u.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            {/* Route */}
             <div>
               <label className="text-sm font-medium text-slate-700 mb-2 block">
                 Route <span className="text-xs text-slate-500 font-normal">(Available: {filters.routes.length})</span>
               </label>
-              <Select value={selectedRoute} onValueChange={setSelectedRoute}>
+              <Select value={routeCode || 'all'} onValueChange={(value) => setRouteCode(value === 'all' ? null : value)}>
                 <SelectTrigger className="w-full">
-                  <SelectValue />
+                  <SelectValue placeholder="All Routes" />
                 </SelectTrigger>
                 <SelectContent className="max-h-[300px] overflow-y-auto">
                   <SelectItem value="all">All Routes</SelectItem>
                   {filters.routes.map((r: any, idx: number) => (
-                    <SelectItem key={`route-${r.code}-${idx}`} value={r.code}>
-                      {r.code === r.name ? r.code : `${r.code} - ${r.name}`}
+                    <SelectItem key={`route-${r.value}-${idx}`} value={r.value}>
+                      {r.label}
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -2193,18 +2477,15 @@ export function ReturnsWastage() {
                          parseFloat(data?.returnReasons?.summary?.total_return_count || 1)) * 100).toFixed(1)}% of all returns
                     </span>
                   </div>
-                  <div className="text-xs text-slate-500">
-                    {formatNumber(data?.returnReasons?.summary?.good_return_qty || 0)} units returned
-                  </div>
                 </CardContent>
               </Card>
 
               {/* Bad Returns Card */}
-              <Card className="border-l-4 border-l-red-500">
+              <Card className="border-l-4 border-l-orange-500">
                 <CardHeader className="pb-3">
                   <CardTitle className="text-sm font-medium text-slate-600 flex items-center justify-between">
                     <div className="flex items-center gap-2">
-                      <Badge className="bg-red-500 text-white">BAD</Badge>
+                      <Badge className="bg-orange-500 text-white">BAD</Badge>
                       Damaged/Expired
                     </div>
                     <Tooltip>
@@ -2223,7 +2504,7 @@ export function ReturnsWastage() {
                             <li>Percentage by VALUE: {formatValue(data?.returnReasons?.summary?.bad_return_value || 0)} ÷ {formatValue(data?.returnReasons?.summary?.total_return_value || 0)} × 100 = {((parseFloat(data?.returnReasons?.summary?.bad_return_value || 0) / parseFloat(data?.returnReasons?.summary?.total_return_value || 1)) * 100).toFixed(1)}%</li>
                           </ul>
                           <p><strong>Measured by:</strong> Transaction COUNT ({((parseFloat(data?.returnReasons?.summary?.bad_return_count || 0) / parseFloat(data?.returnReasons?.summary?.total_return_count || 1)) * 100).toFixed(1)}%), but wastage VALUE is {((parseFloat(data?.returnReasons?.summary?.bad_return_value || 0) / parseFloat(data?.returnReasons?.summary?.total_return_value || 1)) * 100).toFixed(1)}%</p>
-                          <p className="text-red-600">⚠ Direct financial loss - cannot be resold</p>
+                          <p className="text-orange-600">⚠ Direct financial loss - cannot be resold</p>
                         </div>
                       </TooltipContent>
                     </Tooltip>
@@ -2231,7 +2512,7 @@ export function ReturnsWastage() {
                 </CardHeader>
                 <CardContent className="space-y-3">
                   <div>
-                    <div className="text-3xl font-bold text-red-600 max-sm:text-2xl">
+                    <div className="text-3xl font-bold text-orange-600 max-sm:text-2xl">
                       {formatNumber(data?.returnReasons?.summary?.bad_return_count || 0)}
                     </div>
                     <p className="text-xs text-slate-500">return transactions</p>
@@ -2247,9 +2528,6 @@ export function ReturnsWastage() {
                       {((parseFloat(data?.returnReasons?.summary?.bad_return_count || 0) /
                          parseFloat(data?.returnReasons?.summary?.total_return_count || 1)) * 100).toFixed(1)}% of all returns
                     </span>
-                  </div>
-                  <div className="text-xs text-slate-500">
-                    {formatNumber(data?.returnReasons?.summary?.bad_return_qty || 0)} units wasted
                   </div>
                 </CardContent>
               </Card>
@@ -2302,9 +2580,6 @@ export function ReturnsWastage() {
                          parseFloat(data?.returnReasons?.summary?.total_return_value || 1)) * 100).toFixed(1)}%
                     </span>
                   </div>
-                  <div className="text-xs text-slate-500">
-                    {formatNumber(data?.returnReasons?.summary?.total_return_qty || 0)} total units
-                  </div>
                 </CardContent>
               </Card>
             </div>
@@ -2356,7 +2631,7 @@ export function ReturnsWastage() {
                             name: 'Bad Returns',
                             value: parseFloat(data?.returnReasons?.summary?.bad_return_count || 0),
                             amount: parseFloat(data?.returnReasons?.summary?.bad_return_value || 0),
-                            fill: '#ef4444'
+                            fill: '#f97316'
                           }
                         ]}
                         cx="50%"
@@ -2367,7 +2642,7 @@ export function ReturnsWastage() {
                         dataKey="value"
                       >
                         <Cell fill="#10b981" />
-                        <Cell fill="#ef4444" />
+                        <Cell fill="#f97316" />
                       </Pie>
                       <RechartsTooltip
                         formatter={(value: any, name: any, props: any) => {
@@ -2459,7 +2734,7 @@ export function ReturnsWastage() {
                         </linearGradient>
                         <linearGradient id="badReturnGradient" x1="0" y1="0" x2="0" y2="1">
                           <stop offset="0%" stopColor="#f43f5e" stopOpacity={0.9} />
-                          <stop offset="100%" stopColor="#dc2626" stopOpacity={1} />
+                          <stop offset="100%" stopColor="#ea580c" stopOpacity={1} />
                         </linearGradient>
                       </defs>
                       <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" vertical={false} />
@@ -2530,7 +2805,7 @@ export function ReturnsWastage() {
 
                                 <div className="bg-rose-50 rounded-md p-2.5 border border-rose-200">
                                   <div className="flex items-center gap-2 mb-1.5">
-                                    <div className="w-3 h-3 rounded-full bg-rose-500"></div>
+                                    <div className="w-3 h-3 rounded-full bg-orange-500"></div>
                                     <div className="font-semibold text-rose-700 text-sm">Bad Returns</div>
                                   </div>
                                   <div className="ml-5 space-y-0.5 text-xs text-slate-700">
@@ -2570,7 +2845,7 @@ export function ReturnsWastage() {
                               <span className="text-sm font-semibold text-slate-700">Good Returns</span>
                             </div>
                             <div className="flex items-center gap-2">
-                              <div className="w-4 h-4 rounded bg-gradient-to-b from-rose-500 to-red-600"></div>
+                              <div className="w-4 h-4 rounded bg-gradient-to-b from-orange-500 to-orange-600"></div>
                               <span className="text-sm font-semibold text-slate-700">Bad Returns</span>
                             </div>
                           </div>
@@ -2624,9 +2899,8 @@ export function ReturnsWastage() {
                           <TableHead className="min-w-[100px]">Category</TableHead>
                           <TableHead className="min-w-[200px]">Product</TableHead>
                           <TableHead className="min-w-[150px]">Reason</TableHead>
-                          <TableHead className="text-right min-w-[100px]">Count</TableHead>
-                          <TableHead className="text-right min-w-[120px]">Value</TableHead>
                           <TableHead className="text-right min-w-[100px]">Quantity</TableHead>
+                          <TableHead className="text-right min-w-[120px]">Value</TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
@@ -2645,7 +2919,7 @@ export function ReturnsWastage() {
                                 variant="outline"
                                 className={item.return_category === 'GOOD'
                                   ? 'bg-green-50 text-green-700 border-green-200'
-                                  : 'bg-red-50 text-red-700 border-red-200'
+                                  : 'bg-orange-50 text-orange-700 border-orange-200'
                                 }
                               >
                                 {item.return_category}
@@ -2656,11 +2930,10 @@ export function ReturnsWastage() {
                               <div className="text-xs text-slate-500">{item.product_code}</div>
                             </TableCell>
                             <TableCell className="text-sm max-sm:text-xs">{item.reason}</TableCell>
-                            <TableCell className="text-right text-sm max-sm:text-xs">{formatNumber(item.return_count)}</TableCell>
-                            <TableCell className={`text-right font-medium text-sm max-sm:text-xs ${item.return_category === 'GOOD' ? 'text-green-600' : 'text-red-600'}`}>
+                            <TableCell className="text-right text-sm max-sm:text-xs">{formatNumber(item.return_qty)}</TableCell>
+                            <TableCell className={`text-right font-medium text-sm max-sm:text-xs ${item.return_category === 'GOOD' ? 'text-green-600' : 'text-orange-600'}`}>
                               {formatValue(item.return_value)}
                             </TableCell>
-                            <TableCell className="text-right text-sm max-sm:text-xs">{formatNumber(item.return_qty)}</TableCell>
                           </TableRow>
                         ))}
                       </TableBody>
@@ -2785,12 +3058,12 @@ export function ReturnsWastage() {
                       <span className="font-semibold">{formatValue(data?.periodReturns?.summary?.good_return_value || 0)}</span>
                     </div>
                     <div className="flex items-center justify-between text-sm">
-                      <span className="text-red-600">Bad:</span>
+                      <span className="text-orange-600">Bad:</span>
                       <span className="font-semibold">{formatValue(data?.periodReturns?.summary?.bad_return_value || 0)}</span>
                     </div>
                   </div>
                   <div className="text-xs text-slate-500">
-                    {formatNumber(data?.periodReturns?.summary?.return_count || 0)} return orders • {data?.periodReturns?.summary?.return_percentage || 0}% of sales
+                    {formatNumber(data?.periodReturns?.summary?.return_count || 0)} return orders • {(data?.periodReturns?.summary?.return_percentage || 0).toFixed(2)}% of sales
                   </div>
                 </CardContent>
               </Card>
@@ -2837,9 +3110,6 @@ export function ReturnsWastage() {
                     </div>
                     <p className="text-xs text-slate-500">net orders</p>
                   </div>
-                  <div className="text-xs text-slate-500">
-                    {formatNumber(data?.periodReturns?.summary?.products_affected || 0)} products affected by returns
-                  </div>
                 </CardContent>
               </Card>
             </div>
@@ -2865,7 +3135,7 @@ export function ReturnsWastage() {
                         <p><strong>Daily Return Trend Explained:</strong></p>
                         <ul className="list-disc list-inside space-y-1 ml-2">
                           <li><strong className="text-green-600">Good Returns (Green):</strong> Sellable products that can be resold - minimal financial loss</li>
-                          <li><strong className="text-red-600">Bad Returns (Red):</strong> Expired/damaged items - direct wastage and financial loss</li>
+                          <li><strong className="text-orange-600">Bad Returns (Red):</strong> Expired/damaged items - direct wastage and financial loss</li>
                           <li><strong className="text-purple-600">Total Value Line (Purple):</strong> Combined return value in {getCurrency()} for the day</li>
                         </ul>
                         <p><strong>Why Stacked?</strong> Shows proportion of Good vs Bad returns each day, helping identify wastage patterns</p>
@@ -2894,13 +3164,13 @@ export function ReturnsWastage() {
                       content={() => (
                         <div style={{ textAlign: 'center', fontSize: isMobile ? '12px' : '14px', paddingTop: '10px' }}>
                           <span className="text-green-600 font-semibold">●</span> Good Returns |
-                          <span className="text-red-600 font-semibold ml-2">●</span> Bad Returns |
+                          <span className="text-orange-600 font-semibold ml-2">●</span> Bad Returns |
                           <span className="text-purple-600 font-semibold ml-2">—</span> Total Value
                         </div>
                       )}
                     />
                     <Bar yAxisId="left" dataKey="good_return_count" stackId="a" fill="#10b981" radius={[0, 0, 0, 0]} />
-                    <Bar yAxisId="left" dataKey="bad_return_count" stackId="a" fill="#ef4444" radius={[4, 4, 0, 0]} />
+                    <Bar yAxisId="left" dataKey="bad_return_count" stackId="a" fill="#f97316" radius={[4, 4, 0, 0]} />
                     <Line yAxisId="right" type="monotone" dataKey="return_value" stroke="#8b5cf6" strokeWidth={2} />
                   </ComposedChart>
                 </ResponsiveContainer>
@@ -2917,26 +3187,37 @@ export function ReturnsWastage() {
                     <CardTitle className="text-lg font-semibold max-sm:text-base">Top 20 Returned Products</CardTitle>
                     <p className="text-xs text-slate-500 mt-1">Scroll to view all 20 products</p>
                   </div>
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <button className="ml-2 p-1 hover:bg-slate-100 rounded-full transition-colors">
-                        <HelpCircle className="h-4 w-4 text-slate-400" />
-                      </button>
-                    </TooltipTrigger>
-                    <TooltipContent className="max-w-sm">
-                      <div className="space-y-2 text-xs">
-                        <p><strong>Top 20 Returned Products Explained:</strong></p>
-                        <ul className="list-disc list-inside space-y-1 ml-2">
-                          <li><strong>Ranked by Return Value:</strong> Products sorted by total {getCurrency()} value returned (not just quantity)</li>
-                          <li><strong>Brand & Category:</strong> Helps identify patterns - is one brand or category being returned more?</li>
-                          <li><strong>Qty Returned:</strong> Total units returned in the selected period</li>
-                          <li><strong>Transactions:</strong> How many separate return transactions for this product</li>
-                        </ul>
-                        <p><strong>Why this matters:</strong> High-value returns indicate products needing quality review or better customer education</p>
-                        <p><strong>Action:</strong> Focus on top 5 products to reduce wastage</p>
-                      </div>
-                    </TooltipContent>
-                  </Tooltip>
+                  <div className="flex items-center gap-2">
+                    <Button
+                      onClick={exportTop20ProductsToExcel}
+                      variant="outline"
+                      size="sm"
+                      className="gap-2 max-sm:px-2"
+                    >
+                      <Download className="h-4 w-4" />
+                      <span className="max-sm:hidden">Export Excel</span>
+                    </Button>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <button className="ml-2 p-1 hover:bg-slate-100 rounded-full transition-colors">
+                          <HelpCircle className="h-4 w-4 text-slate-400" />
+                        </button>
+                      </TooltipTrigger>
+                      <TooltipContent className="max-w-sm">
+                        <div className="space-y-2 text-xs">
+                          <p><strong>Top 20 Returned Products Explained:</strong></p>
+                          <ul className="list-disc list-inside space-y-1 ml-2">
+                            <li><strong>Ranked by Return Value:</strong> Products sorted by total {getCurrency()} value returned (not just quantity)</li>
+                            <li><strong>Brand & Category:</strong> Helps identify patterns - is one brand or category being returned more?</li>
+                            <li><strong>Qty Returned:</strong> Total units returned in the selected period</li>
+                            <li><strong>Transactions:</strong> How many separate return transactions for this product</li>
+                          </ul>
+                          <p><strong>Why this matters:</strong> High-value returns indicate products needing quality review or better customer education</p>
+                          <p><strong>Action:</strong> Focus on top 5 products to reduce wastage</p>
+                        </div>
+                      </TooltipContent>
+                    </Tooltip>
+                  </div>
                 </div>
               </CardHeader>
               <CardContent>
@@ -2948,11 +3229,11 @@ export function ReturnsWastage() {
                           <TableHead className="min-w-[50px] text-center">Rank</TableHead>
                           <TableHead className="min-w-[200px]">Product</TableHead>
                           <TableHead className="min-w-[120px]">Brand</TableHead>
-                          <TableHead className="min-w-[120px]">Category</TableHead>
+                          <TableHead className="min-w-[120px]">Customer Channel</TableHead>
                           <TableHead className="text-right min-w-[100px]">Qty Returned</TableHead>
                           <TableHead className="text-right min-w-[110px]">Total Return Value</TableHead>
                           <TableHead className="text-right min-w-[110px] text-green-700">Good Returns</TableHead>
-                          <TableHead className="text-right min-w-[110px] text-red-700">Bad Returns</TableHead>
+                          <TableHead className="text-right min-w-[110px] text-orange-700">Bad Returns</TableHead>
                           <TableHead className="text-right min-w-[100px]">Transactions</TableHead>
                         </TableRow>
                       </TableHeader>
@@ -2974,7 +3255,7 @@ export function ReturnsWastage() {
                             <TableCell className="text-sm max-sm:text-xs">
                               <Badge variant="outline" className="text-xs font-normal">{item.brand}</Badge>
                             </TableCell>
-                            <TableCell className="text-sm max-sm:text-xs">{item.category_name}</TableCell>
+                            <TableCell className="text-sm max-sm:text-xs">{item.customer_channel}</TableCell>
                             <TableCell className="text-right text-sm max-sm:text-xs">{formatNumber(item.return_qty)}</TableCell>
                             <TableCell className="text-right font-medium text-blue-600 text-sm max-sm:text-xs">
                               {formatValue(item.return_value)}
@@ -2984,8 +3265,8 @@ export function ReturnsWastage() {
                               <div className="text-xs text-green-500">{formatNumber(item.good_return_count || 0)} txns</div>
                             </TableCell>
                             <TableCell className="text-right text-sm max-sm:text-xs">
-                              <div className="text-red-600 font-medium">{formatValue(item.bad_return_value || 0)}</div>
-                              <div className="text-xs text-red-500">{formatNumber(item.bad_return_count || 0)} txns</div>
+                              <div className="text-orange-600 font-medium">{formatValue(item.bad_return_value || 0)}</div>
+                              <div className="text-xs text-orange-500">{formatNumber(item.bad_return_count || 0)} txns</div>
                             </TableCell>
                             <TableCell className="text-right text-sm max-sm:text-xs">
                               <Badge variant="secondary" className="text-xs">{item.return_count}</Badge>
@@ -3000,11 +3281,22 @@ export function ReturnsWastage() {
             </Card>
             </TooltipProvider>
 
-            {/* Returns by Category */}
+            {/* Returns by Customer Channel */}
             <TooltipProvider>
             <Card>
               <CardHeader>
-                <CardTitle className="text-lg font-semibold max-sm:text-base">Returns by Category Analysis</CardTitle>
+                <div className="flex items-start justify-between">
+                  <CardTitle className="text-lg font-semibold max-sm:text-base">Returns by Customer Channel Analysis</CardTitle>
+                  <Button
+                    onClick={exportChannelAnalysisToExcel}
+                    variant="outline"
+                    size="sm"
+                    className="gap-2 max-sm:px-2"
+                  >
+                    <Download className="h-4 w-4" />
+                    <span className="max-sm:hidden">Export Excel</span>
+                  </Button>
+                </div>
               </CardHeader>
               <CardContent className="space-y-6">
                 {/* Category Summary Cards */}
@@ -3025,7 +3317,7 @@ export function ReturnsWastage() {
                         </Tooltip>
                       </div>
                       <div className="text-2xl font-bold text-blue-900 mt-1">
-                        {data?.periodReturns?.byCategory?.length || 0}
+                        {data?.periodReturns?.byChannel?.length || 0}
                       </div>
                     </CardContent>
                   </Card>
@@ -3045,7 +3337,7 @@ export function ReturnsWastage() {
                         </Tooltip>
                       </div>
                       <div className="text-2xl font-bold text-indigo-900 mt-1">
-                        {formatNumber(data?.periodReturns?.byCategory?.reduce((sum: number, cat: any) => sum + (Number(cat.return_qty) || 0), 0) || 0)}
+                        {formatNumber(data?.periodReturns?.byChannel?.reduce((sum: number, cat: any) => sum + (Number(cat.return_qty) || 0), 0) || 0)}
                       </div>
                     </CardContent>
                   </Card>
@@ -3065,7 +3357,7 @@ export function ReturnsWastage() {
                         </Tooltip>
                       </div>
                       <div className="text-2xl font-bold text-blue-900 mt-1">
-                        {formatValue(data?.periodReturns?.byCategory?.reduce((sum: number, cat: any) => sum + (Number(cat.return_value) || 0), 0) || 0)}
+                        {formatValue(data?.periodReturns?.byChannel?.reduce((sum: number, cat: any) => sum + (Number(cat.return_value) || 0), 0) || 0)}
                       </div>
                     </CardContent>
                   </Card>
@@ -3086,7 +3378,7 @@ export function ReturnsWastage() {
                           <p><strong>Category-wise Distribution Explained:</strong></p>
                           <ul className="list-disc list-inside space-y-1 ml-2">
                             <li><strong className="text-green-600">Green Bars:</strong> Good returns (sellable) - can be resold, minimal loss</li>
-                            <li><strong className="text-red-600">Red Bars:</strong> Bad returns (wastage) - expired/damaged, direct financial loss</li>
+                            <li><strong className="text-orange-600">Red Bars:</strong> Bad returns (wastage) - expired/damaged, direct financial loss</li>
                             <li><strong>Stacked View:</strong> Total height shows combined return value per category</li>
                             <li><strong className="text-blue-600">Blue Line:</strong> Total quantity of units returned</li>
                           </ul>
@@ -3096,10 +3388,10 @@ export function ReturnsWastage() {
                     </Tooltip>
                   </div>
                   <ResponsiveContainer width="100%" height={isMobile ? 300 : 400}>
-                    <ComposedChart data={data?.periodReturns?.byCategory || []}>
+                    <ComposedChart data={data?.periodReturns?.byChannel || []}>
                       <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
                       <XAxis
-                        dataKey="category_name"
+                        dataKey="channel_name"
                         tick={{ fontSize: isMobile ? 9 : 11, fill: '#6b7280' }}
                         angle={-45}
                         textAnchor="end"
@@ -3109,12 +3401,14 @@ export function ReturnsWastage() {
                         yAxisId="left"
                         label={{ value: `${getCurrency()} Value`, angle: -90, position: 'insideLeft', fill: '#6b7280' }}
                         tick={{ fontSize: isMobile ? 10 : 12, fill: '#6b7280' }}
+                        tickFormatter={formatCompactValue}
                       />
                       <YAxis
                         yAxisId="right"
                         orientation="right"
                         label={{ value: 'Units', angle: 90, position: 'insideRight', fill: '#6b7280' }}
                         tick={{ fontSize: isMobile ? 10 : 12, fill: '#6b7280' }}
+                        tickFormatter={formatCompactValue}
                       />
                       <RechartsTooltip
                         contentStyle={{ backgroundColor: '#ffffff', border: '1px solid #e5e7eb' }}
@@ -3138,7 +3432,7 @@ export function ReturnsWastage() {
                         yAxisId="left"
                         dataKey="bad_return_value"
                         stackId="a"
-                        fill="#ef4444"
+                        fill="#f97316"
                         name={`Bad Returns (${getCurrency()})`}
                         radius={[4, 4, 0, 0]}
                       />
@@ -3182,23 +3476,23 @@ export function ReturnsWastage() {
                     <Table>
                       <TableHeader>
                         <TableRow>
-                          <TableHead className="min-w-[150px]">Category</TableHead>
+                          <TableHead className="min-w-[150px]">Customer Channel</TableHead>
                           <TableHead className="text-right min-w-[120px]">Qty Returned (Units)</TableHead>
                           <TableHead className="text-right min-w-[130px]">Total Return Value</TableHead>
                           <TableHead className="text-right min-w-[110px] text-green-700">Good Returns</TableHead>
-                          <TableHead className="text-right min-w-[110px] text-red-700">Bad Returns</TableHead>
+                          <TableHead className="text-right min-w-[110px] text-orange-700">Bad Returns</TableHead>
                           <TableHead className="text-right min-w-[100px]">Transactions</TableHead>
                           <TableHead className="text-right min-w-[100px]">% of Total</TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
-                        {data?.periodReturns?.byCategory?.map((item: any, idx: number) => {
-                          const totalValue = data.periodReturns.byCategory.reduce((sum: number, cat: any) => sum + (Number(cat.return_value) || 0), 0);
+                        {data?.periodReturns?.byChannel?.map((item: any, idx: number) => {
+                          const totalValue = data.periodReturns.byChannel.reduce((sum: number, cat: any) => sum + (Number(cat.return_value) || 0), 0);
                           const percentage = totalValue > 0 ? ((Number(item.return_value) / totalValue) * 100).toFixed(1) : '0.0';
 
                           return (
                             <TableRow key={idx}>
-                              <TableCell className="font-medium text-sm max-sm:text-xs">{item.category_name}</TableCell>
+                              <TableCell className="font-medium text-sm max-sm:text-xs">{item.channel_name}</TableCell>
                               <TableCell className="text-right text-sm max-sm:text-xs">
                                 <Badge variant="secondary" className="text-xs">{formatNumber(item.return_qty)}</Badge>
                               </TableCell>
@@ -3210,8 +3504,8 @@ export function ReturnsWastage() {
                                 <div className="text-xs text-green-500">{formatNumber(item.good_return_count || 0)} txns</div>
                               </TableCell>
                               <TableCell className="text-right text-sm max-sm:text-xs">
-                                <div className="text-red-600 font-medium">{formatValue(item.bad_return_value || 0)}</div>
-                                <div className="text-xs text-red-500">{formatNumber(item.bad_return_count || 0)} txns</div>
+                                <div className="text-orange-600 font-medium">{formatValue(item.bad_return_value || 0)}</div>
+                                <div className="text-xs text-orange-500">{formatNumber(item.bad_return_count || 0)} txns</div>
                               </TableCell>
                               <TableCell className="text-right text-sm max-sm:text-xs">{item.return_count}</TableCell>
                               <TableCell className="text-right text-sm max-sm:text-xs">
@@ -3337,7 +3631,7 @@ export function ReturnsWastage() {
                         <p><strong>Weekly Return Trend Explained:</strong></p>
                         <ul className="list-disc list-inside space-y-1 ml-2">
                           <li><strong className="text-green-600">Good Returns (Green bars):</strong> Sellable products that can be resold</li>
-                          <li><strong className="text-red-600">Bad Returns (Red bars):</strong> Wastage - expired/damaged items</li>
+                          <li><strong className="text-orange-600">Bad Returns (Red bars):</strong> Wastage - expired/damaged items</li>
                           <li><strong className="text-purple-600">Transaction Line (Purple):</strong> Number of return transactions</li>
                         </ul>
                         <p><strong>Why Track Weekly?</strong> Helps identify seasonal patterns, problematic weeks, and trends over time</p>
@@ -3376,7 +3670,7 @@ export function ReturnsWastage() {
                       yAxisId="right"
                       dataKey="bad_return_value"
                       stackId="value"
-                      fill="#ef4444"
+                      fill="#f97316"
                       name={`Bad Returns (${getCurrency()})`}
                       radius={[4, 4, 0, 0]}
                     />
@@ -3436,7 +3730,7 @@ export function ReturnsWastage() {
                         <TableHead className="text-right min-w-[110px]">Qty Returned</TableHead>
                         <TableHead className="text-right min-w-[120px]">Total Return Value</TableHead>
                         <TableHead className="text-right min-w-[110px] text-green-700">Good Returns</TableHead>
-                        <TableHead className="text-right min-w-[110px] text-red-700">Bad Returns</TableHead>
+                        <TableHead className="text-right min-w-[110px] text-orange-700">Bad Returns</TableHead>
                         <TableHead className="text-right min-w-[100px]">Products</TableHead>
                         <TableHead className="text-right min-w-[100px]">Salesmen</TableHead>
                       </TableRow>
@@ -3460,8 +3754,8 @@ export function ReturnsWastage() {
                             <div className="text-xs text-green-500">{formatNumber(item.good_return_count || 0)} txns</div>
                           </TableCell>
                           <TableCell className="text-right text-sm max-sm:text-xs">
-                            <div className="text-red-600 font-medium">{formatValue(item.bad_return_value || 0)}</div>
-                            <div className="text-xs text-red-500">{formatNumber(item.bad_return_count || 0)} txns</div>
+                            <div className="text-orange-600 font-medium">{formatValue(item.bad_return_value || 0)}</div>
+                            <div className="text-xs text-orange-500">{formatNumber(item.bad_return_count || 0)} txns</div>
                           </TableCell>
                           <TableCell className="text-right text-sm max-sm:text-xs">{formatNumber(item.unique_products)}</TableCell>
                           <TableCell className="text-right text-sm max-sm:text-xs">{formatNumber(item.unique_salesmen)}</TableCell>
@@ -3476,675 +3770,6 @@ export function ReturnsWastage() {
           </div>
         </TabsContent>
 
-        {/* SKU-wise Return % */}
-        <TabsContent value="sku-return">
-          <div className="space-y-6 max-md:space-y-4">
-            {/* Export Button Header */}
-            <div className="flex items-center justify-between mb-4">
-              <div>
-                <h3 className="text-lg font-semibold text-slate-800 max-sm:text-base">SKU Return % Analysis</h3>
-                <p className="text-xs text-slate-500 mt-1">Product-level return rates with Good vs Bad breakdown</p>
-              </div>
-              <Button
-                onClick={exportSKUReturnToExcel}
-                size="sm"
-                variant="outline"
-                className="flex items-center gap-2 hover:bg-blue-50 hover:border-blue-500"
-              >
-                <Download className="h-4 w-4" />
-                <span className="max-sm:hidden">Export Excel</span>
-              </Button>
-            </div>
-
-            <TooltipProvider>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              <Card>
-                <CardHeader className="pb-3">
-                  <div className="flex items-center justify-between">
-                    <CardTitle className="text-sm font-medium text-slate-600">Return Rate (Units)</CardTitle>
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <button className="p-1 hover:bg-slate-100 rounded-full transition-colors">
-                          <HelpCircle className="h-4 w-4 text-slate-400" />
-                        </button>
-                      </TooltipTrigger>
-                      <TooltipContent className="max-w-xs">
-                        <p className="text-xs"><strong>Return Rate:</strong> Percentage of sold units that were returned. Lower is better. Good returns are sellable, Bad returns are wastage.</p>
-                      </TooltipContent>
-                    </Tooltip>
-                  </div>
-                </CardHeader>
-                <CardContent>
-                  <div className="text-2xl font-bold text-indigo-600 max-sm:text-xl">
-                    {data?.skuReturnPercentage?.summary?.overall_return_percentage || 0}%
-                  </div>
-                  <p className="text-xs text-slate-500 mt-1">% of units sold returned</p>
-                  <div className="mt-3 pt-3 border-t space-y-1">
-                    <div className="flex justify-between text-xs">
-                      <span className="text-green-600 font-medium">Good (Sellable):</span>
-                      <span className="text-green-700">{formatNumber(data?.skuReturnPercentage?.summary?.good_returned || 0)} units</span>
-                    </div>
-                    <div className="flex justify-between text-xs">
-                      <span className="text-red-600 font-medium">Bad (Wastage):</span>
-                      <span className="text-red-700">{formatNumber(data?.skuReturnPercentage?.summary?.bad_returned || 0)} units</span>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-
-              <Card>
-                <CardHeader className="pb-3">
-                  <div className="flex items-center justify-between">
-                    <CardTitle className="text-sm font-medium text-slate-600">Net Sales Value</CardTitle>
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <button className="p-1 hover:bg-slate-100 rounded-full transition-colors">
-                          <HelpCircle className="h-4 w-4 text-slate-400" />
-                        </button>
-                      </TooltipTrigger>
-                      <TooltipContent className="max-w-xs">
-                        <p className="text-xs"><strong>Net Sales Value:</strong> Total sales minus all returns (both Good and Bad). This is your actual revenue after accounting for returns.</p>
-                      </TooltipContent>
-                    </Tooltip>
-                  </div>
-                </CardHeader>
-                <CardContent>
-                  <div className="text-2xl font-bold text-green-600 max-sm:text-xl">
-                    {formatValue(data?.skuReturnPercentage?.summary?.net_sales_value || 0)}
-                  </div>
-                  <p className="text-xs text-slate-500 mt-1">After returns</p>
-                  <div className="mt-3 pt-3 border-t space-y-1">
-                    <div className="flex justify-between text-xs">
-                      <span className="text-slate-600">Total Sales:</span>
-                      <span className="text-slate-700 font-medium">{formatValue(data?.skuReturnPercentage?.summary?.total_sales_value || 0)}</span>
-                    </div>
-                    <div className="flex justify-between text-xs">
-                      <span className="text-blue-600">Total Returns:</span>
-                      <span className="text-blue-700">-{formatValue(data?.skuReturnPercentage?.summary?.total_return_value || 0)}</span>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-
-              <Card>
-                <CardHeader className="pb-3">
-                  <div className="flex items-center justify-between">
-                    <CardTitle className="text-sm font-medium text-slate-600">Total Returned</CardTitle>
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <button className="p-1 hover:bg-slate-100 rounded-full transition-colors">
-                          <HelpCircle className="h-4 w-4 text-slate-400" />
-                        </button>
-                      </TooltipTrigger>
-                      <TooltipContent className="max-w-xs">
-                        <p className="text-xs"><strong>Total Returned:</strong> Total units and value of all returned products. Good returns can be resold, Bad returns are lost inventory (wastage).</p>
-                      </TooltipContent>
-                    </Tooltip>
-                  </div>
-                </CardHeader>
-                <CardContent>
-                  <div className="space-y-2">
-                    <div>
-                      <div className="text-xl font-bold text-indigo-600 max-sm:text-lg">
-                        {formatNumber(data?.skuReturnPercentage?.summary?.total_returned || 0)} Units
-                      </div>
-                      <p className="text-xs text-slate-500">Products returned</p>
-                    </div>
-                    <div className="border-t pt-2 space-y-2">
-                      <div className="flex items-center justify-between">
-                        <div className="text-xs text-green-600 font-medium">Good Returns:</div>
-                        <div>
-                          <div className="text-sm font-bold text-green-700">{formatValue(data?.skuReturnPercentage?.summary?.good_return_value || 0)}</div>
-                          <div className="text-xs text-green-500 text-right">{formatNumber(data?.skuReturnPercentage?.summary?.good_returned || 0)} units</div>
-                        </div>
-                      </div>
-                      <div className="flex items-center justify-between">
-                        <div className="text-xs text-red-600 font-medium">Bad Returns:</div>
-                        <div>
-                          <div className="text-sm font-bold text-red-700">{formatValue(data?.skuReturnPercentage?.summary?.bad_return_value || 0)}</div>
-                          <div className="text-xs text-red-500 text-right">{formatNumber(data?.skuReturnPercentage?.summary?.bad_returned || 0)} units</div>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-            </div>
-            </TooltipProvider>
-
-            {/* Top 10 Returned Products Chart */}
-            <TooltipProvider>
-            <Card>
-              <CardHeader>
-                <div className="flex items-center gap-2">
-                  <div className="flex-1">
-                    <CardTitle className="text-lg font-semibold max-sm:text-base">Top 10 Most Returned Products</CardTitle>
-                    <p className="text-xs text-slate-500 mt-1">Products with highest return value (Good vs Bad breakdown)</p>
-                  </div>
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <button className="p-1 hover:bg-slate-100 rounded-full transition-colors">
-                        <HelpCircle className="h-4 w-4 text-slate-400" />
-                      </button>
-                    </TooltipTrigger>
-                    <TooltipContent className="max-w-xs">
-                      <p className="text-xs"><strong>Top 10 Returned Products:</strong> Shows the 10 products with highest return value. Green bars show Good returns (sellable), Red bars show Bad returns (wastage). Focus on reducing bad returns.</p>
-                    </TooltipContent>
-                  </Tooltip>
-                </div>
-              </CardHeader>
-              <CardContent>
-                <div className="h-[400px] max-sm:h-[300px]">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <BarChart
-                      data={data?.skuReturnPercentage?.data || []}
-                      layout="vertical"
-                      margin={{ top: 5, right: isMobile ? 10 : 30, left: isMobile ? 10 : 20, bottom: 5 }}
-                    >
-                      <CartesianGrid strokeDasharray="3 3" />
-                      <XAxis type="number" tickFormatter={(value) => formatValue(value)} fontSize={isMobile ? 10 : 12} />
-                      <YAxis
-                        type="category"
-                        dataKey="product_name"
-                        width={isMobile ? 120 : 180}
-                        fontSize={isMobile ? 9 : 11}
-                        tick={(props) => {
-                          const { x, y, payload } = props
-                          const maxLength = isMobile ? 20 : 30
-                          const text = payload.value.length > maxLength
-                            ? payload.value.substring(0, maxLength) + '...'
-                            : payload.value
-                          return (
-                            <g transform={`translate(${x},${y})`}>
-                              <text x={0} y={0} dy={4} textAnchor="end" fill="#666" fontSize={isMobile ? 9 : 11}>
-                                {text}
-                              </text>
-                            </g>
-                          )
-                        }}
-                      />
-                      <RechartsTooltip
-                        formatter={(value: any, name: any) => {
-                          if (name === `Good Return Value (${getCurrency()})`) return [formatValue(value), 'Good Returns (Sellable)']
-                          if (name === `Bad Return Value (${getCurrency()})`) return [formatValue(value), 'Bad Returns (Wastage)']
-                          return [value, name]
-                        }}
-                        contentStyle={{ fontSize: isMobile ? '11px' : '13px' }}
-                      />
-                      <Legend wrapperStyle={{ fontSize: isMobile ? '11px' : '13px' }} />
-                      <Bar dataKey="good_return_value" stackId="returns" fill="#10b981" name={`Good Return Value (${getCurrency()})`} radius={[0, 0, 0, 0]} />
-                      <Bar dataKey="bad_return_value" stackId="returns" fill="#ef4444" name={`Bad Return Value (${getCurrency()})`} radius={[0, 4, 4, 0]} />
-                    </BarChart>
-                  </ResponsiveContainer>
-                </div>
-              </CardContent>
-            </Card>
-            </TooltipProvider>
-
-            <TooltipProvider>
-            <Card>
-              <CardHeader>
-                <div className="flex items-center gap-2">
-                  <div className="flex-1">
-                    <CardTitle className="text-lg font-semibold max-sm:text-base">SKU-wise Return Percentage</CardTitle>
-                    <p className="text-xs text-slate-500 mt-1">
-                      Showing {data?.skuReturnPercentage?.data?.length || 0} products with returns
-                    </p>
-                  </div>
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <button className="p-1 hover:bg-slate-100 rounded-full transition-colors">
-                        <HelpCircle className="h-4 w-4 text-slate-400" />
-                      </button>
-                    </TooltipTrigger>
-                    <TooltipContent className="max-w-sm">
-                      <div className="space-y-2 text-xs">
-                        <p><strong>SKU-wise Return Analysis Explained:</strong></p>
-                        <ul className="list-disc list-inside space-y-1 ml-2">
-                          <li><strong>Sold:</strong> Total units of this product sold</li>
-                          <li><strong>Returned:</strong> Total units returned</li>
-                          <li><strong>Return %:</strong> (Returned / Sold) × 100</li>
-                          <li><strong className="text-green-600">Good Returns:</strong> Sellable units that can be resold</li>
-                          <li><strong className="text-red-600">Bad Returns:</strong> Wastage - damaged/expired units</li>
-                        </ul>
-                        <p><strong>Action:</strong> Focus on products with high return % and high bad returns</p>
-                      </div>
-                    </TooltipContent>
-                  </Tooltip>
-                </div>
-              </CardHeader>
-              <CardContent>
-                <div className="overflow-x-auto -mx-6 md:mx-0">
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead className="min-w-[200px]">Product</TableHead>
-                        <TableHead className="min-w-[150px]">Category</TableHead>
-                        <TableHead className="text-right min-w-[100px]">Returned</TableHead>
-                        <TableHead className="text-right min-w-[100px]">Return %</TableHead>
-                        <TableHead className="text-right min-w-[110px] text-green-700">Good Returns</TableHead>
-                        <TableHead className="text-right min-w-[110px] text-red-700">Bad Returns</TableHead>
-                        <TableHead className="text-right min-w-[120px]">Return Value</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {(() => {
-                        const skuData = data?.skuReturnPercentage?.data || []
-                        const startIndex = (skuCurrentPage - 1) * skuItemsPerPage
-                        const endIndex = startIndex + skuItemsPerPage
-                        const paginatedData = skuData.slice(startIndex, endIndex)
-
-                        return paginatedData.map((item: any, idx: number) => (
-                          <TableRow key={idx}>
-                            <TableCell>
-                              <div className="font-medium text-sm max-sm:text-xs">{item.product_name}</div>
-                              <div className="text-xs text-slate-500">{item.product_code}</div>
-                            </TableCell>
-                            <TableCell className="text-sm max-sm:text-xs">{item.category_name}</TableCell>
-                            <TableCell className="text-right text-sm max-sm:text-xs">{formatNumber(item.total_returned)}</TableCell>
-                            <TableCell className="text-right">
-                              <Badge variant={item.return_percentage > 10 ? 'destructive' : item.return_percentage > 5 ? 'default' : 'secondary'} className="text-xs">
-                                {item.return_percentage}%
-                              </Badge>
-                            </TableCell>
-                            <TableCell className="text-right text-sm max-sm:text-xs">
-                              <div className="text-green-600 font-medium">{formatNumber(item.good_returned || 0)} units</div>
-                              <div className="text-xs text-green-500">{formatValue(item.good_return_value || 0)}</div>
-                            </TableCell>
-                            <TableCell className="text-right text-sm max-sm:text-xs">
-                              <div className="text-red-600 font-medium">{formatNumber(item.bad_returned || 0)} units</div>
-                              <div className="text-xs text-red-500">{formatValue(item.bad_return_value || 0)}</div>
-                            </TableCell>
-                            <TableCell className="text-right font-medium text-blue-600 text-sm max-sm:text-xs">
-                              {formatValue(item.return_value)}
-                            </TableCell>
-                          </TableRow>
-                        ))
-                      })()}
-                    </TableBody>
-                  </Table>
-                </div>
-
-                {/* Pagination Controls */}
-                {data?.skuReturnPercentage?.data && data.skuReturnPercentage.data.length > skuItemsPerPage && (
-                  <div className="flex items-center justify-between mt-4 pt-4 border-t max-sm:flex-col max-sm:gap-3">
-                    <div className="text-sm text-slate-600 max-sm:text-xs max-sm:text-center">
-                      Showing {((skuCurrentPage - 1) * skuItemsPerPage) + 1} to {Math.min(skuCurrentPage * skuItemsPerPage, data.skuReturnPercentage.data.length)} of {data.skuReturnPercentage.data.length} products
-                    </div>
-                    <div className="flex gap-2 max-sm:w-full max-sm:justify-center">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => setSkuCurrentPage(prev => Math.max(1, prev - 1))}
-                        disabled={skuCurrentPage === 1}
-                        className="max-sm:text-xs"
-                      >
-                        Previous
-                      </Button>
-                      <div className="flex items-center px-3 text-sm max-sm:text-xs max-sm:px-2">
-                        Page {skuCurrentPage} of {Math.ceil(data.skuReturnPercentage.data.length / skuItemsPerPage)}
-                      </div>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => setSkuCurrentPage(prev => Math.min(Math.ceil(data.skuReturnPercentage.data.length / skuItemsPerPage), prev + 1))}
-                        disabled={skuCurrentPage >= Math.ceil(data.skuReturnPercentage.data.length / skuItemsPerPage)}
-                        className="max-sm:text-xs"
-                      >
-                        Next
-                      </Button>
-                    </div>
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-            </TooltipProvider>
-          </div>
-        </TabsContent>
-
-        {/* Return on Sales Report */}
-        <TabsContent value="return-on-sales">
-          <div className="space-y-6 max-md:space-y-4">
-            <TooltipProvider>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-              <Card>
-                <CardHeader className="pb-3">
-                  <div className="flex items-center justify-between">
-                    <CardTitle className="text-sm font-medium text-slate-600">Total Sales</CardTitle>
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <button className="p-1 hover:bg-slate-100 rounded-full transition-colors">
-                          <HelpCircle className="h-4 w-4 text-slate-400" />
-                        </button>
-                      </TooltipTrigger>
-                      <TooltipContent className="max-w-xs">
-                        <p className="text-xs"><strong>Total Sales:</strong> Gross sales value before any returns. This is the revenue generated from all sales transactions.</p>
-                      </TooltipContent>
-                    </Tooltip>
-                  </div>
-                </CardHeader>
-                <CardContent>
-                  <div className="text-2xl font-bold text-slate-900 max-sm:text-xl">
-                    {formatValue(data?.returnOnSales?.summary?.total_sales || 0)}
-                  </div>
-                  <p className="text-xs text-slate-500 mt-1">Gross sales</p>
-                </CardContent>
-              </Card>
-
-              <Card>
-                <CardHeader className="pb-3">
-                  <div className="flex items-center justify-between">
-                    <CardTitle className="text-sm font-medium text-slate-600">Total Returns</CardTitle>
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <button className="p-1 hover:bg-slate-100 rounded-full transition-colors">
-                          <HelpCircle className="h-4 w-4 text-slate-400" />
-                        </button>
-                      </TooltipTrigger>
-                      <TooltipContent className="max-w-xs">
-                        <p className="text-xs"><strong>Total Returns:</strong> Total value of all returned products. Includes both Good returns (sellable) and Bad returns (wastage). Lower is better.</p>
-                      </TooltipContent>
-                    </Tooltip>
-                  </div>
-                </CardHeader>
-                <CardContent>
-                  <div className="text-2xl font-bold text-blue-600 max-sm:text-xl">
-                    {formatValue(data?.returnOnSales?.summary?.total_returns || 0)}
-                  </div>
-                  <p className="text-xs text-slate-500 mt-1">Return impact</p>
-                  <div className="mt-3 pt-3 border-t space-y-1">
-                    <div className="flex justify-between text-xs">
-                      <span className="text-green-600 font-medium">Good (Sellable):</span>
-                      <span className="text-green-700">{formatValue(data?.returnOnSales?.summary?.good_return_value || 0)}</span>
-                    </div>
-                    <div className="flex justify-between text-xs">
-                      <span className="text-red-600 font-medium">Bad (Wastage):</span>
-                      <span className="text-red-700">{formatValue(data?.returnOnSales?.summary?.bad_return_value || 0)}</span>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-
-              <Card>
-                <CardHeader className="pb-3">
-                  <div className="flex items-center justify-between">
-                    <CardTitle className="text-sm font-medium text-slate-600">Net Sales</CardTitle>
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <button className="p-1 hover:bg-slate-100 rounded-full transition-colors">
-                          <HelpCircle className="h-4 w-4 text-slate-400" />
-                        </button>
-                      </TooltipTrigger>
-                      <TooltipContent className="max-w-xs">
-                        <p className="text-xs"><strong>Net Sales:</strong> Sales minus returns. This is your actual revenue after accounting for all returns (Good + Bad).</p>
-                      </TooltipContent>
-                    </Tooltip>
-                  </div>
-                </CardHeader>
-                <CardContent>
-                  <div className="text-2xl font-bold text-green-600 max-sm:text-xl">
-                    {formatValue(data?.returnOnSales?.summary?.net_sales || 0)}
-                  </div>
-                  <p className="text-xs text-slate-500 mt-1">After returns</p>
-                  <div className="mt-3 pt-3 border-t space-y-1">
-                    <div className="flex justify-between text-xs">
-                      <span className="text-slate-600">Gross Sales:</span>
-                      <span className="text-slate-700 font-medium">{formatValue(data?.returnOnSales?.summary?.total_sales || 0)}</span>
-                    </div>
-                    <div className="flex justify-between text-xs">
-                      <span className="text-blue-600">Total Returns:</span>
-                      <span className="text-blue-700">-{formatValue(data?.returnOnSales?.summary?.total_returns || 0)}</span>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-
-              <Card>
-                <CardHeader className="pb-3">
-                  <div className="flex items-center justify-between">
-                    <CardTitle className="text-sm font-medium text-slate-600">Return Rate (Value)</CardTitle>
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <button className="p-1 hover:bg-slate-100 rounded-full transition-colors">
-                          <HelpCircle className="h-4 w-4 text-slate-400" />
-                        </button>
-                      </TooltipTrigger>
-                      <TooltipContent className="max-w-xs">
-                        <p className="text-xs"><strong>Return Rate (Value):</strong> Percentage of sales revenue lost to returns. Calculated as (Total Returns / Total Sales) × 100. Lower is better.</p>
-                      </TooltipContent>
-                    </Tooltip>
-                  </div>
-                </CardHeader>
-                <CardContent>
-                  <div className="text-2xl font-bold text-indigo-600 max-sm:text-xl">
-                    {data?.returnOnSales?.summary?.return_percentage || 0}%
-                  </div>
-                  <p className="text-xs text-slate-500 mt-1">% of sales revenue lost</p>
-                  <div className="mt-3 pt-3 border-t space-y-1">
-                    <div className="flex justify-between text-xs">
-                      <span className="text-green-600">Good %:</span>
-                      <span className="text-green-700">{((data?.returnOnSales?.summary?.good_return_value || 0) / (data?.returnOnSales?.summary?.total_sales || 1) * 100).toFixed(1)}%</span>
-                    </div>
-                    <div className="flex justify-between text-xs">
-                      <span className="text-red-600">Bad %:</span>
-                      <span className="text-red-700">{((data?.returnOnSales?.summary?.bad_return_value || 0) / (data?.returnOnSales?.summary?.total_sales || 1) * 100).toFixed(1)}%</span>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-            </div>
-            </TooltipProvider>
-
-            {/* Top Performers Chart */}
-            <TooltipProvider>
-            <Card>
-              <CardHeader>
-                <div className="flex items-center gap-2">
-                  <div className="flex-1">
-                    <CardTitle className="text-lg font-semibold max-sm:text-base">Top 10 Salesmen by Return Impact</CardTitle>
-                    <p className="text-xs text-slate-500 mt-1">Salesmen with highest return value (Good vs Bad breakdown)</p>
-                  </div>
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <button className="p-1 hover:bg-slate-100 rounded-full transition-colors">
-                        <HelpCircle className="h-4 w-4 text-slate-400" />
-                      </button>
-                    </TooltipTrigger>
-                    <TooltipContent className="max-w-xs">
-                      <p className="text-xs"><strong>Top 10 Salesmen by Return Impact:</strong> Shows the 10 salesmen with highest return value. Green bars show Good returns (sellable), Red bars show Bad returns (wastage). Focus on coaching salesmen with high wastage.</p>
-                    </TooltipContent>
-                  </Tooltip>
-                </div>
-              </CardHeader>
-              <CardContent>
-                <div className="h-[400px] max-sm:h-[300px]">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <BarChart
-                      data={data?.returnOnSales?.data || []}
-                      layout="vertical"
-                      margin={{ top: 5, right: isMobile ? 10 : 30, left: isMobile ? 10 : 20, bottom: 5 }}
-                    >
-                      <CartesianGrid strokeDasharray="3 3" />
-                      <XAxis type="number" tickFormatter={(value) => formatValue(value)} fontSize={isMobile ? 10 : 12} />
-                      <YAxis
-                        type="category"
-                        dataKey="salesman_name"
-                        width={isMobile ? 120 : 180}
-                        fontSize={isMobile ? 9 : 11}
-                        tick={(props) => {
-                          const { x, y, payload } = props
-                          const maxLength = isMobile ? 18 : 25
-                          const text = payload.value.length > maxLength
-                            ? payload.value.substring(0, maxLength) + '...'
-                            : payload.value
-                          return (
-                            <g transform={`translate(${x},${y})`}>
-                              <text x={0} y={0} dy={4} textAnchor="end" fill="#666" fontSize={isMobile ? 9 : 11}>
-                                {text}
-                              </text>
-                            </g>
-                          )
-                        }}
-                      />
-                      <RechartsTooltip
-                        formatter={(value: any, name: any) => {
-                          if (name === `Good Returns (${getCurrency()})`) return [formatValue(value), 'Good Returns (Sellable)']
-                          if (name === `Bad Returns (${getCurrency()})`) return [formatValue(value), 'Bad Returns (Wastage)']
-                          return [value, name]
-                        }}
-                        contentStyle={{ fontSize: isMobile ? '11px' : '13px' }}
-                      />
-                      <Legend wrapperStyle={{ fontSize: isMobile ? '11px' : '13px' }} />
-                      <Bar dataKey="good_return_value" stackId="returns" fill="#10b981" name={`Good Returns (${getCurrency()})`} radius={[0, 0, 0, 0]} />
-                      <Bar dataKey="bad_return_value" stackId="returns" fill="#ef4444" name={`Bad Returns (${getCurrency()})`} radius={[0, 4, 4, 0]} />
-                    </BarChart>
-                  </ResponsiveContainer>
-                </div>
-              </CardContent>
-            </Card>
-            </TooltipProvider>
-
-            <TooltipProvider>
-            <Card>
-              <CardHeader>
-                <div className="flex items-center gap-2">
-                  <div className="flex-1">
-                    <CardTitle className="text-lg font-semibold max-sm:text-base">Return on Sales by Salesman</CardTitle>
-                    <p className="text-xs text-slate-500 mt-1">
-                      Showing {data?.returnOnSales?.data?.length || 0} salesmen with returns
-                    </p>
-                  </div>
-                  <Button
-                    onClick={exportReturnOnSalesToExcel}
-                    size="sm"
-                    variant="outline"
-                    className="flex items-center gap-2 hover:bg-blue-50 hover:border-blue-500"
-                  >
-                    <Download className="h-4 w-4" />
-                    <span className="max-sm:hidden">Excel</span>
-                  </Button>
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <button className="p-1 hover:bg-slate-100 rounded-full transition-colors">
-                        <HelpCircle className="h-4 w-4 text-slate-400" />
-                      </button>
-                    </TooltipTrigger>
-                    <TooltipContent className="max-w-sm">
-                      <div className="space-y-2 text-xs">
-                        <p><strong>Return on Sales by Salesman Explained:</strong></p>
-                        <ul className="list-disc list-inside space-y-1 ml-2">
-                          <li><strong>Route:</strong> Route sub-area code assigned to the salesman</li>
-                          <li><strong>Returns:</strong> Total returns processed in the selected period (Good + Bad)</li>
-                          <li><strong className="text-green-600">Good Returns:</strong> Sellable returns that can be resold</li>
-                          <li><strong className="text-red-600">Bad Returns:</strong> Wastage that cannot be resold</li>
-                          <li><strong>Return %:</strong> Percentage of returns relative to sales</li>
-                        </ul>
-                        <p className="mt-2"><strong>Action:</strong> Identify salesmen with high return rates and investigate the cause. Focus on reducing wastage (Bad Returns).</p>
-                      </div>
-                    </TooltipContent>
-                  </Tooltip>
-                </div>
-
-                {/* Info Banner about Returns */}
-                <div className="mt-4 p-3 bg-blue-50 border border-blue-200 rounded-lg">
-                  <div className="flex items-start gap-2">
-                    <AlertCircle className="h-5 w-5 text-blue-600 flex-shrink-0 mt-0.5" />
-                    <div className="flex-1 text-xs">
-                      <p className="font-semibold text-blue-900">Understanding Returns by Salesman</p>
-                      <p className="text-blue-800 mt-1">
-                        This report shows <strong>returns processed in the selected period by each salesman</strong>, broken down by Good Returns (sellable) and Bad Returns (wastage).
-                      </p>
-                      <p className="text-blue-800 mt-1">
-                        Focus on salesmen with high return percentages or high wastage to identify potential issues with product handling, customer education, or other operational concerns.
-                      </p>
-                    </div>
-                  </div>
-                </div>
-              </CardHeader>
-              <CardContent>
-                <div className="overflow-x-auto -mx-6 md:mx-0">
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead className="min-w-[180px]">Salesman</TableHead>
-                        <TableHead className="min-w-[100px]">Route</TableHead>
-                        <TableHead className="text-right min-w-[120px]">Returns</TableHead>
-                        <TableHead className="text-right min-w-[110px] text-green-700">Good Returns</TableHead>
-                        <TableHead className="text-right min-w-[110px] text-red-700">Bad Returns</TableHead>
-                        <TableHead className="text-right min-w-[100px]">Return %</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {(() => {
-                        const rosData = data?.returnOnSales?.data || []
-                        const startIndex = (rosCurrentPage - 1) * rosItemsPerPage
-                        const endIndex = startIndex + rosItemsPerPage
-                        const paginatedData = rosData.slice(startIndex, endIndex)
-
-                        return paginatedData.map((item: any, idx: number) => (
-                          <TableRow key={idx}>
-                            <TableCell>
-                              <div className="font-medium text-sm max-sm:text-xs">{item.salesman_name}</div>
-                              <div className="text-xs text-slate-500">{item.salesman_code}</div>
-                            </TableCell>
-                            <TableCell className="text-sm max-sm:text-xs">{item.route_code}</TableCell>
-                            <TableCell className="text-right text-blue-600 text-sm max-sm:text-xs">{formatValue(item.total_returns)}</TableCell>
-                            <TableCell className="text-right text-sm max-sm:text-xs">
-                              <div className="text-green-600 font-medium">{formatValue(item.good_return_value || 0)}</div>
-                              <div className="text-xs text-green-500">{formatNumber(item.good_return_count || 0)} txns</div>
-                            </TableCell>
-                            <TableCell className="text-right text-sm max-sm:text-xs">
-                              <div className="text-red-600 font-medium">{formatValue(item.bad_return_value || 0)}</div>
-                              <div className="text-xs text-red-500">{formatNumber(item.bad_return_count || 0)} txns</div>
-                            </TableCell>
-                            <TableCell className="text-right">
-                              <Badge variant={item.return_percentage > 10 ? 'destructive' : item.return_percentage > 5 ? 'default' : 'secondary'} className="text-xs">
-                                {item.return_percentage}%
-                              </Badge>
-                            </TableCell>
-                          </TableRow>
-                        ))
-                      })()}
-                    </TableBody>
-                  </Table>
-                </div>
-
-                {/* Pagination Controls */}
-                {data?.returnOnSales?.data && data.returnOnSales.data.length > rosItemsPerPage && (
-                  <div className="flex items-center justify-between mt-4 pt-4 border-t max-sm:flex-col max-sm:gap-3">
-                    <div className="text-sm text-slate-600 max-sm:text-xs max-sm:text-center">
-                      Showing {((rosCurrentPage - 1) * rosItemsPerPage) + 1} to {Math.min(rosCurrentPage * rosItemsPerPage, data.returnOnSales.data.length)} of {data.returnOnSales.data.length} salesmen
-                    </div>
-                    <div className="flex gap-2 max-sm:w-full max-sm:justify-center">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => setRosCurrentPage(prev => Math.max(1, prev - 1))}
-                        disabled={rosCurrentPage === 1}
-                        className="max-sm:text-xs"
-                      >
-                        Previous
-                      </Button>
-                      <div className="flex items-center px-3 text-sm max-sm:text-xs max-sm:px-2">
-                        Page {rosCurrentPage} of {Math.ceil(data.returnOnSales.data.length / rosItemsPerPage)}
-                      </div>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => setRosCurrentPage(prev => Math.min(Math.ceil(data.returnOnSales.data.length / rosItemsPerPage), prev + 1))}
-                        disabled={rosCurrentPage >= Math.ceil(data.returnOnSales.data.length / rosItemsPerPage)}
-                        className="max-sm:text-xs"
-                      >
-                        Next
-                      </Button>
-                    </div>
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-            </TooltipProvider>
-          </div>
-        </TabsContent>
 
         {/* Good/Bad Returns Details - NEW TAB */}
         <TabsContent value="good-bad-details">
@@ -4155,7 +3780,7 @@ export function ReturnsWastage() {
               <p className="text-sm text-slate-600">
                 <span className="font-semibold text-green-600">Good Returns (Sellable):</span> Products that can be resold or restocked.
                 <span className="mx-2">|</span>
-                <span className="font-semibold text-red-600">Bad Returns (Wastage):</span> Damaged or expired products that cannot be resold.
+                <span className="font-semibold text-orange-600">Bad Returns (Wastage):</span> Damaged or expired products that cannot be resold.
               </p>
             </div>
 
@@ -4202,7 +3827,6 @@ export function ReturnsWastage() {
                               <TableHead className="text-xs whitespace-nowrap">Salesman</TableHead>
                               <TableHead className="text-xs whitespace-nowrap">Customer</TableHead>
                               <TableHead className="text-xs whitespace-nowrap">Product</TableHead>
-                              <TableHead className="text-xs whitespace-nowrap">Reason</TableHead>
                               <TableHead className="text-xs text-right whitespace-nowrap">Qty</TableHead>
                               <TableHead className="text-xs text-right whitespace-nowrap">Value</TableHead>
                             </TableRow>
@@ -4231,11 +3855,6 @@ export function ReturnsWastage() {
                                   <TableCell className="text-xs">
                                     <div className="max-w-[150px] truncate" title={row.product_name || '-'}>
                                       {row.product_name || '-'}
-                                    </div>
-                                  </TableCell>
-                                  <TableCell className="text-xs">
-                                    <div className="max-w-[100px] truncate" title={row.return_reason || '-'}>
-                                      {row.return_reason || '-'}
                                     </div>
                                   </TableCell>
                                   <TableCell className="text-xs text-right">
@@ -4284,12 +3903,12 @@ export function ReturnsWastage() {
               </Card>
 
               {/* Bad Returns Table */}
-              <Card className="border-l-4 border-l-red-500">
+              <Card className="border-l-4 border-l-orange-500">
                 <CardHeader className="pb-3">
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
-                      <CardTitle className="text-lg font-bold text-red-700">Bad Returns (Wastage)</CardTitle>
-                      <Badge variant="secondary" className="bg-red-100 text-red-700">
+                      <CardTitle className="text-lg font-bold text-orange-700">Bad Returns (Wastage)</CardTitle>
+                      <Badge variant="secondary" className="bg-orange-100 text-orange-700">
                         {data?.badReturnsDetail?.data?.length || 0} transactions
                       </Badge>
                     </div>
@@ -4307,7 +3926,7 @@ export function ReturnsWastage() {
                 <CardContent>
                   {loading ? (
                     <div className="flex items-center justify-center py-8">
-                      <Loader2 className="w-6 h-6 animate-spin text-red-500" />
+                      <Loader2 className="w-6 h-6 animate-spin text-orange-500" />
                     </div>
                   ) : !data?.badReturnsDetail?.data || data.badReturnsDetail.data.length === 0 ? (
                     <div className="text-center py-8 text-slate-500">
@@ -4324,7 +3943,6 @@ export function ReturnsWastage() {
                               <TableHead className="text-xs whitespace-nowrap">Salesman</TableHead>
                               <TableHead className="text-xs whitespace-nowrap">Customer</TableHead>
                               <TableHead className="text-xs whitespace-nowrap">Product</TableHead>
-                              <TableHead className="text-xs whitespace-nowrap">Reason</TableHead>
                               <TableHead className="text-xs text-right whitespace-nowrap">Qty</TableHead>
                               <TableHead className="text-xs text-right whitespace-nowrap">Value</TableHead>
                             </TableRow>
@@ -4355,15 +3973,10 @@ export function ReturnsWastage() {
                                       {row.product_name || '-'}
                                     </div>
                                   </TableCell>
-                                  <TableCell className="text-xs">
-                                    <div className="max-w-[100px] truncate" title={row.return_reason || '-'}>
-                                      {row.return_reason || '-'}
-                                    </div>
-                                  </TableCell>
                                   <TableCell className="text-xs text-right">
                                     {formatNumber(row.quantity || 0)}
                                   </TableCell>
-                                  <TableCell className="text-xs text-right font-semibold text-red-600">
+                                  <TableCell className="text-xs text-right font-semibold text-orange-600">
                                     {formatValue(row.return_value || 0)}
                                   </TableCell>
                                 </TableRow>

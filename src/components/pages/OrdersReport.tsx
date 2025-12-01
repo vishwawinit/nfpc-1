@@ -17,6 +17,7 @@ import {
 } from 'lucide-react'
 import * as ExcelJS from 'exceljs'
 import { CustomDatePicker } from '@/components/ui/CustomDatePicker'
+import { clientCache } from '@/lib/clientCache'
 
 const CHART_COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#06b6d4', '#84cc16']
 
@@ -37,7 +38,7 @@ const truncateName = (name: string, maxLength: number = 15) => {
 }
 
 export function OrdersReport() {
-  const [selectedPeriod, setSelectedPeriod] = useState('thisMonth')
+  const [selectedPeriod, setSelectedPeriod] = useState('lastMonth')
   const [activeView, setActiveView] = useState<'summary' | 'detailed'>('summary')
   const [loading, setLoading] = useState(false)
   const [data, setData] = useState<any>(null)
@@ -88,10 +89,22 @@ export function OrdersReport() {
       if (fieldUserFilter) params.append('fieldUser', fieldUserFilter)
       if (channelFilter) params.append('channel', channelFilter)
 
+      // Check client cache first
+      const cached = clientCache.get('/api/orders/filters', params)
+      if (cached) {
+        if (cached.success) {
+          setFilterOptions(cached.filters)
+        }
+        return
+      }
+
       let url = `/api/orders/filters?${params.toString()}`
 
       const response = await fetch(url)
       const result = await response.json()
+
+      // Store in client cache
+      clientCache.set('/api/orders/filters', result, params, 5 * 60 * 1000)
 
       if (result.success) {
         setFilterOptions(result.filters)
@@ -108,7 +121,7 @@ export function OrdersReport() {
         page: currentPage.toString(),
         limit: itemsPerPage.toString()
       })
-      
+
       // Handle date range
       if (dateRangeType === 'custom') {
         params.append('startDate', customStartDate)
@@ -116,7 +129,7 @@ export function OrdersReport() {
       } else {
         params.append('range', selectedPeriod)
       }
-      
+
       if (areaFilter) params.append('area', areaFilter)
       if (subAreaFilter) params.append('subArea', subAreaFilter)
       if (teamLeaderFilter) params.append('teamLeader', teamLeaderFilter)
@@ -126,10 +139,26 @@ export function OrdersReport() {
       if (customerFilter) params.append('customer', customerFilter)
       if (categoryFilter) params.append('category', categoryFilter)
       if (searchQuery) params.append('search', searchQuery)
-      
+
+      // Check client cache first
+      const cached = clientCache.get('/api/orders', params)
+      if (cached) {
+        if (cached.success) {
+          console.log('Orders data received from cache:', cached.data)
+          setData(cached.data)
+        } else {
+          console.error('Error loading data (cached):', cached.error)
+        }
+        setLoading(false)
+        return
+      }
+
       const response = await fetch(`/api/orders?${params.toString()}`)
       const result = await response.json()
-      
+
+      // Store in client cache
+      clientCache.set('/api/orders', result, params, 5 * 60 * 1000)
+
       if (result.success) {
         console.log('Orders data received:', result.data)
         console.log('Category-wise chart data:', result.data?.charts?.categoryWise)
@@ -148,8 +177,29 @@ export function OrdersReport() {
     setLoadingDetails(true)
     setSelectedOrder(orderCode)
     try {
+      // Create a URLSearchParams for cache (even though no params, for consistency)
+      const params = new URLSearchParams()
+      const cachePath = `/api/orders/details/${orderCode}`
+
+      // Check client cache first
+      const cached = clientCache.get(cachePath, params)
+      if (cached) {
+        if (cached.success) {
+          setOrderDetails(cached.data)
+        } else {
+          console.error('Error loading order details (cached):', cached.error)
+          alert(cached.error || 'Failed to load order details')
+        }
+        setLoadingDetails(false)
+        return
+      }
+
       const response = await fetch(`/api/orders/details/${orderCode}`)
       const result = await response.json()
+
+      // Store in client cache
+      clientCache.set(cachePath, result, params, 5 * 60 * 1000)
+
       if (result.success) {
         setOrderDetails(result.data)
       } else {

@@ -14,6 +14,7 @@ import { Package, TrendingUp, TrendingDown, DollarSign, RefreshCw, ChevronDown, 
 import ExcelJS from 'exceljs'
 import { formatCurrency, formatNumber, formatPercentage } from '@/lib/utils'
 import { CustomDatePicker } from '@/components/ui/CustomDatePicker'
+import { clientCache } from '@/lib/clientCache'
 
 // Chart colors
 const CHART_COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#A28DFF', '#FF6666', '#8DD1E1', '#83A6ED', '#8884D8', '#82CA9D']
@@ -143,10 +144,28 @@ export function ProductsReport() {
         ...(appliedFilters.searchTerm !== 'all' && { productCode: appliedFilters.searchTerm }),
       })
 
+      // Check client cache first
+      const cached = clientCache.get('/api/products/analytics', params)
+      if (cached) {
+        if (cached.success) {
+          console.log('📊 Setting analytics data from cache:', cached.data)
+          setAnalytics(cached.data)
+          setError(null)
+        } else {
+          console.error('📊 Analytics fetch failed (cached):', cached.error)
+          setError(cached.error || 'Failed to fetch analytics')
+        }
+        setAnalyticsLoading(false)
+        return
+      }
+
       const response = await fetch(`/api/products/analytics?${params}`)
       const result = await response.json()
 
       console.log('📊 Products Analytics Response:', result)
+
+      // Store in client cache
+      clientCache.set('/api/products/analytics', result, params, 5 * 60 * 1000)
 
       if (result.success) {
         console.log('📊 Setting analytics data:', result.data)
@@ -176,8 +195,20 @@ export function ProductsReport() {
         ...(appliedFilters.channel !== 'all' && { channel: appliedFilters.channel }),
       })
 
+      // Check client cache first
+      const cached = clientCache.get('/api/products/filters', params)
+      if (cached) {
+        if (cached.success) {
+          setFilterOptions(cached.data)
+        }
+        return
+      }
+
       const response = await fetch(`/api/products/filters?${params}`)
       const result = await response.json()
+
+      // Store in client cache
+      clientCache.set('/api/products/filters', result, params, 5 * 60 * 1000)
 
       if (result.success) {
         setFilterOptions(result.data)
@@ -203,8 +234,24 @@ export function ProductsReport() {
         ...(appliedFilters.searchTerm !== 'all' && { productCode: appliedFilters.searchTerm }),
       })
 
+      // Check client cache first
+      const cached = clientCache.get('/api/products/details', params)
+      if (cached) {
+        if (cached.success) {
+          setDetailedProducts(cached.data.products)
+          setTotalProducts(cached.data.pagination.totalCount)
+        } else {
+          setError(cached.error || 'Failed to fetch products')
+        }
+        setDetailsLoading(false)
+        return
+      }
+
       const response = await fetch(`/api/products/details?${params}`)
       const result = await response.json()
+
+      // Store in client cache
+      clientCache.set('/api/products/details', result, params, 5 * 60 * 1000)
 
       if (result.success) {
         setDetailedProducts(result.data.products)
@@ -597,7 +644,7 @@ export function ProductsReport() {
             <Card>
               <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
                 <CardTitle className="text-sm font-medium">Avg Order Value</CardTitle>
-                <TrendingUp className="h-4 w-4 text-green-500" />
+                <DollarSign className="h-4 w-4 text-green-500" />
               </CardHeader>
               <CardContent>
                 <div className="text-2xl font-bold">{analyticsLoading ? '...' : formatCurrency(metrics?.avgOrderValue || 0, metrics?.currencyCode || 'AED')}</div>
@@ -626,7 +673,7 @@ export function ProductsReport() {
             <Card>
               <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
                 <CardTitle className="text-sm font-medium">Fast Moving</CardTitle>
-                <TrendingUp className="h-4 w-4 text-green-500" />
+                <Package className="h-4 w-4 text-green-500" />
               </CardHeader>
               <CardContent>
                 <div className="text-2xl font-bold text-green-600">{analyticsLoading ? '...' : formatNumber(metrics?.fastMoving || 0)}</div>
@@ -639,7 +686,7 @@ export function ProductsReport() {
             <Card>
               <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
                 <CardTitle className="text-sm font-medium">Slow Moving Products</CardTitle>
-                <TrendingDown className="h-4 w-4 text-orange-500" />
+                <Package className="h-4 w-4 text-orange-500" />
               </CardHeader>
               <CardContent>
                 <div className="text-2xl font-bold text-orange-600">{analyticsLoading ? '...' : formatNumber(metrics?.slowMoving || 0)}</div>

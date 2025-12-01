@@ -13,6 +13,7 @@ import { InfoTooltip } from '@/components/ui/InfoTooltip'
 import { DashboardFilters } from '@/components/dashboard/DashboardFilters'
 import { useDashboardFilters } from '@/hooks/useDashboardFilters'
 import * as XLSX from 'xlsx'
+import { clientCache } from '@/lib/clientCache'
 
 interface StoreVisit {
   visitDate: string
@@ -53,7 +54,7 @@ export function StoreUserVisitReport() {
   const [visits, setVisits] = useState<StoreVisit[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [selectedDateRange, setSelectedDateRange] = useState('thisMonth')
+  const [selectedDateRange, setSelectedDateRange] = useState('lastMonth')
   const [isInitialized, setIsInitialized] = useState(false)
 
   const {
@@ -191,14 +192,33 @@ export function StoreUserVisitReport() {
       setLoading(true)
       setError(null)
 
+      // Extract URLSearchParams for cache check
+      const params = new URLSearchParams(queryParams)
+
+      // Check client cache first
+      const cached = clientCache.get('/api/store-visits', params)
+      if (cached) {
+        if (cached.success) {
+          setVisits(cached.data)
+        } else {
+          const errorMsg = cached.message ? `${cached.error}: ${cached.message}` : cached.error || 'Failed to fetch store visits'
+          setError(errorMsg)
+        }
+        setLoading(false)
+        return
+      }
+
       const response = await fetch(`/api/store-visits?${queryParams}`)
-      
+
       // Check if response is ok before parsing JSON
       if (!response.ok) {
         throw new Error(`HTTP error! status: ${response.status}`)
       }
-      
+
       const result = await response.json()
+
+      // Store in client cache
+      clientCache.set('/api/store-visits', result, params, 5 * 60 * 1000)
 
       if (result.success) {
         setVisits(result.data)

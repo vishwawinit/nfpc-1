@@ -1,16 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { query } from '@/lib/database'
-import { unstable_cache } from 'next/cache'
-import { FILTERS_CACHE_DURATION, shouldCacheFilters, generateFilterCacheKey, getCacheControlHeader } from '@/lib/cache-utils'
+import { apiCache } from '@/lib/apiCache'
 
-// Enable caching with revalidation
-export const dynamic = 'auto'
-export const revalidate = 600 // Fallback: 10 minutes for filters
+export const dynamic = 'force-dynamic'
+export const revalidate = false // Use manual caching
 
 // Table name constant
 const SALES_TABLE = 'flat_daily_sales_report'
 
-// Internal function to fetch daily sales filters (will be cached)
+// Internal function to fetch daily sales filters
 async function fetchDailySalesFiltersInternal(params: {
   startDate: string | null
   endDate: string | null
@@ -36,7 +34,7 @@ async function fetchDailySalesFiltersInternal(params: {
     selectedChain,
     selectedStore
   } = params
-    
+
     // Authentication removed - no user restrictions
     let allowedUserCodes: string[] = []
     let allowedTeamLeaders: string[] = []
@@ -319,6 +317,15 @@ export async function GET(request: NextRequest) {
   try {
     const searchParams = request.nextUrl.searchParams
 
+    // Check cache first - each unique filter combination gets its own cache entry
+    const cachedData = apiCache.get('/api/daily-sales/filters', searchParams)
+    if (cachedData) {
+      return NextResponse.json({
+        ...cachedData,
+        cached: true
+      })
+    }
+
     // Get selected filter values - support both old (region/city) and new (area/subArea) names
     const selectedArea = searchParams.get('areaCode') || searchParams.get('regionCode')
     const selectedSubArea = searchParams.get('subAreaCode') || searchParams.get('cityCode')
@@ -331,9 +338,6 @@ export async function GET(request: NextRequest) {
     const endDate = searchParams.get('endDate')
     // Authentication removed - loginUserCode no longer used
     const loginUserCode = null
-
-    // Check if we should cache (exclude custom date ranges)
-    const shouldCache = shouldCacheFilters(null, startDate, endDate)
 
     const filterParams = {
       startDate,
@@ -348,36 +352,15 @@ export async function GET(request: NextRequest) {
       selectedStore
     }
 
-    let filterData
-    if (shouldCache) {
-      // Create cache key
-      const cacheKey = generateFilterCacheKey('daily-sales', filterParams)
-      
-      // Fetch with caching
-      const cachedFetchFilters = unstable_cache(
-        async () => fetchDailySalesFiltersInternal(filterParams),
-        [cacheKey],
-        {
-          revalidate: FILTERS_CACHE_DURATION,
-          tags: ['daily-sales-filters']
-        }
-      )
-      filterData = await cachedFetchFilters()
-    } else {
-      // No caching - execute directly
-      filterData = await fetchDailySalesFiltersInternal(filterParams)
-    }
+    // Fetch fresh data
+    const filterData = await fetchDailySalesFiltersInternal(filterParams)
+
+    // Store in cache
+    apiCache.set('/api/daily-sales/filters', searchParams, filterData)
 
     return NextResponse.json({
       ...filterData,
-      cached: shouldCache,
-      cacheInfo: shouldCache ? { duration: FILTERS_CACHE_DURATION } : { duration: 0, reason: 'custom-range' }
-    }, {
-      headers: {
-        'Cache-Control': shouldCache 
-          ? getCacheControlHeader(FILTERS_CACHE_DURATION)
-          : 'no-cache, no-store, must-revalidate'
-      }
+      cached: false
     })
 
   } catch (error) {

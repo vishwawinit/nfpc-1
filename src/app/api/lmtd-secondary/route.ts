@@ -1,8 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { query } from '@/lib/database'
+import { apiCache } from '@/lib/apiCache'
 
 // Force dynamic rendering for routes that use searchParams (Updated: 2025-11-29 03:07)
 export const dynamic = 'force-dynamic'
+export const revalidate = false // Disable automatic revalidation, use manual caching
 
 // Use the flat_daily_sales_report table
 const SALES_TABLE = 'flat_daily_sales_report'
@@ -10,6 +12,14 @@ const SALES_TABLE = 'flat_daily_sales_report'
 export async function GET(request: NextRequest) {
   try {
     const searchParams = request.nextUrl.searchParams
+
+    // Check cache first - each unique filter combination gets its own cache entry
+    const cachedData = apiCache.get('/api/lmtd-secondary', searchParams)
+    if (cachedData) {
+      return NextResponse.json(cachedData)
+    }
+
+    console.log('🔄 Fetching fresh LMTD secondary data from database...')
 
     // Get parameters
     const currentDate = searchParams.get('currentDate') || new Date().toISOString().split('T')[0]
@@ -407,7 +417,7 @@ export async function GET(request: NextRequest) {
       topProductsCount: topProducts.length
     })
 
-    return NextResponse.json({
+    const responseJson = {
       success: true,
       data: detailedData,
       summary,
@@ -426,8 +436,14 @@ export async function GET(request: NextRequest) {
         lmtd: { start: lmtdStart, end: lmtdEnd }
       },
       timestamp: new Date().toISOString(),
-      source: SALES_TABLE
-    })
+      source: SALES_TABLE,
+      cached: false
+    }
+
+    // Store in cache
+    apiCache.set('/api/lmtd-secondary', searchParams, responseJson)
+
+    return NextResponse.json(responseJson)
 
   } catch (error) {
     console.error('LMTD Secondary Sales API error:', error)

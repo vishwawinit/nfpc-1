@@ -3,6 +3,7 @@ import { query } from '@/lib/database'
 import { getCacheControlHeader } from '@/lib/cache-utils'
 import { getChildUsers, isAdmin } from '@/lib/mssql'
 import { validateApiUser } from '@/lib/apiUserValidation'
+import { apiCache } from '@/lib/apiCache'
 
 // Force dynamic rendering for routes that use searchParams
 export const dynamic = 'force-dynamic'
@@ -11,20 +12,28 @@ export async function GET(request: NextRequest) {
   try {
     const searchParams = request.nextUrl.searchParams
 
+    // Check cache first - each unique filter combination gets its own cache entry
+    const cachedData = apiCache.get('/api/store-visits', searchParams)
+    if (cachedData) {
+      return NextResponse.json(cachedData)
+    }
+
     // Get loginUserCode for hierarchy-based filtering
     const loginUserCode = searchParams.get('loginUserCode')
-    
+
     // Validate user access
     const validation = await validateApiUser(loginUserCode)
     if (!validation.isValid) {
       return validation.response!
     }
-    
+
     // Fetch child users if loginUserCode is provided
     let allowedUserCodes: string[] = []
     if (loginUserCode && !isAdmin(loginUserCode)) {
       allowedUserCodes = await getChildUsers(loginUserCode)
     }
+
+    console.log('🔄 Fetching fresh store visits data from database...')
 
     // Build WHERE clause
     const conditions: string[] = []
@@ -242,15 +251,20 @@ export async function GET(request: NextRequest) {
       else cacheDuration = 3600
     }
 
-    return NextResponse.json({
+    const responseJson = {
       success: true,
       data: visits,
       count: visits.length,
       timestamp: new Date().toISOString(),
       source: 'postgresql-flat-customer-visit',
-      cached: true,
+      cached: false,
       cacheInfo: { duration: cacheDuration }
-    }, {
+    }
+
+    // Store in cache
+    apiCache.set('/api/store-visits', searchParams, responseJson)
+
+    return NextResponse.json(responseJson, {
       headers: {
         'Cache-Control': getCacheControlHeader(cacheDuration)
       }

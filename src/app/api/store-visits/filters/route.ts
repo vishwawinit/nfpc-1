@@ -2,31 +2,40 @@ import { NextRequest, NextResponse } from 'next/server'
 import { query } from '@/lib/database'
 import { getChildUsers, isAdmin } from '@/lib/mssql'
 import { validateApiUser } from '@/lib/apiUserValidation'
+import { apiCache } from '@/lib/apiCache'
 
 // Force dynamic rendering for routes that use searchParams
 export const dynamic = 'force-dynamic'
 
-// Enable ISR with 60 second revalidation
-export const revalidate = 60
+// Disable automatic revalidation, use manual caching
+export const revalidate = false
 
 export async function GET(request: NextRequest) {
   try {
     const searchParams = request.nextUrl.searchParams
-    
+
+    // Check cache first - each unique filter combination gets its own cache entry
+    const cachedData = apiCache.get('/api/store-visits/filters', searchParams)
+    if (cachedData) {
+      return NextResponse.json(cachedData)
+    }
+
     // Get loginUserCode for hierarchy-based filtering
     const loginUserCode = searchParams.get('loginUserCode')
-    
+
     // Validate user access
     const validation = await validateApiUser(loginUserCode)
     if (!validation.isValid) {
       return validation.response!
     }
-    
+
     // Fetch child users if loginUserCode is provided
     let allowedUserCodes: string[] = []
     if (loginUserCode && !isAdmin(loginUserCode)) {
       allowedUserCodes = await getChildUsers(loginUserCode)
     }
+
+    console.log('🔄 Fetching fresh store visits filters from database...')
     
     const conditions: string[] = []
     const params: any[] = []
@@ -393,7 +402,7 @@ export async function GET(request: NextRequest) {
       }))
       .filter((r: any) => r.available > 0 || r.value === searchParams.get('regionCode'))
 
-    return NextResponse.json({
+    const responseJson = {
       success: true,
       data: {
         users,
@@ -406,8 +415,14 @@ export async function GET(request: NextRequest) {
         teamLeaders,
         assistantLeaders
       },
-      timestamp: new Date().toISOString()
-    }, {
+      timestamp: new Date().toISOString(),
+      cached: false
+    }
+
+    // Store in cache
+    apiCache.set('/api/store-visits/filters', searchParams, responseJson)
+
+    return NextResponse.json(responseJson, {
       headers: {
         'Cache-Control': 'public, s-maxage=60, stale-while-revalidate=120'
       }

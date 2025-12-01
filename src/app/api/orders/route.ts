@@ -1,32 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { query, db } from '@/lib/database'
+import { apiCache } from '@/lib/apiCache'
 
 // Force dynamic rendering for routes that use searchParams
 export const dynamic = 'force-dynamic'
-
-// In-memory cache for query results
-const queryCache = new Map<string, { data: any; timestamp: number }>()
-const CACHE_DURATION = 5 * 60 * 1000 // 5 minutes
-
-// Intelligent caching based on date range
-function getCacheDuration(dateRange: string, hasCustomDates: boolean): number {
-  if (hasCustomDates) return 900
-  switch(dateRange) {
-    case 'today':
-    case 'yesterday':
-      return 600
-    case 'thisWeek':
-      return 900
-    case 'thisMonth':
-      return 1800
-    case 'lastMonth':
-    case 'thisQuarter':
-    case 'lastQuarter':
-      return 3600
-    default:
-      return 900
-  }
-}
+export const revalidate = false // Use manual caching
 
 // Date range helper
 function getDateRange(rangeStr: string) {
@@ -209,22 +187,13 @@ export async function GET(request: NextRequest) {
       endDate = dateResult.endStr
     }
 
-    // Create cache key
-    const cacheKey = JSON.stringify({
-      range, startDate, endDate, page, limit,
-      areaFilter, subAreaFilter, teamLeaderFilter,
-      fieldUserRoleFilter, fieldUserFilter, channelFilter,
-      customerFilter, categoryFilter, searchQuery
-    })
-
-    // Check cache
-    const cached = queryCache.get(cacheKey)
-    if (cached && (Date.now() - cached.timestamp) < CACHE_DURATION) {
+    // Check cache first - each unique filter combination gets its own cache entry
+    const cachedData = apiCache.get('/api/orders', searchParams)
+    if (cachedData) {
       console.log(`Orders API cache hit (${Date.now() - startTime}ms)`)
       return NextResponse.json({
-        ...cached.data,
-        cached: true,
-        cacheAge: Math.floor((Date.now() - cached.timestamp) / 1000)
+        ...cachedData,
+        cached: true
       })
     }
 
@@ -518,26 +487,11 @@ export async function GET(request: NextRequest) {
     }
 
     // Store in cache
-    queryCache.set(cacheKey, {
-      data: responseData,
-      timestamp: Date.now()
-    })
-
-    // Clean old cache entries (keep last 100)
-    if (queryCache.size > 100) {
-      const entries = Array.from(queryCache.entries())
-      entries.sort((a, b) => b[1].timestamp - a[1].timestamp)
-      queryCache.clear()
-      entries.slice(0, 100).forEach(([key, value]) => queryCache.set(key, value))
-    }
+    apiCache.set('/api/orders', searchParams, responseData)
 
     console.log(`Orders API query completed in ${Date.now() - startTime}ms`)
 
-    return NextResponse.json(responseData, {
-      headers: {
-        'Cache-Control': `public, s-maxage=${getCacheDuration(range, !!(searchParams.get('startDate') && searchParams.get('endDate')))}, stale-while-revalidate=${getCacheDuration(range, !!(searchParams.get('startDate') && searchParams.get('endDate'))) * 2}`
-      }
-    })
+    return NextResponse.json(responseData)
 
   } catch (error) {
     console.error('Orders API error:', error)

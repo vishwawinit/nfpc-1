@@ -1,13 +1,23 @@
 import { NextResponse } from 'next/server'
 import { getTransactionDetails } from '@/services/dailySalesService'
-import { unstable_cache } from 'next/cache'
-import { shouldCacheFilters, generateFilterCacheKey, getCacheControlHeader, getCacheDuration } from '@/lib/cache-utils'
+import { apiCache } from '@/lib/apiCache'
 
 export const dynamic = 'force-dynamic'
+export const revalidate = false // Use manual caching
 
 export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url)
+
+    // Check cache first - each unique filter combination gets its own cache entry
+    const cachedData = apiCache.get('/api/daily-sales/transactions', searchParams)
+    if (cachedData) {
+      return NextResponse.json({
+        ...cachedData,
+        cached: true
+      })
+    }
+
     const dateRange = searchParams.get('dateRange')
     const startDate = searchParams.get('startDate')
     const endDate = searchParams.get('endDate')
@@ -45,40 +55,15 @@ export async function GET(request: Request) {
     if (page) filters.page = page
     if (limit) filters.limit = limit
 
-    const shouldCache = shouldCacheFilters(dateRange || null, startDate, endDate)
-    const hasCustomDates = !!(startDate && endDate)
-    const cacheDuration = getCacheDuration(dateRange || 'thisMonth', hasCustomDates, startDate, endDate)
+    // Fetch fresh data
+    const data = await getTransactionDetails(filters)
 
-    let data
-    if (shouldCache) {
-      // Include pagination in cache key to cache each page separately
-      const cacheKey = generateFilterCacheKey('daily-sales-transactions', filters)
-      const cachedFetchTransactions = unstable_cache(
-        async () => getTransactionDetails(filters),
-        [cacheKey],
-        {
-          revalidate: cacheDuration,
-          tags: ['daily-sales-transactions']
-        }
-      )
-      data = await cachedFetchTransactions()
-    } else {
-      data = await getTransactionDetails(filters)
-    }
+    // Store in cache
+    apiCache.set('/api/daily-sales/transactions', searchParams, data)
 
-    return NextResponse.json({ 
+    return NextResponse.json({
       ...data,
-      cached: shouldCache, 
-      cacheInfo: { 
-        duration: shouldCache ? cacheDuration : 0,
-        reason: shouldCache ? undefined : (dateRange === 'today' ? 'today' : 'custom-range')
-      } 
-    }, { 
-      headers: { 
-        'Cache-Control': shouldCache 
-          ? getCacheControlHeader(cacheDuration)
-          : 'no-cache, no-store, must-revalidate'
-      } 
+      cached: false
     })
   } catch (error) {
     console.error('Error in transaction details API:', error)

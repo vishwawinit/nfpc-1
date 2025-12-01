@@ -15,6 +15,7 @@ import { LoadingBar } from '@/components/ui/LoadingBar'
 import { SearchableSelect } from '@/components/ui/SearchableSelect'
 import { CustomDatePicker } from '@/components/ui/CustomDatePicker'
 import * as XLSX from 'xlsx'
+import { clientCache } from '@/lib/clientCache'
 
 interface DetailedData {
   date: string
@@ -64,29 +65,34 @@ export function LMTDSecondaryReport() {
   const [error, setError] = useState<string | null>(null)
   const [periods, setPeriods] = useState<any>(null)
   
-  // Filters - Initialize with 1st of current month to today
+  // Filters - Initialize with last month (1st to last day of previous month)
   const [startDate, setStartDate] = useState(() => {
     const now = new Date()
-    // Explicitly set to 1st of current month
     const year = now.getFullYear()
     const month = now.getMonth() // 0-indexed: 0 = Jan, 10 = Nov
-    const firstDayOfMonth = new Date(year, month, 1, 0, 0, 0, 0)
-    const formattedDate = `${year}-${String(month + 1).padStart(2, '0')}-01`
-    console.log('LMTD Report - Initial startDate (1st of month):', {
+    // Get last month
+    const lastMonthDate = new Date(year, month - 1, 1)
+    const lastMonthYear = lastMonthDate.getFullYear()
+    const lastMonth = lastMonthDate.getMonth()
+    const formattedDate = `${lastMonthYear}-${String(lastMonth + 1).padStart(2, '0')}-01`
+    console.log('LMTD Report - Initial startDate (1st of last month):', {
       formattedDate,
-      year,
-      month: month + 1,
-      date: firstDayOfMonth
+      year: lastMonthYear,
+      month: lastMonth + 1
     })
     return formattedDate
   })
   const [endDate, setEndDate] = useState(() => {
     const now = new Date()
     const year = now.getFullYear()
-    const month = now.getMonth() + 1 // 1-indexed for display
-    const day = now.getDate()
-    const formattedDate = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`
-    console.log('LMTD Report - Initial endDate (today):', { formattedDate, year, month, day })
+    const month = now.getMonth() // 0-indexed
+    // Get last day of last month
+    const lastDayOfLastMonth = new Date(year, month, 0)
+    const lastMonthYear = lastDayOfLastMonth.getFullYear()
+    const lastMonth = lastDayOfLastMonth.getMonth() + 1
+    const lastDay = lastDayOfLastMonth.getDate()
+    const formattedDate = `${lastMonthYear}-${String(lastMonth).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`
+    console.log('LMTD Report - Initial endDate (last day of last month):', { formattedDate, year: lastMonthYear, month: lastMonth, day: lastDay })
     return formattedDate
   })
   const [teamLeaderCode, setTeamLeaderCode] = useState<string | null>(null)
@@ -134,14 +140,26 @@ export function LMTDSecondaryReport() {
         ...(storeCode && { storeCode })
       })
 
+      // Check client cache first
+      const cached = clientCache.get('/api/lmtd-secondary/filters', params)
+      if (cached) {
+        if (cached.success) {
+          setFilterOptions(cached.filters)
+        }
+        return
+      }
+
       const response = await fetch(`/api/lmtd-secondary/filters?${params}`)
-      
+
       if (!response.ok) {
         console.error('Failed to fetch filter options:', response.status)
         return
       }
-      
+
       const result = await response.json()
+
+      // Store in client cache
+      clientCache.set('/api/lmtd-secondary/filters', result, params, 5 * 60 * 1000)
 
       if (result.success) {
         setFilterOptions(result.filters)
@@ -183,17 +201,35 @@ export function LMTDSecondaryReport() {
 
       console.log('LMTD Report - API Request URL:', `/api/lmtd-secondary?${params.toString()}`)
 
+      // Check client cache first
+      const cached = clientCache.get('/api/lmtd-secondary', params)
+      if (cached) {
+        if (cached.success) {
+          setData(cached.data || [])
+          setSummary(cached.summary)
+          setDailyTrend(cached.dailyTrend || [])
+          setTopProducts(cached.topProducts || [])
+          setPeriods(cached.periods)
+          setCurrentPage(1)
+        }
+        setLoading(false)
+        return
+      }
+
       const response = await fetch(`/api/lmtd-secondary?${params}`, {
         headers: {
           'Cache-Control': 'no-cache'
         }
       })
-      
+
       if (!response.ok) {
         throw new Error(`HTTP error! status: ${response.status}`)
       }
-      
+
       const result = await response.json()
+
+      // Store in client cache
+      clientCache.set('/api/lmtd-secondary', result, params, 5 * 60 * 1000)
 
       if (result.success) {
         setData(result.data || [])
@@ -561,7 +597,7 @@ export function LMTDSecondaryReport() {
               <div>
                 <div className="flex items-center gap-2">
                   <p className="text-sm text-gray-600 font-medium">Revenue Variance</p>
-                  <InfoTooltip content="Percentage change: ((MTD - LMTD) ÷ LMTD) × 100. Positive = growth, Negative = decline" />
+                  <InfoTooltip content="Percentage change: ((MTD - LMTD) ÷ LMTD) × 100" />
                 </div>
                 <p className={`text-xl font-bold mt-2 ${getVarianceColor(summary.revenueVariancePercent)}`}>
                   {formatVariance(summary.revenueVariancePercent)}
@@ -570,11 +606,7 @@ export function LMTDSecondaryReport() {
                   {formatCurrency(summary.totalRevenueDiff)}
                 </p>
               </div>
-              {summary.revenueVariancePercent >= 0 ? (
-                <TrendingUp className="text-green-600" size={24} />
-              ) : (
-                <TrendingDown className="text-red-600" size={24} />
-              )}
+              <BarChart3 className="text-gray-400" size={24} />
             </div>
           </div>
 

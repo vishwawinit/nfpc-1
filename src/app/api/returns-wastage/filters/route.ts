@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { query } from '@/lib/database'
+import { apiCache } from '@/lib/apiCache'
 
 export const dynamic = 'force-dynamic'
-export const revalidate = 0 // Use cache headers instead
+export const revalidate = false // Disable automatic revalidation, use manual caching
 
 const SALES_TABLE = 'flat_daily_sales_report'
 
@@ -69,9 +70,17 @@ const getDateRangeFromString = (dateRange: string) => {
 export async function GET(request: NextRequest) {
   try {
     const searchParams = request.nextUrl.searchParams
-    const dateRange = searchParams.get('range') || 'thisMonth'
-    const regionCode = searchParams.get('region') || 'all'
-    const routeCode = searchParams.get('route') || 'all'
+    const dateRange = searchParams.get('range') || 'lastMonth'
+    const areaCode = searchParams.get('areaCode') || null
+    const subAreaCode = searchParams.get('subAreaCode') || null
+    const teamLeaderCode = searchParams.get('teamLeaderCode') || null
+    const fieldUserRole = searchParams.get('fieldUserRole') || null
+
+    // Check cache first - each unique filter combination gets its own cache entry
+    const cachedData = apiCache.get('/api/returns-wastage/filters', searchParams)
+    if (cachedData) {
+      return NextResponse.json(cachedData)
+    }
 
     // Get date range
     const { startDate, endDate } = getDateRangeFromString(dateRange)
@@ -79,96 +88,194 @@ export async function GET(request: NextRequest) {
     const filterParams = {
       startDate: toLocalDateString(startDate),
       endDate: toLocalDateString(endDate),
-      regionCode,
-      routeCode
+      areaCode,
+      subAreaCode,
+      teamLeaderCode,
+      fieldUserRole
     }
 
-    console.log('📊 Returns Filters Query:', {
-      dateRange,
-      startDate: filterParams.startDate,
-      endDate: filterParams.endDate,
-      regionCode,
-      routeCode
-    })
+    console.log('🔄 Fetching fresh returns filters from database...')
+    console.log('📊 Returns Filters Query:', filterParams)
 
-    // Build base WHERE clause (for regions)
-    const baseConditions = [
-      `trx_trxdate >= '${filterParams.startDate} 00:00:00'::timestamp`,
-      `trx_trxdate < ('${filterParams.endDate}'::date + INTERVAL '1 day')`,
-      `trx_trxtype = 4` // Only returns
-    ]
+    // Build cascading WHERE clauses for hierarchical filtering
+    const buildWhere = (level: string) => {
+      const conditions = [
+        `trx_trxdate >= '${filterParams.startDate} 00:00:00'::timestamp`,
+        `trx_trxdate < ('${filterParams.endDate}'::date + INTERVAL '1 day')`,
+        `trx_trxtype = 4` // Only returns
+      ]
 
-    const whereClause = `WHERE ${baseConditions.join(' AND ')}`
+      if (level !== 'area' && areaCode) {
+        conditions.push(`route_areacode = '${areaCode}'`)
+      }
 
-    // Build WHERE clause for routes (includes region filter)
-    const routeConditions = [...baseConditions]
-    if (regionCode && regionCode !== 'all') {
-      routeConditions.push(`route_areacode = '${regionCode}'`)
+      if (level !== 'subArea' && level !== 'area' && subAreaCode) {
+        conditions.push(`route_subareacode = '${subAreaCode}'`)
+      }
+
+      if (level !== 'teamLeader' && level !== 'subArea' && level !== 'area' && teamLeaderCode) {
+        conditions.push(`route_salesmancode = '${teamLeaderCode}'`)
+      }
+
+      if (level !== 'fieldUserRole' && level !== 'teamLeader' && level !== 'subArea' && level !== 'area' && fieldUserRole) {
+        conditions.push(`COALESCE(user_usertype, 'Field User') = '${fieldUserRole}'`)
+      }
+
+      return `WHERE ${conditions.join(' AND ')}`
     }
-    const routeWhereClause = `WHERE ${routeConditions.join(' AND ')}`
 
-    // Build WHERE clause for salesmen (includes region and route filters)
-    const salesmanConditions = [...baseConditions]
-    if (regionCode && regionCode !== 'all') {
-      salesmanConditions.push(`route_areacode = '${regionCode}'`)
-    }
-    if (routeCode && routeCode !== 'all') {
-      salesmanConditions.push(`trx_routecode = '${routeCode}'`)
-    }
-    const salesmanWhereClause = `WHERE ${salesmanConditions.join(' AND ')}`
+    // Execute all filter queries in parallel
+    const [areasResult, subAreasResult, fieldUserRolesResult, teamLeadersResult, fieldUsersResult, routesResult] = await Promise.all([
+      // Get areas
+      query(`
+        SELECT
+          route_areacode as "value",
+          route_areacode as "label",
+          COUNT(*) as "transactionCount"
+        FROM ${SALES_TABLE}
+        ${buildWhere('area')}
+        AND route_areacode IS NOT NULL
+        AND route_areacode != ''
+        GROUP BY route_areacode
+        ORDER BY route_areacode
+      `),
 
-    // Optimized query - get unique code-name pairs with LIMIT for faster response
-    // Use different WHERE clauses for cascading filters
-    const filtersQuery = `
-      SELECT
-        (SELECT json_agg(jsonb_build_object('code', route_areacode, 'name', route_areacode))
-         FROM (
-           SELECT DISTINCT route_areacode
-           FROM ${SALES_TABLE}
-           ${whereClause}
-           AND route_areacode IS NOT NULL AND route_areacode != ''
-           LIMIT 1000
-         ) t
-        ) as regions,
+      // Get sub areas
+      query(`
+        SELECT
+          route_subareacode as "value",
+          route_subareacode as "label",
+          COUNT(*) as "transactionCount"
+        FROM ${SALES_TABLE}
+        ${buildWhere('subArea')}
+        AND route_subareacode IS NOT NULL
+        AND route_subareacode != ''
+        GROUP BY route_subareacode
+        ORDER BY route_subareacode
+      `),
 
-        (SELECT json_agg(jsonb_build_object('code', trx_routecode, 'name', route_name))
-         FROM (
-           SELECT DISTINCT ON (trx_routecode) trx_routecode, COALESCE(route_name, trx_routecode) as route_name
-           FROM ${SALES_TABLE}
-           ${routeWhereClause}
-           AND trx_routecode IS NOT NULL AND trx_routecode != ''
-           ORDER BY trx_routecode
-           LIMIT 1000
-         ) t
-        ) as routes,
+      // Get field user roles
+      query(`
+        SELECT
+          COALESCE(user_usertype, 'Field User') as "value",
+          CASE COALESCE(user_usertype, 'Field User')
+            WHEN 'ATL' THEN 'Asst. Team Leader'
+            ELSE COALESCE(user_usertype, 'Field User')
+          END as "label",
+          COUNT(*) as "transactionCount"
+        FROM ${SALES_TABLE}
+        ${buildWhere('fieldUserRole')}
+        AND COALESCE(user_usertype, 'Field User') != 'Team Leader'
+        GROUP BY user_usertype
+        ORDER BY
+          CASE COALESCE(user_usertype, 'Field User')
+            WHEN 'ATL' THEN 1
+            WHEN 'Promoter' THEN 2
+            WHEN 'Merchandiser' THEN 3
+            WHEN 'Field User' THEN 4
+            ELSE 5
+          END
+      `),
 
-        (SELECT json_agg(jsonb_build_object('code', trx_usercode, 'name', user_name))
-         FROM (
-           SELECT DISTINCT ON (trx_usercode) trx_usercode, COALESCE(user_description, trx_usercode) as user_name
-           FROM ${SALES_TABLE}
-           ${salesmanWhereClause}
-           AND trx_usercode IS NOT NULL AND trx_usercode != ''
-           ORDER BY trx_usercode
-           LIMIT 1000
-         ) t
-        ) as salesmen
-    `
+      // Get team leaders
+      query(`
+        SELECT
+          route_salesmancode as "value",
+          route_salesmancode as "label",
+          COUNT(*) as "transactionCount"
+        FROM ${SALES_TABLE}
+        ${buildWhere('teamLeader')}
+        AND route_salesmancode IS NOT NULL
+        AND route_salesmancode != ''
+        GROUP BY route_salesmancode
+        ORDER BY route_salesmancode
+      `),
 
-    const result = await query(filtersQuery)
-    const filters = result.rows[0] || {}
+      // Get field users
+      query(`
+        SELECT
+          trx_usercode as "value",
+          COALESCE(MAX(user_description), trx_usercode) || ' (' || trx_usercode || ')' as "label",
+          COALESCE(MAX(user_usertype), 'Field User') as "role",
+          COUNT(*) as "transactionCount"
+        FROM ${SALES_TABLE}
+        ${buildWhere('fieldUser')}
+        AND trx_usercode IS NOT NULL
+        AND trx_usercode != ''
+        AND COALESCE(user_usertype, 'Field User') != 'Team Leader'
+        GROUP BY trx_usercode
+        ORDER BY MAX(user_description)
+      `),
 
-    // Transform to expected format
-    const regions = filters.regions || []
-    const routes = filters.routes || []
-    const salesmen = filters.salesmen || []
+      // Get routes
+      query(`
+        SELECT
+          trx_routecode as "value",
+          COALESCE(MAX(route_name), trx_routecode) as "label",
+          COUNT(*) as "transactionCount"
+        FROM ${SALES_TABLE}
+        ${buildWhere('route')}
+        AND trx_routecode IS NOT NULL
+        AND trx_routecode != ''
+        GROUP BY trx_routecode
+        ORDER BY MAX(route_name)
+      `)
+    ])
 
-    const response = NextResponse.json({
+    // Format results
+    const areas = areasResult.rows.map(row => ({
+      value: row.value,
+      label: row.label,
+      available: parseInt(row.transactionCount) || 0
+    }))
+
+    const subAreas = subAreasResult.rows.map(row => ({
+      value: row.value,
+      label: row.label,
+      available: parseInt(row.transactionCount) || 0
+    }))
+
+    const fieldUserRoles = fieldUserRolesResult.rows.map(row => ({
+      value: row.value,
+      label: row.label,
+      available: parseInt(row.transactionCount) || 0
+    }))
+
+    const teamLeaders = teamLeadersResult.rows.map(row => ({
+      value: row.value,
+      label: row.label,
+      available: parseInt(row.transactionCount) || 0
+    }))
+
+    const fieldUsers = fieldUsersResult.rows.map(row => ({
+      value: row.value,
+      label: row.label,
+      role: row.role,
+      available: parseInt(row.transactionCount) || 0
+    }))
+
+    const routes = routesResult.rows.map(row => ({
+      value: row.value,
+      label: row.label,
+      available: parseInt(row.transactionCount) || 0
+    }))
+
+    const responseJson = {
       success: true,
-      regions,
+      areas,
+      subAreas,
+      fieldUserRoles,
+      teamLeaders,
+      fieldUsers,
       routes,
-      salesmen,
-      timestamp: new Date().toISOString()
-    })
+      timestamp: new Date().toISOString(),
+      cached: false
+    }
+
+    // Store in cache
+    apiCache.set('/api/returns-wastage/filters', responseJson, searchParams)
+
+    const response = NextResponse.json(responseJson)
 
     // Aggressive caching for filters: 2 hours cache, 4 hours stale
     response.headers.set(
@@ -183,7 +290,13 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({
       success: false,
       error: 'Failed to fetch filter options',
-      message: error instanceof Error ? error.message : 'Unknown error'
+      message: error instanceof Error ? error.message : 'Unknown error',
+      areas: [],
+      subAreas: [],
+      fieldUserRoles: [],
+      teamLeaders: [],
+      fieldUsers: [],
+      routes: []
     }, { status: 500 })
   }
 }

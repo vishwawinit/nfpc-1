@@ -17,9 +17,10 @@ import { useDashboardFilters } from '@/hooks/useDashboardFilters'
 import { DashboardFilters } from '@/components/dashboard/DashboardFilters'
 import { useSalesByChannel } from '@/hooks/useDataService'
 import { EnhancedKPICards } from '@/components/dashboard/EnhancedKPICards'
+import { clientCache } from '@/lib/clientCache'
 
 export const DailyStockSaleReport: React.FC = () => {
-  const [selectedDateRange, setSelectedDateRange] = useState('thisMonth')
+  const [selectedDateRange, setSelectedDateRange] = useState('lastMonth')
   const [isInitialized, setIsInitialized] = useState(false)
   const [viewMode, setViewMode] = useState<'summary' | 'detailed'>('summary')
   const [loading, setLoading] = useState(false)
@@ -224,16 +225,45 @@ export const DailyStockSaleReport: React.FC = () => {
 
     setLoading(true)
     try {
-      // Helper for safe fetch - no timeout to allow slow database queries to complete
-      const safeFetch = async (url: string): Promise<Response> => {
+      // Helper for safe fetch with client-side caching
+      const cachedFetch = async (url: string): Promise<any> => {
+        // Extract path and params from URL
+        const [path, paramsStr] = url.split('?')
+        const params = new URLSearchParams(paramsStr)
+
+        // Check client cache first
+        const cached = clientCache.get(path, params)
+        if (cached) {
+          return cached
+        }
+
+        // Fetch if not cached
         const response = await fetch(url, {
           method: 'GET',
           headers: {
             'Content-Type': 'application/json',
-          },
-          cache: 'no-store' as RequestCache
+          }
+          // Use browser default caching behavior to respect server Cache-Control headers
         })
-        return response
+
+        if (!response.ok) {
+          const errorText = await response.text()
+          let errorMessage = `HTTP ${response.status}: ${response.statusText}`
+          try {
+            const errorJson = JSON.parse(errorText)
+            errorMessage = errorJson.error || errorJson.message || errorMessage
+          } catch {
+            errorMessage = errorText || errorMessage
+          }
+          throw new Error(errorMessage)
+        }
+
+        const data = await response.json()
+
+        // Store in client cache for 5 minutes
+        clientCache.set(path, data, params, 5 * 60 * 1000)
+
+        return data
       }
 
       // Add pagination params for transactions
@@ -241,38 +271,14 @@ export const DailyStockSaleReport: React.FC = () => {
       transactionsParams.append('page', currentPage.toString())
       transactionsParams.append('limit', itemsPerPage.toString())
 
-      const [summaryRes, trendRes, productsRes, storesRes, usersRes, transactionsRes] = await Promise.all([
-        safeFetch(`/api/daily-sales/summary?${currentQueryParams}`),
-        safeFetch(`/api/daily-sales/trend?${currentQueryParams}`),
-        safeFetch(`/api/daily-sales/products?${currentQueryParams}`),
-        safeFetch(`/api/daily-sales/stores?${currentQueryParams}`),
-        safeFetch(`/api/daily-sales/users?${currentQueryParams}`),
-        safeFetch(`/api/daily-sales/transactions?${transactionsParams.toString()}`)
-      ])
-
-      // Helper function to parse response with error handling
-      const parseResponse = async (res: Response, name: string) => {
-        if (!res.ok) {
-          const errorText = await res.text()
-          let errorMessage = `HTTP ${res.status}: ${res.statusText}`
-          try {
-            const errorJson = JSON.parse(errorText)
-            errorMessage = errorJson.error || errorJson.message || errorMessage
-          } catch {
-            errorMessage = errorText || errorMessage
-          }
-          throw new Error(`Failed to fetch ${name}: ${errorMessage}`)
-        }
-        return res.json()
-      }
-
+      // Fetch all data in parallel with client-side caching
       const [summaryData, trendResult, productsResult, storesResult, usersResult, transactionsResult] = await Promise.all([
-        parseResponse(summaryRes, 'summary'),
-        parseResponse(trendRes, 'trend'),
-        parseResponse(productsRes, 'products'),
-        parseResponse(storesRes, 'stores'),
-        parseResponse(usersRes, 'users'),
-        parseResponse(transactionsRes, 'transactions')
+        cachedFetch(`/api/daily-sales/summary?${currentQueryParams}`),
+        cachedFetch(`/api/daily-sales/trend?${currentQueryParams}`),
+        cachedFetch(`/api/daily-sales/products?${currentQueryParams}`),
+        cachedFetch(`/api/daily-sales/stores?${currentQueryParams}`),
+        cachedFetch(`/api/daily-sales/users?${currentQueryParams}`),
+        cachedFetch(`/api/daily-sales/transactions?${transactionsParams.toString()}`)
       ])
 
       console.log('📊 Daily Sales Report - Data loaded with filters:', {
@@ -818,26 +824,33 @@ export const DailyStockSaleReport: React.FC = () => {
                       style={{ fontSize: '12px', fill: '#6b7280' }}
                     />
                     <Tooltip
-                      formatter={(value: any, name: string) => {
-                        return [
-                          <div key="tooltip" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                            <span style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: '#3b82f6', display: 'inline-block' }}></span>
-                            <span style={{ fontWeight: '600', color: '#1f2937' }}>
-                              AED{Number(value).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                            </span>
-                          </div>,
-                          ''
-                        ]
+                      content={({ active, payload, label }) => {
+                        if (active && payload && payload.length > 0) {
+                          const data = payload[0].payload
+                          return (
+                            <div style={{
+                              backgroundColor: '#fff',
+                              border: '2px solid #3b82f6',
+                              borderRadius: '8px',
+                              fontSize: '13px',
+                              padding: '12px 16px',
+                              boxShadow: '0 4px 12px rgba(0, 0, 0, 0.1)'
+                            }}>
+                              <div style={{ marginBottom: '8px' }}>
+                                <div style={{ fontWeight: '600', color: '#374151', marginBottom: '4px' }}>{data.fullName}</div>
+                                {data.storeCode && <div style={{ fontSize: '11px', color: '#6b7280' }}>Code: {data.storeCode}</div>}
+                              </div>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                <span style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: '#3b82f6', display: 'inline-block' }}></span>
+                                <span style={{ fontWeight: '600', color: '#1f2937' }}>
+                                  AED{Number(payload[0].value).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                </span>
+                              </div>
+                            </div>
+                          )
+                        }
+                        return null
                       }}
-                      contentStyle={{
-                        backgroundColor: '#fff',
-                        border: '2px solid #3b82f6',
-                        borderRadius: '8px',
-                        fontSize: '13px',
-                        padding: '12px 16px',
-                        boxShadow: '0 4px 12px rgba(0, 0, 0, 0.1)'
-                      }}
-                      labelStyle={{ fontWeight: '600', color: '#374151', marginBottom: '6px' }}
                       cursor={{ fill: 'rgba(59, 130, 246, 0.1)' }}
                     />
                     <Bar
@@ -1018,47 +1031,25 @@ export const DailyStockSaleReport: React.FC = () => {
                     ) : (
                       <>
                         Showing {startIndex + 1}-{endIndex} of {totalTransactionsCount} transactions
-                        {searchTerm && ` (filtered from ${transactionsData.length} total)`}
                       </>
                     )}
                   </CardDescription>
                 </div>
 
-                {/* Search and Items Per Page Controls */}
-                <div className="flex flex-col sm:flex-row gap-3 min-w-0">
-                  <div className="flex items-center gap-2">
-                    <label className="text-sm font-medium text-gray-700 whitespace-nowrap">Search:</label>
-                    <input
-                      type="text"
-                      placeholder="Search transactions..."
-                      value={searchTerm}
-                      onChange={(e) => setSearchTerm(e.target.value)}
-                      className="px-3 py-1.5 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent w-full sm:w-48"
-                    />
-                    {searchTerm && (
-                      <button
-                        onClick={() => setSearchTerm('')}
-                        className="text-gray-500 hover:text-gray-700 px-1"
-                        title="Clear search"
-                      >
-                        ✕
-                      </button>
-                    )}
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <label className="text-sm font-medium text-gray-700 whitespace-nowrap">Per page:</label>
-                    <select
-                      value={itemsPerPage}
-                      onChange={(e) => handleItemsPerPageChange(Number(e.target.value))}
-                      className="px-2 py-1.5 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                    >
-                      <option value={25}>25</option>
-                      <option value={50}>50</option>
-                      <option value={100}>100</option>
-                      <option value={200}>200</option>
-                      <option value={500}>500</option>
-                    </select>
-                  </div>
+                {/* Items Per Page Control */}
+                <div className="flex items-center gap-2">
+                  <label className="text-sm font-medium text-gray-700 whitespace-nowrap">Per page:</label>
+                  <select
+                    value={itemsPerPage}
+                    onChange={(e) => handleItemsPerPageChange(Number(e.target.value))}
+                    className="px-2 py-1.5 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  >
+                    <option value={25}>25</option>
+                    <option value={50}>50</option>
+                    <option value={100}>100</option>
+                    <option value={200}>200</option>
+                    <option value={500}>500</option>
+                  </select>
                 </div>
 
                 {/* Table Controls */}
@@ -1187,21 +1178,10 @@ export const DailyStockSaleReport: React.FC = () => {
                                 <div className="flex flex-col items-center gap-2">
                                   <Package className="h-12 w-12 text-gray-300" />
                                   <div className="text-lg font-medium">
-                                    {searchTerm ? 'No transactions match your search' : 'No transaction data available'}
+                                    No transaction data available
                                   </div>
                                   <div className="text-sm">
-                                    {searchTerm ? (
-                                      <>
-                                        Try adjusting your search term or <button
-                                          onClick={() => setSearchTerm('')}
-                                          className="text-blue-600 hover:text-blue-800 underline"
-                                        >
-                                          clear search
-                                        </button>
-                                      </>
-                                    ) : (
-                                      'Select different filters or date range to view transactions'
-                                    )}
+                                    Select different filters or date range to view transactions
                                   </div>
                                 </div>
                               </td>

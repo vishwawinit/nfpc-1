@@ -1,13 +1,23 @@
 import { NextResponse } from 'next/server'
 import { getProductPerformance } from '@/services/dailySalesService'
-import { unstable_cache } from 'next/cache'
-import { shouldCacheFilters, generateFilterCacheKey, getCacheControlHeader, getCacheDuration } from '@/lib/cache-utils'
+import { apiCache } from '@/lib/apiCache'
 
 export const dynamic = 'force-dynamic'
+export const revalidate = false // Use manual caching
 
 export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url)
+
+    // Check cache first - each unique filter combination gets its own cache entry
+    const cachedData = apiCache.get('/api/daily-sales/products', searchParams)
+    if (cachedData) {
+      return NextResponse.json({
+        products: cachedData,
+        cached: true
+      })
+    }
+
     const dateRange = searchParams.get('dateRange')
     const startDate = searchParams.get('startDate')
     const endDate = searchParams.get('endDate')
@@ -39,39 +49,15 @@ export async function GET(request: Request) {
     if (productCode) filters.productCode = productCode
     if (productCategory) filters.productCategory = productCategory
 
-    const shouldCache = shouldCacheFilters(dateRange || null, startDate, endDate)
-    const hasCustomDates = !!(startDate && endDate)
-    const cacheDuration = getCacheDuration(dateRange || 'thisMonth', hasCustomDates, startDate, endDate)
+    // Fetch fresh data
+    const data = await getProductPerformance(filters)
 
-    let data
-    if (shouldCache) {
-      const cacheKey = generateFilterCacheKey('daily-sales-products', filters)
-      const cachedFetchProducts = unstable_cache(
-        async () => getProductPerformance(filters),
-        [cacheKey],
-        {
-          revalidate: cacheDuration,
-          tags: ['daily-sales-products']
-        }
-      )
-      data = await cachedFetchProducts()
-    } else {
-      data = await getProductPerformance(filters)
-    }
+    // Store in cache
+    apiCache.set('/api/daily-sales/products', searchParams, data)
 
-    return NextResponse.json({ 
-      products: data, 
-      cached: shouldCache, 
-      cacheInfo: { 
-        duration: shouldCache ? cacheDuration : 0,
-        reason: shouldCache ? undefined : (dateRange === 'today' ? 'today' : 'custom-range')
-      } 
-    }, { 
-      headers: { 
-        'Cache-Control': shouldCache 
-          ? getCacheControlHeader(cacheDuration)
-          : 'no-cache, no-store, must-revalidate'
-      } 
+    return NextResponse.json({
+      products: data,
+      cached: false
     })
   } catch (error) {
     console.error('Error in product performance API:', error)

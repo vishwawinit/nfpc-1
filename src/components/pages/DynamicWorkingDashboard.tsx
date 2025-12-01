@@ -12,6 +12,7 @@ import { DashboardFilters } from '../dashboard/DashboardFilters'
 import { useDashboardFilters } from '@/hooks/useDashboardFilters'
 import { useTopCustomers, useTopProducts, useSalesByChannel } from '@/hooks/useDataService'
 import { useResponsive } from '@/hooks/useResponsive'
+import { clientCache } from '@/lib/clientCache'
 
 const formatCurrency = (value: number) => {
   return new Intl.NumberFormat('en-IN', {
@@ -213,15 +214,23 @@ export const DynamicWorkingDashboard: React.FC = () => {
       if (typeof window === 'undefined') return
       if (!filters.startDate || !filters.endDate) return
 
+      const currentQueryParams = getQueryParams()
+
+      // Check client cache first
+      const cachedData = clientCache.get('/api/daily-sales/trend', currentQueryParams)
+      if (cachedData) {
+        setDailySalesTrendData(cachedData?.trend || [])
+        return
+      }
+
       setTrendLoading(true)
       try {
-        const currentQueryParams = getQueryParams().toString()
-        const response = await fetch(`/api/daily-sales/trend?${currentQueryParams}`, {
+        const response = await fetch(`/api/daily-sales/trend?${currentQueryParams.toString()}`, {
           method: 'GET',
           headers: {
             'Content-Type': 'application/json',
-          },
-          cache: 'no-store' as RequestCache
+          }
+          // Use browser default caching behavior to respect server Cache-Control headers
         })
 
         if (!response.ok) {
@@ -230,6 +239,9 @@ export const DynamicWorkingDashboard: React.FC = () => {
 
         const result = await response.json()
         setDailySalesTrendData(result?.trend || [])
+
+        // Store in client cache for 5 minutes
+        clientCache.set('/api/daily-sales/trend', result, currentQueryParams, 5 * 60 * 1000)
       } catch (error) {
         console.error('Error loading daily sales trend:', error)
         setDailySalesTrendData([])

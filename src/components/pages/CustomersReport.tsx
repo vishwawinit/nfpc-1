@@ -13,6 +13,7 @@ import { Users, TrendingUp, ShoppingBag, DollarSign, RefreshCw, ChevronLeft, Che
 import ExcelJS from 'exceljs'
 import { useSalesByChannel } from '@/hooks/useDataService'
 import { CustomerTransactionsModal } from '@/components/CustomerTransactionsModal'
+import { clientCache } from '@/lib/clientCache'
 
 // Color palette
 const CHART_COLORS = {
@@ -229,8 +230,21 @@ export function CustomersReport() {
         ...(appliedFilters.searchTerm && { search: appliedFilters.searchTerm }),
       })
 
+      // Check client cache first
+      const cached = clientCache.get('/api/customers/analytics', params)
+      if (cached) {
+        if (cached.success) {
+          setAnalytics(cached.data)
+        }
+        setLoading(false)
+        return
+      }
+
       const response = await fetch(`/api/customers/analytics?${params}`)
       const result = await response.json()
+
+      // Store in client cache
+      clientCache.set('/api/customers/analytics', result, params, 5 * 60 * 1000)
 
       if (result.success) {
         setAnalytics(result.data)
@@ -248,8 +262,22 @@ export function CustomersReport() {
   // Fetch filter options
   const fetchFilterOptions = async () => {
     try {
-      const response = await fetch(`/api/customers/filters?range=${appliedFilters.dateRange}`)
+      const params = new URLSearchParams({ range: appliedFilters.dateRange })
+
+      // Check client cache first
+      const cached = clientCache.get('/api/customers/filters', params)
+      if (cached) {
+        if (cached.success) {
+          setFilterOptions(cached)
+        }
+        return
+      }
+
+      const response = await fetch(`/api/customers/filters?${params}`)
       const result = await response.json()
+
+      // Store in client cache
+      clientCache.set('/api/customers/filters', result, params, 5 * 60 * 1000)
 
       if (result.success) {
         setFilterOptions(result)
@@ -299,6 +327,17 @@ export function CustomersReport() {
         params.append('search', appliedFilters.searchTerm.trim())
       }
 
+      // Check client cache first
+      const cached = clientCache.get('/api/customers/details', params)
+      if (cached) {
+        if (cached.success) {
+          setDetailedCustomers(cached.customers || [])
+          setTotalCustomers(cached.pagination?.total || 0)
+        }
+        setDetailedLoading(false)
+        return
+      }
+
       const url = `/api/customers/details?${params.toString()}`
       console.log('Fetching detailed customers from:', url)
 
@@ -306,8 +345,8 @@ export function CustomersReport() {
         method: 'GET',
         headers: {
           'Content-Type': 'application/json',
-        },
-        cache: 'no-store' as RequestCache
+        }
+        // Use browser default caching behavior to respect server Cache-Control headers
       })
 
       if (!response.ok) {
@@ -326,17 +365,20 @@ export function CustomersReport() {
       const result = await response.json()
       console.log('API Response success:', result.success, 'Customers count:', result.data?.customers?.length || 0)
 
+      // Store in client cache
+      clientCache.set('/api/customers/details', result, params, 5 * 60 * 1000)
+
       if (result.success) {
         // Handle both response formats
         const customers = result.data?.customers || result.data || []
         const pagination = result.data?.pagination || result.pagination || {}
-        
+
         // Ensure customers is an array
         const customersArray = Array.isArray(customers) ? customers : []
-        
-        const totalCount = pagination.totalCount || 
-          pagination.total || 
-          result.data?.totalCount || 
+
+        const totalCount = pagination.totalCount ||
+          pagination.total ||
+          result.data?.totalCount ||
           customersArray.length || 
           0
         
