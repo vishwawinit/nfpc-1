@@ -159,26 +159,22 @@ export function StoreUserVisitReport() {
     }
   }
 
-  // Initialize date range on mount with thisMonth as default and clear unwanted filters
+  // Initialize date range on mount
   useEffect(() => {
     if (!isInitialized) {
-      // Clear the default AREA, SUB AREA, and FIELD USER filters that come from dashboard
-      updateFilter('subAreaCode', null)
-      updateFilter('cityCode', null)
-      updateFilter('userCode', null)
-      updateFilter('areaCode', null)
-
+      // Set the date range for last month
       handleDateRangeSelect(selectedDateRange)
       setIsInitialized(true)
     }
   }, [isInitialized, selectedDateRange])
 
-  // Memoize query params to prevent infinite re-renders
+  // Build query params with ONLY date filters - ignore all other dashboard filters
   const queryParams = useMemo(() => {
-    const params = getQueryParams()
+    const params = new URLSearchParams()
+    if (filters.startDate) params.append('startDate', filters.startDate)
+    if (filters.endDate) params.append('endDate', filters.endDate)
     return params.toString()
-  }, [filters.startDate, filters.endDate, filters.regionCode, filters.fieldUserRole, 
-      filters.teamLeaderCode, filters.userCode, filters.chainName, filters.storeCode])
+  }, [filters.startDate, filters.endDate])
 
   // Fetch data when filters change
   useEffect(() => {
@@ -395,28 +391,6 @@ export function StoreUserVisitReport() {
       }))
       .sort((a, b) => b.visits - a.visits)
 
-    // Chain analysis - use channel_name from database
-    const chainVisits = visits.reduce((acc, visit) => {
-      const chain = visit.chainName || 'Unknown'
-      if (!acc[chain]) {
-        acc[chain] = { count: 0, totalDuration: 0, totalSales: 0 }
-      }
-      acc[chain].count += 1
-      acc[chain].totalDuration += (visit.durationMinutes || 0)
-      acc[chain].totalSales += (visit.salesGenerated || 0)
-      return acc
-    }, {} as Record<string, { count: number; totalDuration: number; totalSales: number }>)
-
-    const chainData = Object.entries(chainVisits)
-      .map(([chain, data]) => ({
-        chain,
-        visits: data.count,
-        avgDuration: data.count > 0 ? Math.round(data.totalDuration / data.count) : 0,
-        totalSales: data.totalSales
-      }))
-      .sort((a, b) => b.visits - a.visits)
-      .slice(0, 10)
-    
     return {
       totalVisits,
       productiveVisits,
@@ -432,8 +406,7 @@ export function StoreUserVisitReport() {
       dailyTrend,
       outcomeData,
       avgDurationByUser,
-      regionalData,
-      chainData
+      regionalData
     }
   }, [visits])
 
@@ -1559,62 +1532,31 @@ export function StoreUserVisitReport() {
             </div>
           </div>
 
-          {/* Regional & Store Class Analysis */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            {/* Regional Analysis */}
-            <div className="bg-white rounded-lg shadow p-6">
-              <h2 className="text-lg font-bold text-gray-800 mb-4 flex items-center gap-2">
-                <MapPin size={20} className="text-purple-600" />
-                Regional Analysis
-              </h2>
-              <div className="overflow-auto max-h-80 relative">
-                <table className="w-full">
-                  <thead className="bg-gray-50 sticky top-0 z-10">
-                    <tr>
-                      <th className="px-3 py-2 text-left text-xs font-medium text-gray-500">Region</th>
-                      <th className="px-3 py-2 text-right text-xs font-medium text-gray-500">Visits</th>
-                      <th className="px-3 py-2 text-right text-xs font-medium text-gray-500">Avg Duration</th>
+          {/* Regional Analysis */}
+          <div className="bg-white rounded-lg shadow p-6">
+            <h2 className="text-lg font-bold text-gray-800 mb-4 flex items-center gap-2">
+              <MapPin size={20} className="text-purple-600" />
+              Regional Analysis
+            </h2>
+            <div className="overflow-auto max-h-80 relative">
+              <table className="w-full">
+                <thead className="bg-gray-50 sticky top-0 z-10">
+                  <tr>
+                    <th className="px-3 py-2 text-left text-xs font-medium text-gray-500">Region</th>
+                    <th className="px-3 py-2 text-right text-xs font-medium text-gray-500">Visits</th>
+                    <th className="px-3 py-2 text-right text-xs font-medium text-gray-500">Avg Duration</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-200">
+                  {metrics.regionalData.map((region) => (
+                    <tr key={region.region} className="hover:bg-gray-50">
+                      <td className="px-3 py-2 text-sm text-gray-900">{region.region}</td>
+                      <td className="px-3 py-2 text-sm text-gray-900 text-right">{region.visits}</td>
+                      <td className="px-3 py-2 text-sm text-gray-900 text-right">{formatDuration(region.avgDuration)}</td>
                     </tr>
-                  </thead>
-                  <tbody className="divide-y divide-gray-200">
-                    {metrics.regionalData.map((region) => (
-                      <tr key={region.region} className="hover:bg-gray-50">
-                        <td className="px-3 py-2 text-sm text-gray-900">{region.region}</td>
-                        <td className="px-3 py-2 text-sm text-gray-900 text-right">{region.visits}</td>
-                        <td className="px-3 py-2 text-sm text-gray-900 text-right">{formatDuration(region.avgDuration)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-
-            {/* Chain Analysis */}
-            <div className="bg-white rounded-lg shadow p-6">
-              <h2 className="text-lg font-bold text-gray-800 mb-4 flex items-center gap-2">
-                <Building2 size={20} className="text-blue-600" />
-                Chain Analysis
-              </h2>
-              <div className="overflow-auto max-h-80 relative">
-                <table className="w-full">
-                  <thead className="bg-gray-50 sticky top-0 z-10">
-                    <tr>
-                      <th className="px-3 py-2 text-left text-xs font-medium text-gray-500">Chain</th>
-                      <th className="px-3 py-2 text-right text-xs font-medium text-gray-500">Visits</th>
-                      <th className="px-3 py-2 text-right text-xs font-medium text-gray-500">Avg Duration</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-gray-200">
-                    {metrics.chainData.map((chainItem) => (
-                      <tr key={chainItem.chain} className="hover:bg-gray-50">
-                        <td className="px-3 py-2 text-sm text-gray-900">{chainItem.chain}</td>
-                        <td className="px-3 py-2 text-sm text-gray-900 text-right">{chainItem.visits}</td>
-                        <td className="px-3 py-2 text-sm text-gray-900 text-right">{formatDuration(chainItem.avgDuration)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+                  ))}
+                </tbody>
+              </table>
             </div>
           </div>
         </div>
