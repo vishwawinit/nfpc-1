@@ -15,7 +15,12 @@ export async function GET(request: NextRequest) {
     // Check cache first - each unique filter combination gets its own cache entry
     const cachedData = apiCache.get('/api/store-visits', searchParams)
     if (cachedData) {
-      return NextResponse.json(cachedData)
+      console.log('✅ Returning cached data for store-visits')
+      return NextResponse.json({
+        ...cachedData,
+        cached: true,
+        timestamp: new Date().toISOString()
+      })
     }
 
     // Get loginUserCode for hierarchy-based filtering
@@ -34,6 +39,7 @@ export async function GET(request: NextRequest) {
     }
 
     console.log('🔄 Fetching fresh store visits data from database...')
+    const queryStartTime = Date.now()
 
     // Build WHERE clause
     const conditions: string[] = []
@@ -126,7 +132,21 @@ export async function GET(request: NextRequest) {
     // Get limit - default to large number to get all data
     const limit = parseInt(searchParams.get('limit') || '100000')
 
+    // Build date filter for sales subquery - reuse the same date params
+    let salesDateFilter = ''
+    if (searchParams.has('startDate') && searchParams.has('endDate')) {
+      // Both dates available - use params $1 and $2
+      salesDateFilter = ` AND trx_trxdate >= $1::date AND trx_trxdate <= $2::date`
+    } else if (searchParams.has('startDate')) {
+      // Only start date - use param $1
+      salesDateFilter = ` AND trx_trxdate >= $1::date`
+    } else if (searchParams.has('endDate')) {
+      // Only end date - use param $1
+      salesDateFilter = ` AND trx_trxdate <= $1::date`
+    }
+
     // Fetch store visits from flat_customer_visit table with actual sales data
+    // OPTIMIZED: Filter sales by date AND transaction type for faster aggregation
     const result = await query(`
       SELECT
         DATE(v.visit_date) as "visitDate",
@@ -159,22 +179,26 @@ export async function GET(request: NextRequest) {
         SELECT
           trx_usercode,
           customer_code,
-          DATE(trx_trxdate) as sale_date,
+          trx_trxdate::date as sale_date,
           SUM(CASE WHEN trx_totalamount > 0 THEN trx_totalamount ELSE 0 END) as total_sales,
           COUNT(DISTINCT line_itemcode) as products_count
         FROM flat_daily_sales_report
-        WHERE trx_trxtype = 1
-        GROUP BY trx_usercode, customer_code, DATE(trx_trxdate)
+        WHERE trx_trxtype = 1${salesDateFilter}
+        GROUP BY trx_usercode, customer_code, trx_trxdate::date
       ) s ON v.user_code = s.trx_usercode
         AND v.customer_code = s.customer_code
-        AND DATE(v.visit_date) = s.sale_date
+        AND v.visit_date::date = s.sale_date
       ${whereClause}
       ORDER BY v.visit_date DESC, v.arrival_time DESC
       LIMIT $${paramIndex}
     `, [...params, limit])
 
+    const queryEndTime = Date.now()
+    const queryDuration = queryEndTime - queryStartTime
+
     // Log data stats for debugging
     console.log('=== STORE VISITS API DEBUG ===')
+    console.log('Database Query Time:', queryDuration, 'ms')
     console.log('Total rows from DB:', result.rows.length)
     
     if (result.rows.length > 0) {
