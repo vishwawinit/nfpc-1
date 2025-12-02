@@ -172,6 +172,15 @@ function HomePageContent() {
             </a>
           </nav>
 
+          {/* Logo above border */}
+          <div className="p-4 bg-[#1e293b] flex justify-center">
+            <img
+              src="/nfpc-logo.png"
+              alt="NFPC Logo"
+              className={sidebarExpanded ? "h-12 w-auto object-contain" : "h-8 w-auto object-contain"}
+            />
+          </div>
+
           {/* Sidebar Footer */}
           <div className="p-4 border-t border-gray-700 bg-[#1e293b]">
             <div className="text-xs text-gray-400 text-center">
@@ -285,6 +294,27 @@ function HomePageContent() {
               <span className="text-sm font-semibold">AI Assistant</span>
             </a>
           </nav>
+
+          {/* Logo above border */}
+          <div className="p-4 bg-[#1e293b] flex justify-center">
+            <img
+              src="/nfpc-logo.png"
+              alt="NFPC Logo"
+              className="h-12 w-auto object-contain"
+            />
+          </div>
+
+          {/* Mobile Sidebar Footer */}
+          <div className="p-4 border-t border-gray-700 bg-[#1e293b]">
+            <div className="text-xs text-gray-400 text-center">
+              <div className="font-semibold text-gray-200">
+                {currentDate.fullDate || 'Loading...'}
+              </div>
+              <div className="mt-1 text-gray-400">
+                {currentDate.weekday || 'Loading...'}
+              </div>
+            </div>
+          </div>
         </aside>
 
         {/* Main Content */}
