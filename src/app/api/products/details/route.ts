@@ -74,6 +74,7 @@ export async function GET(request: NextRequest) {
     const customEndDate = searchParams.get('endDate')
     const channelFilter = searchParams.get('channel')
     const productCodeFilter = searchParams.get('productCode')
+    const brandFilter = searchParams.get('brand')
     const page = parseInt(searchParams.get('page') || '1')
     const limit = parseInt(searchParams.get('limit') || '25')
     const sortBy = searchParams.get('sortBy') || 'total_sales'
@@ -96,6 +97,7 @@ export async function GET(request: NextRequest) {
       customEndDate,
       channelFilter,
       productCodeFilter,
+      brandFilter,
       page,
       limit,
       sortBy,
@@ -130,6 +132,13 @@ export async function GET(request: NextRequest) {
     if (productCodeFilter) {
       conditions.push(`line_itemcode = $${paramIndex}`)
       params.push(productCodeFilter)
+      paramIndex++
+    }
+
+    // Brand filter
+    if (brandFilter) {
+      conditions.push(`item_brand_description = $${paramIndex}`)
+      params.push(brandFilter)
       paramIndex++
     }
 

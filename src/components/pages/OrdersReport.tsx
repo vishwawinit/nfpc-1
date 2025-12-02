@@ -53,15 +53,14 @@ export function OrdersReport() {
   })
   const [customEndDate, setCustomEndDate] = useState(() => new Date().toISOString().split('T')[0])
   
-  // Hierarchical filters - Area → Sub Area → Team Leader → Field User Role → Field User → Channel → Customer
+  // Hierarchical filters - Area → Sub Area → Field User → Channel → Customer
   const [areaFilter, setAreaFilter] = useState('')
   const [subAreaFilter, setSubAreaFilter] = useState('')
-  const [teamLeaderFilter, setTeamLeaderFilter] = useState('')
-  const [fieldUserRoleFilter, setFieldUserRoleFilter] = useState('')
   const [fieldUserFilter, setFieldUserFilter] = useState('')
   const [channelFilter, setChannelFilter] = useState('')
   const [customerFilter, setCustomerFilter] = useState('')
   const [categoryFilter, setCategoryFilter] = useState('')
+  const [brandFilter, setBrandFilter] = useState('')
   const [searchQuery, setSearchQuery] = useState('')
   
   const [currentPage, setCurrentPage] = useState(1)
@@ -84,10 +83,9 @@ export function OrdersReport() {
       // Add current filter selections for cascading
       if (areaFilter) params.append('area', areaFilter)
       if (subAreaFilter) params.append('subArea', subAreaFilter)
-      if (teamLeaderFilter) params.append('teamLeader', teamLeaderFilter)
-      if (fieldUserRoleFilter) params.append('fieldUserRole', fieldUserRoleFilter)
       if (fieldUserFilter) params.append('fieldUser', fieldUserFilter)
       if (channelFilter) params.append('channel', channelFilter)
+      if (brandFilter) params.append('brand', brandFilter)
 
       // Check client cache first
       const cached = clientCache.get('/api/orders/filters', params)
@@ -112,7 +110,7 @@ export function OrdersReport() {
     } catch (error) {
       console.error('Error fetching filter options:', error)
     }
-  }, [selectedPeriod, dateRangeType, customStartDate, customEndDate, areaFilter, subAreaFilter, teamLeaderFilter, fieldUserRoleFilter, fieldUserFilter, channelFilter])
+  }, [selectedPeriod, dateRangeType, customStartDate, customEndDate, areaFilter, subAreaFilter, fieldUserFilter, channelFilter, brandFilter])
   
   const fetchOrdersData = useCallback(async () => {
     setLoading(true)
@@ -132,12 +130,11 @@ export function OrdersReport() {
 
       if (areaFilter) params.append('area', areaFilter)
       if (subAreaFilter) params.append('subArea', subAreaFilter)
-      if (teamLeaderFilter) params.append('teamLeader', teamLeaderFilter)
-      if (fieldUserRoleFilter) params.append('fieldUserRole', fieldUserRoleFilter)
       if (fieldUserFilter) params.append('fieldUser', fieldUserFilter)
       if (channelFilter) params.append('channel', channelFilter)
       if (customerFilter) params.append('customer', customerFilter)
       if (categoryFilter) params.append('category', categoryFilter)
+      if (brandFilter) params.append('brand', brandFilter)
       if (searchQuery) params.append('search', searchQuery)
 
       // Check client cache first
@@ -171,7 +168,7 @@ export function OrdersReport() {
     } finally {
       setLoading(false)
     }
-  }, [selectedPeriod, dateRangeType, customStartDate, customEndDate, currentPage, areaFilter, subAreaFilter, teamLeaderFilter, fieldUserRoleFilter, fieldUserFilter, channelFilter, customerFilter, categoryFilter, searchQuery, itemsPerPage])
+  }, [selectedPeriod, dateRangeType, customStartDate, customEndDate, currentPage, areaFilter, subAreaFilter, fieldUserFilter, channelFilter, customerFilter, categoryFilter, brandFilter, searchQuery, itemsPerPage])
   
   const fetchOrderDetails = async (orderCode: string) => {
     setLoadingDetails(true)
@@ -225,12 +222,11 @@ export function OrdersReport() {
   const resetFilters = () => {
     setAreaFilter('')
     setSubAreaFilter('')
-    setTeamLeaderFilter('')
-    setFieldUserRoleFilter('')
     setFieldUserFilter('')
     setChannelFilter('')
     setCustomerFilter('')
     setCategoryFilter('')
+    setBrandFilter('')
     setSearchQuery('')
     setDateRangeType('preset')
     setSelectedPeriod('thisMonth')
@@ -241,9 +237,8 @@ export function OrdersReport() {
     setCurrentPage(1)
   }
   
-  const hasActiveFilters = areaFilter || subAreaFilter || teamLeaderFilter ||
-    fieldUserRoleFilter || fieldUserFilter || channelFilter ||
-    customerFilter || categoryFilter || searchQuery
+  const hasActiveFilters = areaFilter || subAreaFilter || fieldUserFilter ||
+    channelFilter || customerFilter || categoryFilter || brandFilter || searchQuery
   
   const exportOrderDetails = async (orderDetails: any) => {
     try {
@@ -357,13 +352,12 @@ export function OrdersReport() {
       
       if (areaFilter) params.append('area', areaFilter)
       if (subAreaFilter) params.append('subArea', subAreaFilter)
-      if (teamLeaderFilter) params.append('teamLeader', teamLeaderFilter)
-      if (fieldUserRoleFilter) params.append('fieldUserRole', fieldUserRoleFilter)
       if (fieldUserFilter) params.append('fieldUser', fieldUserFilter)
       if (channelFilter) params.append('channel', channelFilter)
       if (customerFilter) params.append('customer', customerFilter)
       if (categoryFilter) params.append('category', categoryFilter)
-      
+      if (brandFilter) params.append('brand', brandFilter)
+
       const response = await fetch(`/api/orders?${params.toString()}`)
       const result = await response.json()
       
@@ -533,8 +527,6 @@ export function OrdersReport() {
                     setAreaFilter(value || '')
                     // Reset child filters when area changes
                     setSubAreaFilter('')
-                    setTeamLeaderFilter('')
-                    setFieldUserRoleFilter('')
                     setFieldUserFilter('')
                     setChannelFilter('')
                     setCustomerFilter('')
@@ -550,8 +542,6 @@ export function OrdersReport() {
                   onChange={(value) => {
                     setSubAreaFilter(value || '')
                     // Reset child filters when sub area changes
-                    setTeamLeaderFilter('')
-                    setFieldUserRoleFilter('')
                     setFieldUserFilter('')
                     setChannelFilter('')
                     setCustomerFilter('')
@@ -561,38 +551,7 @@ export function OrdersReport() {
                   label="Sub Area"
                 />
 
-                {/* Level 3: Team Leader */}
-                <SearchableSelect
-                  value={teamLeaderFilter}
-                  onChange={(value) => {
-                    setTeamLeaderFilter(value || '')
-                    // Reset child filters when team leader changes
-                    setFieldUserRoleFilter('')
-                    setFieldUserFilter('')
-                    setChannelFilter('')
-                    setCustomerFilter('')
-                  }}
-                  options={filterOptions?.teamLeaders || []}
-                  placeholder="All Team Leaders"
-                  label="Team Leader"
-                />
-
-                {/* Level 4: Field User Role */}
-                <SearchableSelect
-                  value={fieldUserRoleFilter}
-                  onChange={(value) => {
-                    setFieldUserRoleFilter(value || '')
-                    // Reset child filters when field user role changes
-                    setFieldUserFilter('')
-                    setChannelFilter('')
-                    setCustomerFilter('')
-                  }}
-                  options={filterOptions?.fieldUserRoles || []}
-                  placeholder="All Roles"
-                  label="Field User Role"
-                />
-
-                {/* Level 5: Field User (Salesman) */}
+                {/* Level 3: Field User (Salesman) */}
                 <SearchableSelect
                   value={fieldUserFilter}
                   onChange={(value) => {
@@ -635,6 +594,15 @@ export function OrdersReport() {
                   options={filterOptions?.productCategories || []}
                   placeholder="All Categories"
                   label="Product Category"
+                />
+
+                {/* Brand Filter (Independent) */}
+                <SearchableSelect
+                  value={brandFilter}
+                  onChange={(value) => setBrandFilter(value || '')}
+                  options={filterOptions?.brands || []}
+                  placeholder="All Brands"
+                  label="Brand"
                 />
               </div>
             </CardContent>
@@ -889,26 +857,26 @@ export function OrdersReport() {
             </Card>
           )}
 
-          {/* Orders by Region (Parent Area) */}
-          {data?.charts?.subAreaWise && (
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <MapPin className="h-5 w-5" />
-                  Orders by Region
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
+          {/* Orders by Brand */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Package className="h-5 w-5" />
+                Orders By Brand
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              {data?.charts?.brandWise && data.charts.brandWise.length > 0 ? (
                 <ResponsiveContainer width="100%" height={420}>
-                  <BarChart data={data.charts.subAreaWise.slice(0, 10)} margin={{ top: 10, right: 20, left: 55, bottom: 10 }}>
+                  <BarChart data={data.charts.brandWise.slice(0, 10)} margin={{ top: 10, right: 20, left: 55, bottom: 10 }}>
                     <CartesianGrid strokeDasharray="3 3" className="stroke-gray-200" />
                     <XAxis
-                      dataKey="subArea"
+                      dataKey="brand"
                       angle={-45}
                       textAnchor="end"
                       height={80}
                       tick={{ fontSize: 11 }}
-                      label={{ value: 'Region', position: 'insideBottom', offset: -5, style: { fontSize: 12, fill: '#1f2937', fontWeight: 600 } }}
+                      label={{ value: 'Brand', position: 'insideBottom', offset: -5, style: { fontSize: 12, fill: '#1f2937', fontWeight: 600 } }}
                     />
                     <YAxis
                       tickFormatter={(value) => `${(value / 1000).toFixed(0)}K`}
@@ -920,9 +888,13 @@ export function OrdersReport() {
                     <Bar dataKey="totalSales" fill="#8b5cf6" radius={[4, 4, 0, 0]} />
                   </BarChart>
                 </ResponsiveContainer>
-              </CardContent>
-            </Card>
-          )}
+              ) : (
+                <div className="flex items-center justify-center h-[420px] text-gray-500">
+                  No brand data available for the selected period
+                </div>
+              )}
+            </CardContent>
+          </Card>
 
           {/* Orders by Chain */}
           {data?.charts?.chainWise && (

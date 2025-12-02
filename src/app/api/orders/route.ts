@@ -69,6 +69,7 @@ function buildWhereClause(params: {
   channel?: string | null
   customer?: string | null
   category?: string | null
+  brand?: string | null
   search?: string | null
 }) {
   const conditions: string[] = ['trx_trxtype = $1']
@@ -125,6 +126,11 @@ function buildWhereClause(params: {
     values.push(params.category)
     paramIndex++
   }
+  if (params.brand && params.brand !== 'all') {
+    conditions.push(`item_brand_description = $${paramIndex}`)
+    values.push(params.brand)
+    paramIndex++
+  }
   if (params.search) {
     conditions.push(`(
       customer_code ILIKE $${paramIndex} OR
@@ -174,6 +180,7 @@ export async function GET(request: NextRequest) {
     const channelFilter = searchParams.get('channel')
     const customerFilter = searchParams.get('customer')
     const categoryFilter = searchParams.get('category')
+    const brandFilter = searchParams.get('brand')
     const searchQuery = searchParams.get('search')
 
     let startDate: string, endDate: string
@@ -199,6 +206,22 @@ export async function GET(request: NextRequest) {
 
     // Build WHERE clause with parameterized queries
     const { whereClause, values } = buildWhereClause({
+      startDate,
+      endDate,
+      area: areaFilter,
+      subArea: subAreaFilter,
+      teamLeader: teamLeaderFilter,
+      fieldUserRole: fieldUserRoleFilter,
+      fieldUser: fieldUserFilter,
+      channel: channelFilter,
+      customer: customerFilter,
+      category: categoryFilter,
+      brand: brandFilter,
+      search: searchQuery
+    })
+
+    // Build WHERE clause for brand chart (excluding brand filter)
+    const { whereClause: brandWhereClause, values: brandValues } = buildWhereClause({
       startDate,
       endDate,
       area: areaFilter,
@@ -324,18 +347,20 @@ export async function GET(request: NextRequest) {
           LIMIT 10
         `, values),
 
-        // Region-wise (using route_areacode as parent region)
+        // Brand-wise (using item_brand_description, excluding brand filter)
         query(`
           SELECT
-            COALESCE(route_areacode, 'Unknown') as "subArea",
+            COALESCE(item_brand_description, 'Unknown') as "brand",
             COUNT(DISTINCT trx_trxcode) as "orderCount",
             SUM(COALESCE(trx_totalamount, 0)) as "totalSales"
           FROM flat_daily_sales_report
-          ${whereClause}
-          GROUP BY route_areacode
+          ${brandWhereClause}
+            AND item_brand_description IS NOT NULL
+            AND item_brand_description != ''
+          GROUP BY item_brand_description
           ORDER BY "totalSales" DESC
           LIMIT 10
-        `, values),
+        `, brandValues),
 
         // Region-wise
         query(`
@@ -414,7 +439,7 @@ export async function GET(request: NextRequest) {
     const metrics = combinedResult.rows[0].metrics
     const totalOrders = parseInt(combinedResult.rows[0].total_count || '0')
 
-    const [areaWise, subAreaWise, regionWise, chainWise, topCustomers, topProducts, categoryWise] = chartsResults
+    const [areaWise, brandWise, regionWise, chainWise, topCustomers, topProducts, categoryWise] = chartsResults
 
     const responseData = {
       success: true,
@@ -434,7 +459,7 @@ export async function GET(request: NextRequest) {
             orderCount: parseInt(row.orderCount || '0'),
             totalSales: parseFloat(row.totalSales || '0')
           })),
-          subAreaWise: subAreaWise.rows.map((row: any) => ({
+          brandWise: brandWise.rows.map((row: any) => ({
             ...row,
             orderCount: parseInt(row.orderCount || '0'),
             totalSales: parseFloat(row.totalSales || '0')

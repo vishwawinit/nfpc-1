@@ -72,13 +72,15 @@ export async function GET(request: NextRequest) {
     const customEndDate = searchParams.get('endDate')
     const channelFilter = searchParams.get('channel')
     const productCodeFilter = searchParams.get('productCode')
+    const brandFilter = searchParams.get('brand')
 
     console.log('📊 Products Analytics - Params:', {
       dateRange,
       customStartDate,
       customEndDate,
       channelFilter,
-      productCodeFilter
+      productCodeFilter,
+      brandFilter
     })
 
     // Get date range
@@ -122,6 +124,13 @@ export async function GET(request: NextRequest) {
       paramIndex++
     }
 
+    // Brand filter
+    if (brandFilter) {
+      conditions.push(`item_brand_description = $${paramIndex}`)
+      params.push(brandFilter)
+      paramIndex++
+    }
+
     // Base conditions
     conditions.push('line_itemcode IS NOT NULL')
     conditions.push('COALESCE(line_quantitybu, 0) != 0')
@@ -145,16 +154,18 @@ export async function GET(request: NextRequest) {
     // Removed - we don't need product details for the summary tab anymore
     const productSummaryQuery = null
 
-    // Channel analysis - Simple aggregation query
-    const channelQuery = `
+    // Sales by Brand analysis - using item_brand_description
+    const salesByBrandQuery = `
       SELECT
-        COALESCE(customer_channel_description, 'Unknown Channel') as channel,
+        COALESCE(item_brand_description, 'Unknown Brand') as brand,
         COALESCE(SUM(CASE WHEN trx_totalamount > 0 THEN trx_totalamount ELSE 0 END), 0) as sales,
         COUNT(DISTINCT line_itemcode) as products,
         COALESCE(SUM(ABS(COALESCE(line_quantitybu, 0))), 0) as quantity
       FROM ${SALES_TABLE}
       ${whereClause}
-      GROUP BY customer_channel_description
+        AND item_brand_description IS NOT NULL
+        AND item_brand_description != ''
+      GROUP BY item_brand_description
       ORDER BY sales DESC
       LIMIT 10
     `
@@ -225,9 +236,9 @@ export async function GET(request: NextRequest) {
     console.log('📊 Products Analytics - Executing queries in parallel...')
     const queryStart = Date.now()
 
-    const [kpiResult, channelResult, brandResult, topProductsResult, movementResult] = await Promise.all([
+    const [kpiResult, salesByBrandResult, brandResult, topProductsResult, movementResult] = await Promise.all([
       query(kpiQuery, params),
-      query(channelQuery, params),
+      query(salesByBrandQuery, params),
       query(brandDistributionQuery, params),
       query(topProductsQuery, params),
       query(movementStatusQuery, params)
@@ -237,8 +248,8 @@ export async function GET(request: NextRequest) {
     console.log(`📊 Products Analytics - Queries completed in ${queryDuration}ms`)
 
     const kpiData = kpiResult.rows[0] || {}
-    const salesByChannel = channelResult.rows.map((row: any) => ({
-      channel: row.channel,
+    const salesByBrand = salesByBrandResult.rows.map((row: any) => ({
+      brand: row.brand,
       sales: parseFloat(row.sales || '0'),
       products: parseInt(row.products || '0'),
       quantity: parseFloat(row.quantity || '0')
@@ -333,7 +344,7 @@ export async function GET(request: NextRequest) {
         noSales,
         currencyCode: kpiData.currency_code || 'AED'
       },
-      salesByChannel,
+      salesByBrand,
       brandSalesDistribution,
       topProducts: topProductsData
     }

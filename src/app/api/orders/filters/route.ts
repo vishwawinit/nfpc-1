@@ -200,7 +200,8 @@ export async function GET(request: NextRequest) {
       fieldUsersResult,
       channelsResult,
       customersResult,
-      categoriesResult
+      categoriesResult,
+      brandsResult
     ] = await Promise.all([
       // Areas (exclude current area filter)
       query(`
@@ -411,6 +412,20 @@ export async function GET(request: NextRequest) {
           AND item_category_description != ''
         GROUP BY item_category_description
         ORDER BY label
+      `, baseWhere.values),
+
+      // Brands
+      query(`
+        SELECT
+          item_brand_description as value,
+          COALESCE(item_brand_description, 'No Brand') as label,
+          COUNT(DISTINCT trx_trxcode) as count
+        FROM flat_daily_sales_report
+        ${baseWhere.whereClause}
+          AND item_brand_description IS NOT NULL
+          AND item_brand_description != ''
+        GROUP BY item_brand_description
+        ORDER BY label
       `, baseWhere.values)
     ])
 
@@ -423,7 +438,8 @@ export async function GET(request: NextRequest) {
       fieldUsers: fieldUsersResult.rows.length,
       channels: channelsResult.rows.length,
       customers: customersResult.rows.length,
-      categories: categoriesResult.rows.length
+      categories: categoriesResult.rows.length,
+      brands: brandsResult.rows.length
     })
 
     const responseData = {
@@ -436,7 +452,8 @@ export async function GET(request: NextRequest) {
         fieldUsers: fieldUsersResult.rows || [],
         channels: channelsResult.rows || [],
         customers: customersResult.rows || [],
-        productCategories: categoriesResult.rows || []
+        productCategories: categoriesResult.rows || [],
+        brands: brandsResult.rows || []
       },
       dateRange: {
         start: startDate,

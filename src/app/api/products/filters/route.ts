@@ -71,6 +71,7 @@ export async function GET(request: NextRequest) {
     const customStartDate = searchParams.get('startDate')
     const customEndDate = searchParams.get('endDate')
     const channelFilter = searchParams.get('channel')
+    const brandFilter = searchParams.get('brand')
 
     // Get date range
     let startDate: string, endDate: string
@@ -106,9 +107,22 @@ export async function GET(request: NextRequest) {
       paramIndex++
     }
 
+    // Brand filter (for products)
+    const brandCondition = brandFilter ? `item_brand_description = $${paramIndex}` : ''
+    if (brandFilter) {
+      params.push(brandFilter)
+      paramIndex++
+    }
+
     const baseWhereClause = `WHERE ${conditions.join(' AND ')}`
-    const channelWhereClause = channelCondition
-      ? `${baseWhereClause} AND ${channelCondition}`
+
+    // Build combined WHERE clause with additional filters
+    const additionalFilters: string[] = []
+    if (channelCondition) additionalFilters.push(channelCondition)
+    if (brandCondition) additionalFilters.push(brandCondition)
+
+    const channelWhereClause = additionalFilters.length > 0
+      ? `${baseWhereClause} AND ${additionalFilters.join(' AND ')}`
       : baseWhereClause
 
     // Get unique channels from flat_daily_sales_report - OPTIMIZED with LIMIT
@@ -140,25 +154,41 @@ export async function GET(request: NextRequest) {
       LIMIT 200
     ` : null
 
+    // Get unique brands from item_brand_description
+    const brandsQuery = `
+      SELECT
+        item_brand_description as code,
+        item_brand_description as name
+      FROM ${SALES_TABLE}
+      ${channelWhereClause}
+        AND item_brand_description IS NOT NULL
+        AND item_brand_description != ''
+      GROUP BY item_brand_description
+      ORDER BY SUM(CASE WHEN trx_totalamount > 0 THEN trx_totalamount ELSE 0 END) DESC
+      LIMIT 100
+    `
+
     // Execute queries with appropriate params
     const baseParams = params.slice(0, 2) // Only date params for channels
-    const channelParams = channelFilter ? params : baseParams // All params if channel filter is present
+    const filteredParams = (channelFilter || brandFilter) ? params : baseParams // All params if any filter is present
 
     const queries = [
-      query(channelsQuery, baseParams)
+      query(channelsQuery, baseParams),
+      query(brandsQuery, filteredParams)
     ]
 
     if (productsQuery) {
-      queries.push(query(productsQuery, channelParams))
+      queries.push(query(productsQuery, filteredParams))
     }
 
     const results = await Promise.all(queries)
-    const [channelsResult, productsResult] = results
+    const [channelsResult, brandsResult, productsResult] = results
 
     return NextResponse.json({
       success: true,
       data: {
         channels: channelsResult.rows,
+        brands: brandsResult.rows,
         products: productsResult?.rows || []
       },
       timestamp: new Date().toISOString()

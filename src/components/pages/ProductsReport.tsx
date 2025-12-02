@@ -39,8 +39,8 @@ interface ProductMetric {
   currencyCode: string
 }
 
-interface SalesByChannel {
-  channel: string
+interface SalesByBrand {
+  brand: string
   sales: number
   products: number
   quantity: number
@@ -68,7 +68,7 @@ interface TopProduct {
 
 interface ProductAnalyticsData {
   metrics: ProductMetric
-  salesByChannel: SalesByChannel[]
+  salesByBrand: SalesByBrand[]
   brandSalesDistribution: BrandSalesDistribution[]
   topProducts: TopProduct[]
 }
@@ -97,6 +97,7 @@ interface DetailedProduct {
 interface FilterOptions {
   channels: Array<{ code: string; name: string }>
   products?: Array<{ code: string; name: string }>
+  brands?: Array<{ code: string; name: string }>
 }
 
 // --- Main Component ---
@@ -111,9 +112,10 @@ export function ProductsReport() {
 
   // Filters state
   const [filters, setFilters] = useState({
-    dateRange: 'thisMonth',
+    dateRange: 'lastMonth',
     channel: 'all',
-    searchTerm: 'all'
+    searchTerm: 'all',
+    brand: 'all'
   })
 
   // Custom date range state
@@ -142,6 +144,7 @@ export function ProductsReport() {
         ...(appliedCustomDates.end && { endDate: appliedCustomDates.end }),
         ...(appliedFilters.channel !== 'all' && { channel: appliedFilters.channel }),
         ...(appliedFilters.searchTerm !== 'all' && { productCode: appliedFilters.searchTerm }),
+        ...(appliedFilters.brand !== 'all' && { brand: appliedFilters.brand }),
       })
 
       // Check client cache first
@@ -193,6 +196,7 @@ export function ProductsReport() {
         ...(appliedCustomDates.start && { startDate: appliedCustomDates.start }),
         ...(appliedCustomDates.end && { endDate: appliedCustomDates.end }),
         ...(appliedFilters.channel !== 'all' && { channel: appliedFilters.channel }),
+        ...(appliedFilters.brand !== 'all' && { brand: appliedFilters.brand }),
       })
 
       // Check client cache first
@@ -232,6 +236,7 @@ export function ProductsReport() {
         ...(appliedCustomDates.end && { endDate: appliedCustomDates.end }),
         ...(appliedFilters.channel !== 'all' && { channel: appliedFilters.channel }),
         ...(appliedFilters.searchTerm !== 'all' && { productCode: appliedFilters.searchTerm }),
+        ...(appliedFilters.brand !== 'all' && { brand: appliedFilters.brand }),
       })
 
       // Check client cache first
@@ -277,7 +282,8 @@ export function ProductsReport() {
     const initialFilters = {
       dateRange: 'lastMonth',
       channel: 'all',
-      searchTerm: 'all'
+      searchTerm: 'all',
+      brand: 'all'
     }
     setFilters(initialFilters)
     setCustomStartDate('')
@@ -296,14 +302,14 @@ export function ProductsReport() {
   useEffect(() => {
     fetchAnalytics()
     fetchFilterOptions()
-  }, [appliedFilters.dateRange, appliedFilters.channel, appliedFilters.searchTerm, appliedCustomDates.start, appliedCustomDates.end])
+  }, [appliedFilters.dateRange, appliedFilters.channel, appliedFilters.searchTerm, appliedFilters.brand, appliedCustomDates.start, appliedCustomDates.end])
 
   useEffect(() => {
     // Only fetch detailed products when on detailed tab
     if (activeTab === 'detailed') {
       fetchDetailedProducts()
     }
-  }, [activeTab, currentPage, pageSize, sortBy, sortOrder, appliedFilters.dateRange, appliedFilters.channel, appliedFilters.searchTerm, appliedCustomDates.start, appliedCustomDates.end])
+  }, [activeTab, currentPage, pageSize, sortBy, sortOrder, appliedFilters.dateRange, appliedFilters.channel, appliedFilters.searchTerm, appliedFilters.brand, appliedCustomDates.start, appliedCustomDates.end])
 
   // Export to Excel
   const exportToExcel = async () => {
@@ -317,6 +323,7 @@ export function ProductsReport() {
         ...(appliedCustomDates.end && { endDate: appliedCustomDates.end }),
         ...(appliedFilters.channel !== 'all' && { channel: appliedFilters.channel }),
         ...(appliedFilters.searchTerm !== 'all' && { productCode: appliedFilters.searchTerm }),
+        ...(appliedFilters.brand !== 'all' && { brand: appliedFilters.brand }),
       })
 
       const response = await fetch(`/api/products/details?${params}`)
@@ -329,6 +336,7 @@ export function ProductsReport() {
       worksheet.columns = [
         { header: 'Product Code', key: 'productCode', width: 15 },
         { header: 'Product Name', key: 'productName', width: 40 },
+        { header: 'Product Brand', key: 'brand', width: 20 },
         { header: 'Quantity', key: 'totalQuantity', width: 15 },
         { header: 'Avg Price', key: 'avgPrice', width: 15 },
         { header: 'Total Amount', key: 'totalSales', width: 18 },
@@ -337,6 +345,7 @@ export function ProductsReport() {
       worksheet.addRows(allProducts.map((p: DetailedProduct) => ({
         productCode: p.productCode,
         productName: p.productName,
+        brand: p.brand || 'No Brand',
         totalQuantity: p.totalQuantity,
         avgPrice: parseFloat(p.avgPrice.toFixed(2)),
         totalSales: parseFloat(p.totalSales.toFixed(2)),
@@ -467,9 +476,14 @@ export function ProductsReport() {
                 <label className="block text-xs font-semibold text-slate-600 mb-1 uppercase tracking-wide">
                   Date Range
                 </label>
-                <Select 
-                  value={filters.dateRange} 
-                  onValueChange={(value) => setFilters({ ...filters, dateRange: value })}
+                <Select
+                  value={filters.dateRange}
+                  onValueChange={(value) => {
+                    const newFilters = { ...filters, dateRange: value }
+                    setFilters(newFilters)
+                    setAppliedFilters(newFilters)
+                    setCurrentPage(1)
+                  }}
                 >
                   <SelectTrigger className="w-full">
                     <SelectValue placeholder="Select date range" />
@@ -490,7 +504,13 @@ export function ProductsReport() {
               <div className={filters.dateRange !== 'custom' ? 'opacity-50 pointer-events-none' : ''}>
                 <CustomDatePicker
                   value={customStartDate}
-                  onChange={setCustomStartDate}
+                  onChange={(date) => {
+                    setCustomStartDate(date)
+                    if (date && customEndDate) {
+                      setAppliedCustomDates({ start: date, end: customEndDate })
+                      setCurrentPage(1)
+                    }
+                  }}
                   label="Start Date"
                   placeholder="Select start date"
                 />
@@ -498,7 +518,13 @@ export function ProductsReport() {
               <div className={filters.dateRange !== 'custom' ? 'opacity-50 pointer-events-none' : ''}>
                 <CustomDatePicker
                   value={customEndDate}
-                  onChange={setCustomEndDate}
+                  onChange={(date) => {
+                    setCustomEndDate(date)
+                    if (customStartDate && date) {
+                      setAppliedCustomDates({ start: customStartDate, end: date })
+                      setCurrentPage(1)
+                    }
+                  }}
                   label="End Date"
                   placeholder="Select end date"
                 />
@@ -507,24 +533,34 @@ export function ProductsReport() {
 
             {/* Main Filters */}
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {/* Channel Filter */}
+              {/* Product Brand Filter */}
               <SearchableSelect
-                value={filters.channel === 'all' ? '' : filters.channel}
-                onChange={(value) => setFilters({ ...filters, channel: value || 'all' })}
+                value={filters.brand === 'all' ? '' : filters.brand}
+                onChange={(value) => {
+                  const newFilters = { ...filters, brand: value || 'all', searchTerm: 'all' }
+                  setFilters(newFilters)
+                  setAppliedFilters(newFilters)
+                  setCurrentPage(1)
+                }}
                 options={[
-                  ...(filterOptions?.channels || []).map(c => ({
-                    value: c.code,
-                    label: c.name
+                  ...(filterOptions?.brands || []).map(b => ({
+                    value: b.code,
+                    label: b.name
                   }))
                 ]}
-                placeholder="All Channels"
-                label="Channel"
+                placeholder="All Brands"
+                label="Product Brand"
               />
 
               {/* Product Search Filter */}
               <SearchableSelect
                 value={filters.searchTerm === 'all' ? '' : filters.searchTerm}
-                onChange={(value) => setFilters({ ...filters, searchTerm: value || 'all' })}
+                onChange={(value) => {
+                  const newFilters = { ...filters, searchTerm: value || 'all' }
+                  setFilters(newFilters)
+                  setAppliedFilters(newFilters)
+                  setCurrentPage(1)
+                }}
                 options={[
                   ...(filterOptions?.products || []).map(p => ({
                     value: p.code,
@@ -532,11 +568,11 @@ export function ProductsReport() {
                   }))
                 ]}
                 placeholder="All Products"
-                label="Search Product"
+                label=" Product"
               />
             </div>
 
-            {/* Apply Button */}
+            {/* Filter Status and Reset */}
             <div className="flex items-center justify-between pt-4 border-t border-gray-200">
               <div className="text-sm text-gray-600">
                 {activeFilterCount > 0 && (
@@ -554,14 +590,6 @@ export function ProductsReport() {
                 >
                   <X className="w-4 h-4" />
                   Reset All Filters
-                </Button>
-                <Button
-                  onClick={applyFilters}
-                  className="flex items-center gap-2"
-                  disabled={analyticsLoading || detailsLoading}
-                >
-                  <Filter className="w-4 h-4" />
-                  Apply Filters
                 </Button>
               </div>
             </div>
@@ -714,27 +742,27 @@ export function ProductsReport() {
 
           {/* Charts */}
           <div className="grid gap-6 lg:grid-cols-2">
-            {/* Sales by Channel Bar Chart */}
+            {/* Sales by Brand Bar Chart */}
             <Card>
               <CardHeader>
-                <CardTitle>Products by Channel</CardTitle>
+                <CardTitle>Sales By Brand</CardTitle>
               </CardHeader>
               <CardContent>
                 {analyticsLoading ? (
                   <div className="h-[480px] flex items-center justify-center text-gray-500">Loading...</div>
-                ) : analytics?.salesByChannel.length === 0 ? (
+                ) : analytics?.salesByBrand.length === 0 ? (
                   <div className="h-[480px] flex items-center justify-center text-gray-500">No data available</div>
                 ) : (
                   <ResponsiveContainer width="100%" height={480}>
-                    <BarChart data={analytics?.salesByChannel.slice(0, 10)} margin={{ top: 10, right: 15, left: 45, bottom: 70 }}>
+                    <BarChart data={analytics?.salesByBrand.slice(0, 10)} margin={{ top: 10, right: 15, left: 45, bottom: 70 }}>
                       <CartesianGrid strokeDasharray="3 3" className="stroke-gray-200" />
                       <XAxis
-                        dataKey="channel"
+                        dataKey="brand"
                         angle={-45}
                         textAnchor="end"
                         height={80}
                         tick={{ fontSize: 11 }}
-                        label={{ value: 'Channel', position: 'insideBottom', offset: -10, style: { fontSize: 12, fill: '#1f2937', fontWeight: 600 } }}
+                        label={{ value: 'Brand', position: 'insideBottom', offset: -10, style: { fontSize: 12, fill: '#1f2937', fontWeight: 600 } }}
                       />
                       <YAxis
                         tickFormatter={formatYAxis}
@@ -753,7 +781,7 @@ export function ProductsReport() {
             {/* Product Brand Distribution - Pie Chart & List Combined */}
             <Card>
               <CardHeader>
-                <CardTitle>Product Brand Distribution</CardTitle>
+                <CardTitle>Product Category Distribution</CardTitle>
               </CardHeader>
               <CardContent>
                 {analyticsLoading ? (
@@ -963,6 +991,11 @@ export function ProductsReport() {
                       Product Name{getSortIndicator('product_name')}
                     </th>
                     <th
+                      className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider min-w-[150px]"
+                    >
+                      Product Brand
+                    </th>
+                    <th
                       className="px-4 py-3 text-right text-xs font-semibold text-gray-700 uppercase tracking-wider cursor-pointer hover:bg-gray-100 transition-colors min-w-[120px]"
                       onClick={() => handleSort('total_quantity')}
                     >
@@ -985,13 +1018,13 @@ export function ProductsReport() {
                 <tbody className="bg-white divide-y divide-gray-200">
                   {detailsLoading ? (
                     <tr>
-                      <td colSpan={5} className="px-4 py-8 text-center text-sm text-gray-500">
+                      <td colSpan={6} className="px-4 py-8 text-center text-sm text-gray-500">
                         Loading products...
                       </td>
                     </tr>
                   ) : detailedProducts.length === 0 ? (
                     <tr>
-                      <td colSpan={5} className="px-4 py-8 text-center text-sm text-gray-500">
+                      <td colSpan={6} className="px-4 py-8 text-center text-sm text-gray-500">
                         No products found
                       </td>
                     </tr>
@@ -1003,6 +1036,9 @@ export function ProductsReport() {
                         </td>
                         <td className="px-4 py-3 text-sm text-gray-900">
                           <div className="font-medium">{product.productName}</div>
+                        </td>
+                        <td className="px-4 py-3 text-sm text-gray-900">
+                          {product.brand || 'No Brand'}
                         </td>
                         <td className="px-4 py-3 text-sm text-right text-gray-900 whitespace-nowrap">
                           {product.totalQuantity > 0 ? formatNumber(product.totalQuantity) : '-'}
