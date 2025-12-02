@@ -597,7 +597,7 @@ export const DynamicWorkingDashboard: React.FC = () => {
                     <YAxis
                       yAxisId="left"
                       tickFormatter={(value) => `AED${(value / 1000).toFixed(0)}K`}
-                      label={{ value: 'Sales (AED)', angle: -90, position: 'insideLeft', style: { fontSize: 11, fill: '#374151', fontWeight: 600 } }}
+                      label={{ value: 'Sales (AED)', angle: -90, position: 'insideLeft', offset: -2, style: { fontSize: 11, fill: '#374151', fontWeight: 600, textAnchor: 'middle' } }}
                       tick={{ fontSize: isMobile ? 10 : 12, fill: '#6b7280' }}
                     />
                     {/* Right Y-Axis for Orders, Customers */}
@@ -891,6 +891,7 @@ export const DynamicWorkingDashboard: React.FC = () => {
                         outerRadius={isMobile ? 70 : 90}
                         fill="#8884d8"
                         dataKey="sales"
+                        style={{ fontSize: isMobile ? '9px' : '10px' }}
                       >
                         {pieChartData.map((entry, index) => (
                           <Cell key={`cell-${index}`} fill={CHANNEL_COLORS[index % CHANNEL_COLORS.length]} />

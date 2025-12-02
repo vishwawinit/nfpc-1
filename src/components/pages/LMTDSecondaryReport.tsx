@@ -574,7 +574,6 @@ export function LMTDSecondaryReport() {
                 <p className="text-xl font-bold text-gray-800 mt-2">{formatCurrency(summary.totalMtdRevenue)}</p>
                 <p className="text-xs text-gray-500 mt-1">{summary.totalMtdQuantity.toLocaleString()} units</p>
               </div>
-              <IndianRupee className="text-blue-600" size={24} />
             </div>
           </div>
 
@@ -742,21 +741,23 @@ export function LMTDSecondaryReport() {
                 </div>
               </div>
             ) : (
-              <ResponsiveContainer width="100%" height={350}>
-                <LineChart data={chartData.daily} margin={{ top: 5, right: 30, left: 20, bottom: 70 }}>
+              <ResponsiveContainer width="100%" height={400}>
+                <LineChart data={chartData.daily} margin={{ top: 10, right: 30, left: 20, bottom: 80 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
-                <XAxis 
-                  dataKey="date" 
-                  angle={-45} 
-                  textAnchor="end" 
-                  height={70} 
+                <XAxis
+                  dataKey="date"
+                  angle={-45}
+                  textAnchor="end"
+                  height={70}
                   fontSize={11}
                   tick={{ fill: '#6b7280' }}
+                  label={{ value: 'Day of Month', position: 'insideBottom', offset: -60, style: { fontSize: 12, fill: '#374151', fontWeight: 600 } }}
                 />
-                <YAxis 
+                <YAxis
                   tick={{ fill: '#6b7280' }}
                   fontSize={11}
                   tickFormatter={(value) => `AED${(value / 1000).toFixed(0)}K`}
+                  label={{ value: 'Revenue (AED)', angle: -90, position: 'insideLeft', offset: -15, style: { fontSize: 12, fill: '#374151', fontWeight: 600, textAnchor: 'middle' } }}
                 />
                 <RechartsTooltip 
                   formatter={(value: number) => formatCurrency(value)}
@@ -795,18 +796,27 @@ export function LMTDSecondaryReport() {
               <Package className="w-5 h-5 text-blue-600" />
               <h3 className="text-lg font-semibold text-gray-900">Top 10 Products by MTD Revenue</h3>
             </div>
-            <ResponsiveContainer width="100%" height={320}>
+            <ResponsiveContainer width="100%" height={380}>
               <BarChart data={chartData.products.map(d => ({
                 name: d.name.length > 20 ? d.name.substring(0, 20) + '...' : d.name,
                 MTD: d.mtdRevenue,
                 LMTD: d.lmtdRevenue
-              }))}>
+              }))} margin={{ top: 10, right: 20, left: 20, bottom: 90 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
-                <XAxis dataKey="name" angle={-45} textAnchor="end" height={100} fontSize={10} tick={{ fill: '#6b7280' }} />
-                <YAxis 
+                <XAxis
+                  dataKey="name"
+                  angle={-45}
+                  textAnchor="end"
+                  height={100}
+                  fontSize={10}
+                  tick={{ fill: '#6b7280' }}
+                  label={{ value: 'Product Name', position: 'insideBottom', offset: -75, style: { fontSize: 11, fill: '#374151', fontWeight: 600 } }}
+                />
+                <YAxis
                   tick={{ fill: '#6b7280' }}
                   fontSize={11}
                   tickFormatter={(value) => value >= 1000 ? `AED${(value / 1000).toFixed(0)}K` : `AED${value}`}
+                  label={{ value: 'Revenue (AED)', angle: -90, position: 'insideLeft', offset: -15, style: { fontSize: 11, fill: '#374151', fontWeight: 600, textAnchor: 'middle' } }}
                 />
                 <RechartsTooltip formatter={(value: number) => formatCurrency(value)} />
                 <Legend />
@@ -822,18 +832,27 @@ export function LMTDSecondaryReport() {
               <Store className="w-5 h-5 text-orange-600" />
               <h3 className="text-lg font-semibold text-gray-900">Top 10 Stores by MTD Revenue</h3>
             </div>
-            <ResponsiveContainer width="100%" height={320}>
+            <ResponsiveContainer width="100%" height={380}>
               <BarChart data={chartData.stores.map(d => ({
                 name: d.name.length > 20 ? d.name.substring(0, 20) + '...' : d.name,
                 MTD: d.mtdRevenue,
                 LMTD: d.lmtdRevenue
-              }))}>
+              }))} margin={{ top: 10, right: 20, left: 20, bottom: 90 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
-                <XAxis dataKey="name" angle={-45} textAnchor="end" height={100} fontSize={10} tick={{ fill: '#6b7280' }} />
-                <YAxis 
+                <XAxis
+                  dataKey="name"
+                  angle={-45}
+                  textAnchor="end"
+                  height={100}
+                  fontSize={10}
+                  tick={{ fill: '#6b7280' }}
+                  label={{ value: 'Store Name', position: 'insideBottom', offset: -75, style: { fontSize: 11, fill: '#374151', fontWeight: 600 } }}
+                />
+                <YAxis
                   tick={{ fill: '#6b7280' }}
                   fontSize={11}
                   tickFormatter={(value) => value >= 1000 ? `AED${(value / 1000).toFixed(0)}K` : `AED${value}`}
+                  label={{ value: 'Revenue (AED)', angle: -90, position: 'insideLeft', offset: -15, style: { fontSize: 11, fill: '#374151', fontWeight: 600, textAnchor: 'middle' } }}
                 />
                 <RechartsTooltip formatter={(value: number) => formatCurrency(value)} />
                 <Legend />
@@ -912,10 +931,6 @@ export function LMTDSecondaryReport() {
               <thead className="bg-gray-50 border-b-2 border-gray-300 sticky top-0 z-10 shadow-sm">
                 <tr>
                   <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Date</th>
-                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">TL Code</th>
-                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">TL Name</th>
-                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">User Code</th>
-                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">User Name</th>
                   <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Store Code</th>
                   <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Store Name</th>
                   <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Chain Name</th>
@@ -936,14 +951,6 @@ export function LMTDSecondaryReport() {
                   <tr key={index} className="hover:bg-gray-50 transition-colors">
                     <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-900">
                       {item.date ? new Date(item.date).toLocaleDateString('en-GB') : '-'}
-                    </td>
-                    <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-900">{item.tlCode || '-'}</td>
-                    <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-900">
-                      {item.tlName?.length > 20 ? `${item.tlName.substring(0, 20)}...` : item.tlName || '-'}
-                    </td>
-                    <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-900">{item.fieldUserCode || '-'}</td>
-                    <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-900">
-                      {item.fieldUserName?.length > 20 ? `${item.fieldUserName.substring(0, 20)}...` : item.fieldUserName || '-'}
                     </td>
                     <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-900">{item.storeCode || '-'}</td>
                     <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-900">

@@ -134,7 +134,7 @@ export async function GET(request: NextRequest) {
     // OPTIMIZED main query - Using LEFT JOIN instead of FULL OUTER JOIN for better performance
     // All data is preserved by using UNION to get all unique combinations first
     const mainQueryText = `
-      WITH mtd_data AS MATERIALIZED (
+      WITH mtd_data AS (
         SELECT
           trx_usercode,
           customer_code,
@@ -152,7 +152,7 @@ export async function GET(request: NextRequest) {
           ${whereClause}
         GROUP BY trx_usercode, customer_code, line_itemcode
       ),
-      lmtd_data AS MATERIALIZED (
+      lmtd_data AS (
         SELECT
           trx_usercode,
           customer_code,
@@ -214,9 +214,9 @@ export async function GET(request: NextRequest) {
       LIMIT ${limit}
     `
 
-    // HYPER-OPTIMIZED summary query with materialized CTEs
+    // HYPER-OPTIMIZED summary query
     const summaryQueryText = `
-      WITH mtd_summary AS MATERIALIZED (
+      WITH mtd_summary AS (
         SELECT
           SUM(ABS(COALESCE(line_quantitybu, 0))) as quantity,
           SUM(CASE WHEN trx_totalamount > 0 THEN trx_totalamount ELSE 0 END) as revenue,
@@ -230,7 +230,7 @@ export async function GET(request: NextRequest) {
           AND trx_trxtype = 1
           ${whereClause}
       ),
-      lmtd_summary AS MATERIALIZED (
+      lmtd_summary AS (
         SELECT
           SUM(ABS(COALESCE(line_quantitybu, 0))) as quantity,
           SUM(CASE WHEN trx_totalamount > 0 THEN trx_totalamount ELSE 0 END) as revenue,
@@ -258,7 +258,7 @@ export async function GET(request: NextRequest) {
 
     // OPTIMIZED daily trend query - Using LEFT JOIN for better performance
     const dailyTrendQueryText = `
-      WITH mtd_trend AS MATERIALIZED (
+      WITH mtd_trend AS (
         SELECT
           EXTRACT(DAY FROM trx_trxdate)::int as day,
           SUM(CASE WHEN trx_totalamount > 0 THEN trx_totalamount ELSE 0 END) as revenue
@@ -269,7 +269,7 @@ export async function GET(request: NextRequest) {
           ${whereClause}
         GROUP BY EXTRACT(DAY FROM trx_trxdate)
       ),
-      lmtd_trend AS MATERIALIZED (
+      lmtd_trend AS (
         SELECT
           EXTRACT(DAY FROM trx_trxdate)::int as day,
           SUM(CASE WHEN trx_totalamount > 0 THEN trx_totalamount ELSE 0 END) as revenue
@@ -296,9 +296,9 @@ export async function GET(request: NextRequest) {
       ORDER BY day
     `
 
-    // HYPER-OPTIMIZED top products query with materialized CTEs
+    // HYPER-OPTIMIZED top products query
     const topProductsQueryText = `
-      WITH mtd_products AS MATERIALIZED (
+      WITH mtd_products AS (
         SELECT
           line_itemcode as product_code,
           MAX(line_itemdescription) as product_name,
@@ -313,7 +313,7 @@ export async function GET(request: NextRequest) {
         ORDER BY mtd_revenue DESC
         LIMIT 10
       ),
-      lmtd_products AS MATERIALIZED (
+      lmtd_products AS (
         SELECT
           line_itemcode as product_code,
           SUM(CASE WHEN trx_totalamount > 0 THEN trx_totalamount ELSE 0 END) as lmtd_revenue
