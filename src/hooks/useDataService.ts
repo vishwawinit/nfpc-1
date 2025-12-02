@@ -1,8 +1,65 @@
-import { useState, useEffect, useCallback, useMemo } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { dataService } from '@/services/dataService'
 import type { DashboardKPI, SalesTrendData, Customer, Product, Transaction, FilterOptions } from '@/types'
 
-// Helper function for safe fetch - no timeout to allow slow database queries
+// Request deduplication cache - prevents duplicate simultaneous requests
+// Stores parsed JSON responses instead of Response objects to avoid "body stream already read" errors
+const pendingRequests = new Map<string, Promise<any>>()
+
+// Helper function for safe fetch with request deduplication
+// Returns the parsed JSON response directly
+const safeFetchJSON = async (url: string): Promise<any> => {
+  // Ensure we're in the browser
+  if (typeof window === 'undefined') {
+    throw new Error('Fetch can only be called in the browser')
+  }
+
+  // Check if there's already a pending request for this URL
+  if (pendingRequests.has(url)) {
+    console.log(`⏳ Deduplicating request for: ${url}`)
+    return pendingRequests.get(url)!
+  }
+
+  // Create new request promise that resolves to parsed JSON
+  const requestPromise = (async () => {
+    try {
+      const response = await globalThis.fetch(url, {
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        cache: 'no-store' as RequestCache,
+      })
+
+      // If not ok, throw with status
+      if (!response.ok) {
+        const errorText = await response.text().catch(() => 'Unknown error')
+        throw new Error(`HTTP ${response.status}: ${errorText}`)
+      }
+
+      // Parse and return JSON
+      const data = await response.json()
+      return data
+    } catch (error) {
+      // Check if it's a network error
+      if (error instanceof TypeError && error.message === 'Failed to fetch') {
+        throw new Error('Network error: Unable to connect to the server. Please check if the Next.js dev server is running on port 3000.')
+      }
+
+      // Re-throw other errors
+      throw error
+    } finally {
+      // Remove from pending requests after completion
+      pendingRequests.delete(url)
+    }
+  })()
+
+  // Store the pending request
+  pendingRequests.set(url, requestPromise)
+  return requestPromise
+}
+
+// Original safeFetch for backward compatibility (without deduplication)
 const safeFetch = async (url: string): Promise<Response> => {
   // Ensure we're in the browser
   if (typeof window === 'undefined') {
@@ -17,12 +74,12 @@ const safeFetch = async (url: string): Promise<Response> => {
       },
       cache: 'no-store' as RequestCache,
     })
-    
+
     // If response is ok, return it
     if (response.ok) {
       return response
     }
-    
+
     // If not ok, throw with status
     const errorText = await response.text().catch(() => 'Unknown error')
     throw new Error(`HTTP ${response.status}: ${errorText}`)
@@ -31,7 +88,7 @@ const safeFetch = async (url: string): Promise<Response> => {
     if (error instanceof TypeError && error.message === 'Failed to fetch') {
       throw new Error('Network error: Unable to connect to the server. Please check if the Next.js dev server is running on port 3000.')
     }
-    
+
     // Re-throw other errors
     throw error
   }
@@ -103,24 +160,9 @@ export function useDashboardKPI(
       // Log the request for debugging
       console.log('KPI Hook: Fetching with params:', params.toString())
 
-      // Use real API endpoint with date range and filters
-      // Use longer timeout for KPI as it may involve complex aggregations
+      // Use real API endpoint with date range and filters - with deduplication
       const url = `/api/dashboard/kpi?${params}`
-      const response = await safeFetch(url)
-      
-      if (!response.ok) {
-        const errorText = await response.text()
-        let errorMessage = `HTTP ${response.status}: ${response.statusText}`
-        try {
-          const errorJson = JSON.parse(errorText)
-          errorMessage = errorJson.error || errorJson.message || errorMessage
-        } catch {
-          errorMessage = errorText || errorMessage
-        }
-        throw new Error(errorMessage)
-      }
-
-      const result = await response.json()
+      const result = await safeFetchJSON(url)
 
       if (result.success) {
         setData(result.data)
@@ -230,21 +272,7 @@ export function useSalesTrend(param: number | string = 30, options: UseDataServi
         allParams: params.toString()
       })
 
-      const response = await safeFetch(`/api/dashboard/sales-trend?${params}`)
-      
-      if (!response.ok) {
-        const errorText = await response.text()
-        let errorMessage = `HTTP ${response.status}: ${response.statusText}`
-        try {
-          const errorJson = JSON.parse(errorText)
-          errorMessage = errorJson.error || errorJson.message || errorMessage
-        } catch {
-          errorMessage = errorText || errorMessage
-        }
-        throw new Error(errorMessage)
-      }
-
-      const result = await response.json()
+      const result = await safeFetchJSON(`/api/dashboard/sales-trend?${params}`)
 
       if (result.success) {
         setData(result.data)
@@ -301,6 +329,9 @@ export function useTopCustomers(limit: number = 20, dateRange: string = 'thisMon
   // Convert additionalParams to string for stable comparison
   const paramsString = useMemo(() => additionalParams?.toString() || '', [additionalParams])
 
+  // Track fetched params to prevent Strict Mode double-execution
+  const fetchedRef = useRef<string>('')
+
   const fetchData = useCallback(async () => {
     if (!enabled) return
     
@@ -324,21 +355,7 @@ export function useTopCustomers(limit: number = 20, dateRange: string = 'thisMon
         })
       }
 
-      const response = await safeFetch(`/api/customers/top?${params}`)
-      
-      if (!response.ok) {
-        const errorText = await response.text()
-        let errorMessage = `HTTP ${response.status}: ${response.statusText}`
-        try {
-          const errorJson = JSON.parse(errorText)
-          errorMessage = errorJson.error || errorJson.message || errorMessage
-        } catch {
-          errorMessage = errorText || errorMessage
-        }
-        throw new Error(errorMessage)
-      }
-
-      const result = await response.json()
+      const result = await safeFetchJSON(`/api/customers/top?${params}`)
 
       if (result.success) {
         setData(result.data)
@@ -373,8 +390,17 @@ export function useTopCustomers(limit: number = 20, dateRange: string = 'thisMon
   }, [fetchData])
 
   useEffect(() => {
+    // Generate unique key for this request
+    const requestKey = `${limit}-${dateRange}-${paramsString}`
+
+    // Skip if already fetched for these params (prevents Strict Mode double-execution)
+    if (fetchedRef.current === requestKey) {
+      return
+    }
+
+    fetchedRef.current = requestKey
     fetchData()
-  }, [fetchData])
+  }, [fetchData, limit, dateRange, paramsString])
 
   useEffect(() => {
     if (!refreshInterval || !enabled) return
@@ -394,6 +420,9 @@ export function useTopProducts(limit: number = 20, dateRange: string = 'thisMont
 
   // Convert additionalParams to string for stable comparison
   const paramsString = useMemo(() => additionalParams?.toString() || '', [additionalParams])
+
+  // Track fetched params to prevent Strict Mode double-execution
+  const fetchedRef = useRef<string>('')
 
   const fetchData = useCallback(async () => {
     if (!enabled) return
@@ -418,21 +447,7 @@ export function useTopProducts(limit: number = 20, dateRange: string = 'thisMont
         })
       }
 
-      const response = await safeFetch(`/api/products/top?${params}`)
-      
-      if (!response.ok) {
-        const errorText = await response.text()
-        let errorMessage = `HTTP ${response.status}: ${response.statusText}`
-        try {
-          const errorJson = JSON.parse(errorText)
-          errorMessage = errorJson.error || errorJson.message || errorMessage
-        } catch {
-          errorMessage = errorText || errorMessage
-        }
-        throw new Error(errorMessage)
-      }
-
-      const result = await response.json()
+      const result = await safeFetchJSON(`/api/products/top?${params}`)
 
       if (result.success) {
         setData(result.data)
@@ -467,8 +482,17 @@ export function useTopProducts(limit: number = 20, dateRange: string = 'thisMont
   }, [fetchData])
 
   useEffect(() => {
+    // Generate unique key for this request
+    const requestKey = `${limit}-${dateRange}-${paramsString}`
+
+    // Skip if already fetched for these params (prevents Strict Mode double-execution)
+    if (fetchedRef.current === requestKey) {
+      return
+    }
+
+    fetchedRef.current = requestKey
     fetchData()
-  }, [fetchData])
+  }, [fetchData, limit, dateRange, paramsString])
 
   useEffect(() => {
     if (!refreshInterval || !enabled) return
@@ -488,6 +512,9 @@ export function useSalesByChannel(options: UseDataServiceOptions & { additionalP
 
   // Convert additionalParams to string for stable comparison
   const paramsString = useMemo(() => additionalParams?.toString() || '', [additionalParams])
+
+  // Track fetched params to prevent Strict Mode double-execution
+  const fetchedRef = useRef<string>('')
 
   const fetchData = useCallback(async () => {
     if (!enabled) return
@@ -510,21 +537,7 @@ export function useSalesByChannel(options: UseDataServiceOptions & { additionalP
         })
       }
 
-      const response = await safeFetch(`/api/dashboard/sales-by-channel?${params}`)
-      
-      if (!response.ok) {
-        const errorText = await response.text()
-        let errorMessage = `HTTP ${response.status}: ${response.statusText}`
-        try {
-          const errorJson = JSON.parse(errorText)
-          errorMessage = errorJson.error || errorJson.message || errorMessage
-        } catch {
-          errorMessage = errorText || errorMessage
-        }
-        throw new Error(errorMessage)
-      }
-
-      const result = await response.json()
+      const result = await safeFetchJSON(`/api/dashboard/sales-by-channel?${params}`)
 
       if (result.success) {
         setData(result.data)
@@ -559,8 +572,17 @@ export function useSalesByChannel(options: UseDataServiceOptions & { additionalP
   }, [fetchData])
 
   useEffect(() => {
+    // Generate unique key for this request
+    const requestKey = paramsString
+
+    // Skip if already fetched for these params (prevents Strict Mode double-execution)
+    if (fetchedRef.current === requestKey) {
+      return
+    }
+
+    fetchedRef.current = requestKey
     fetchData()
-  }, [fetchData])
+  }, [fetchData, paramsString])
 
   useEffect(() => {
     if (!refreshInterval || !enabled) return
@@ -625,21 +647,7 @@ export function useTransactions(filters: Partial<FilterOptions> = {}, limit: num
         })
       }
 
-      const response = await safeFetch(`/api/transactions/recent?${params.toString()}`)
-      
-      if (!response.ok) {
-        const errorText = await response.text()
-        let errorMessage = `HTTP ${response.status}: ${response.statusText}`
-        try {
-          const errorJson = JSON.parse(errorText)
-          errorMessage = errorJson.error || errorJson.message || errorMessage
-        } catch {
-          errorMessage = errorText || errorMessage
-        }
-        throw new Error(errorMessage)
-      }
-
-      const result = await response.json()
+      const result = await safeFetchJSON(`/api/transactions/recent?${params.toString()}`)
 
       if (result.success) {
         setData(result.data)
@@ -690,21 +698,7 @@ export function useRecentTransactions(limit: number = 5, options: UseDataService
       setLoading(true)
       setError(null)
 
-      const response = await safeFetch(`/api/transactions/recent?limit=${limit}`)
-      
-      if (!response.ok) {
-        const errorText = await response.text()
-        let errorMessage = `HTTP ${response.status}: ${response.statusText}`
-        try {
-          const errorJson = JSON.parse(errorText)
-          errorMessage = errorJson.error || errorJson.message || errorMessage
-        } catch {
-          errorMessage = errorText || errorMessage
-        }
-        throw new Error(errorMessage)
-      }
-
-      const result = await response.json()
+      const result = await safeFetchJSON(`/api/transactions/recent?limit=${limit}`)
 
       if (result.success) {
         setData(result.data)
@@ -759,21 +753,7 @@ export function useTargetsAchievement(dateRange: string = 'thisYear', userId?: s
       const params = new URLSearchParams({ range: dateRange })
       if (userId) params.append('userId', userId)
 
-      const response = await safeFetch(`/api/targets/achievement?${params.toString()}`)
-      
-      if (!response.ok) {
-        const errorText = await response.text()
-        let errorMessage = `HTTP ${response.status}: ${response.statusText}`
-        try {
-          const errorJson = JSON.parse(errorText)
-          errorMessage = errorJson.error || errorJson.message || errorMessage
-        } catch {
-          errorMessage = errorText || errorMessage
-        }
-        throw new Error(errorMessage)
-      }
-
-      const result = await response.json()
+      const result = await safeFetchJSON(`/api/targets/achievement?${params.toString()}`)
 
       if (result.success) {
         setData(result.data)
@@ -826,21 +806,7 @@ export function useCategoryPerformance(limit: number = 10, dateRange: string = '
       setError(null)
 
       // Use new category performance API
-      const response = await safeFetch(`/api/categories/performance?limit=${limit}&range=${dateRange}`)
-      
-      if (!response.ok) {
-        const errorText = await response.text()
-        let errorMessage = `HTTP ${response.status}: ${response.statusText}`
-        try {
-          const errorJson = JSON.parse(errorText)
-          errorMessage = errorJson.error || errorJson.message || errorMessage
-        } catch {
-          errorMessage = errorText || errorMessage
-        }
-        throw new Error(errorMessage)
-      }
-
-      const result = await response.json()
+      const result = await safeFetchJSON(`/api/categories/performance?limit=${limit}&range=${dateRange}`)
 
       if (result.success) {
         setData(result.data)
@@ -950,21 +916,7 @@ export function useCustomerAnalytics(
         params.append('limit', stablePagination.limit.toString())
       }
 
-      const response = await safeFetch(`/api/customers/analytics?${params.toString()}`)
-      
-      if (!response.ok) {
-        const errorText = await response.text()
-        let errorMessage = `HTTP ${response.status}: ${response.statusText}`
-        try {
-          const errorJson = JSON.parse(errorText)
-          errorMessage = errorJson.error || errorJson.message || errorMessage
-        } catch {
-          errorMessage = errorText || errorMessage
-        }
-        throw new Error(errorMessage)
-      }
-
-      const result = await response.json()
+      const result = await safeFetchJSON(`/api/customers/analytics?${params.toString()}`)
 
       if (result.success) {
         setData({

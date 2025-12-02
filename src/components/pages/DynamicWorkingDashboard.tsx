@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from 'react'
+import React, { useState, useMemo, useEffect, useRef } from 'react'
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, ComposedChart, PieChart, Pie, Cell } from 'recharts'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog'
@@ -29,6 +29,7 @@ const formatNumber = (value: number) => {
 
 export const DynamicWorkingDashboard: React.FC = () => {
   const [selectedDateRange, setSelectedDateRange] = useState('lastMonth')
+  const [isInitialized, setIsInitialized] = useState(false)
   const { isMobile, styles } = useResponsive()
 
 
@@ -162,26 +163,20 @@ export const DynamicWorkingDashboard: React.FC = () => {
     setDateRange(startDate, endDate)
   }
 
-  // Initialize date range on mount - set to last month
+  // Initialize date range on mount - set to last month (only once, even in Strict Mode)
   useEffect(() => {
-    handleDateRangeSelect('lastMonth')
-  }, [])
+    if (!isInitialized) {
+      handleDateRangeSelect('lastMonth')
+      setIsInitialized(true)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isInitialized, selectedDateRange])
 
   // Memoize query params to prevent infinite re-renders
+  // Return string instead of URLSearchParams object to ensure stable reference
   const queryParams = useMemo(() => {
     const params = getQueryParams()
-    console.log('Dashboard: Query params updated:', {
-      paramsString: params.toString(),
-      startDate: params.get('startDate'),
-      endDate: params.get('endDate'),
-      filters: {
-        startDate: filters.startDate,
-        endDate: filters.endDate,
-        areaCode: filters.areaCode,
-        subAreaCode: filters.subAreaCode
-      }
-    })
-    return params
+    return params.toString()
   }, [
     filters.startDate,
     filters.endDate,
@@ -200,21 +195,29 @@ export const DynamicWorkingDashboard: React.FC = () => {
   // Fetch data - Limited to Top 20 for dashboard sections - WITH FILTERS APPLIED
   // Only fetch after filters are loaded and dates are set to prevent showing wrong data
   const shouldFetch = !filtersLoading && filters.startDate && filters.endDate
-  const { data: topCustomersData, loading: customersLoading } = useTopCustomers(20, selectedDateRange, { enabled: shouldFetch, additionalParams: queryParams })
-  const { data: topProductsData, loading: productsLoading } = useTopProducts(20, selectedDateRange, { enabled: shouldFetch, additionalParams: queryParams })
-  const { data: salesByChannelData, loading: channelLoading } = useSalesByChannel({ enabled: shouldFetch, additionalParams: queryParams })
+  // Convert string back to URLSearchParams for hooks
+  const queryParamsObj = useMemo(() => new URLSearchParams(queryParams), [queryParams])
+  const { data: topCustomersData, loading: customersLoading } = useTopCustomers(20, selectedDateRange, { enabled: shouldFetch, additionalParams: queryParamsObj })
+  const { data: topProductsData, loading: productsLoading } = useTopProducts(20, selectedDateRange, { enabled: shouldFetch, additionalParams: queryParamsObj })
+  const { data: salesByChannelData, loading: channelLoading } = useSalesByChannel({ enabled: shouldFetch, additionalParams: queryParamsObj })
 
   // Daily Sales Trend Data - using the same API as daily sales report
   const [dailySalesTrendData, setDailySalesTrendData] = useState<any[]>([])
   const [trendLoading, setTrendLoading] = useState(false)
+  const trendFetchedRef = React.useRef<string>('')
 
   // Fetch daily sales trend data
   useEffect(() => {
+    // Skip if we already fetched for these params (prevents Strict Mode double-log)
+    if (trendFetchedRef.current === queryParams) {
+      return
+    }
+
     const fetchDailySalesTrend = async () => {
       if (typeof window === 'undefined') return
       if (!filters.startDate || !filters.endDate) return
 
-      const currentQueryParams = getQueryParams()
+      const currentQueryParams = new URLSearchParams(queryParams)
 
       // Check client cache first
       const cachedData = clientCache.get('/api/daily-sales/trend', currentQueryParams)
@@ -250,8 +253,10 @@ export const DynamicWorkingDashboard: React.FC = () => {
       }
     }
 
+    // Mark as fetched to prevent Strict Mode double-execution
+    trendFetchedRef.current = queryParams
     fetchDailySalesTrend()
-  }, [queryParams, filters.startDate, filters.endDate, getQueryParams])
+  }, [queryParams, filters.startDate, filters.endDate])
 
   // Transform channel data for pie chart - group < 5% as "Others"
   const pieChartData = useMemo(() => {

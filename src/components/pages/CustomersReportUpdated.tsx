@@ -200,7 +200,7 @@ export function CustomersReportUpdated() {
     } finally {
       setLoading(false)
     }
-  }, [selectedPeriod, dateRangeType, customStartDate, customEndDate, customerFilter, regionFilter, cityFilter, chainFilter, salesmanFilter, teamLeaderFilter, productCategoryFilter])
+  }, [selectedPeriod, dateRangeType, customStartDate, customEndDate, customerFilter, regionFilter, cityFilter, chainFilter, salesmanFilter, teamLeaderFilter, productCategoryFilter, currentPage, itemsPerPage])
 
   // Reset to page 1 when filters change (not when pagination changes)
   useEffect(() => {
@@ -214,7 +214,7 @@ export function CustomersReportUpdated() {
   // Fetch data when filters OR pagination change
   useEffect(() => {
     fetchCustomerData()
-  }, [fetchCustomerData, currentPage, itemsPerPage])
+  }, [fetchCustomerData])
 
   // Reset filters
   const resetFilters = () => {

@@ -43,6 +43,7 @@ const buildWhereClause = (params: any) => {
   if (params.endDate) cond.push(`trx_trxdate < ('${params.endDate}'::date + INTERVAL '1 day')`)
   cond.push(`trx_trxtype = 4`)
   if (params.regionCode && params.regionCode !== 'all') cond.push(`route_areacode = '${params.regionCode}'`)
+  if (params.subAreaCode && params.subAreaCode !== 'all') cond.push(`route_subareacode = '${params.subAreaCode}'`)
   if (params.routeCode && params.routeCode !== 'all') cond.push(`trx_routecode = '${params.routeCode}'`)
   if (params.salesmanCode && params.salesmanCode !== 'all') cond.push(`trx_usercode = '${params.salesmanCode}'`)
   return cond.length > 0 ? `WHERE ${cond.join(' AND ')}` : ''
@@ -53,6 +54,7 @@ export async function GET(request: NextRequest) {
     const searchParams = request.nextUrl.searchParams
     const dateRange = searchParams.get('range') || 'thisMonth'
     const regionCode = searchParams.get('region') || 'all'
+    const subAreaCode = searchParams.get('subAreaCode') || 'all'
     const routeCode = searchParams.get('route') || 'all'
     const salesmanCode = searchParams.get('salesman') || 'all'
 
@@ -66,7 +68,7 @@ export async function GET(request: NextRequest) {
     const filterParams = {
       startDate: toLocalDateString(startDate),
       endDate: toLocalDateString(endDate),
-      regionCode, routeCode, salesmanCode
+      regionCode, subAreaCode, routeCode, salesmanCode
     }
 
     const whereClause = buildWhereClause(filterParams)
@@ -74,10 +76,12 @@ export async function GET(request: NextRequest) {
     console.log('🔄 Fetching fresh returns data from database...')
     console.log('📋 Filters:', filterParams)
 
-    // DB-OPTIMIZED: Single CTE scan with all derivations
+    // DB-OPTIMIZED: Single MATERIALIZED CTE scan with all derivations
     // Transaction amounts for summaries, line amounts for product/brand breakdowns
+    // MATERIALIZED forces PostgreSQL to compute the CTE once and store results,
+    // avoiding 9+ re-scans when the CTE is referenced multiple times below
     const optimizedQuery = `
-      WITH returns AS (
+      WITH returns AS MATERIALIZED (
         SELECT
           trx_usercode,
           user_description,
@@ -677,7 +681,7 @@ export async function GET(request: NextRequest) {
       const responseJson = {
         success: true,
         data: responseData,
-        metadata: { dateRange, startDate: filterParams.startDate, endDate: filterParams.endDate, filters: { regionCode, routeCode, salesmanCode } },
+        metadata: { dateRange, startDate: filterParams.startDate, endDate: filterParams.endDate, filters: { regionCode, subAreaCode, routeCode, salesmanCode } },
         timestamp: new Date().toISOString(),
         cached: false
       }

@@ -15,8 +15,8 @@ interface CacheEntry {
 
 class ApiCache {
   private cache: Map<string, CacheEntry> = new Map()
-  private readonly defaultTTL = 30 * 60 * 1000 // 30 minutes default
-  private readonly maxEntries = 100 // Prevent memory leaks
+  private readonly defaultTTL = 60 * 60 * 1000 // 60 minutes default (increased for better caching)
+  private readonly maxEntries = 200 // Increased to cache more entries
 
   /**
    * Generate a cache key from request parameters
@@ -120,5 +120,9 @@ class ApiCache {
   }
 }
 
-// Export a singleton instance
-export const apiCache = new ApiCache()
+// Export a singleton instance - make it persistent across hot reloads in development
+const globalForApiCache = global as unknown as { apiCache: ApiCache }
+export const apiCache = globalForApiCache.apiCache || new ApiCache()
+if (process.env.NODE_ENV !== 'production') {
+  globalForApiCache.apiCache = apiCache
+}

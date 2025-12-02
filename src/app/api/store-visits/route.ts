@@ -126,7 +126,7 @@ export async function GET(request: NextRequest) {
     // Get limit - default to large number to get all data
     const limit = parseInt(searchParams.get('limit') || '100000')
 
-    // Fetch store visits from flat_customer_visit table
+    // Fetch store visits from flat_customer_visit table with actual sales data
     const result = await query(`
       SELECT
         DATE(v.visit_date) as "visitDate",
@@ -146,16 +146,28 @@ export async function GET(request: NextRequest) {
         COALESCE(v.total_time_mins, 0) as "durationMinutes",
         v.type_of_call as "visitPurpose",
         CASE
-          WHEN v.is_productive = 1 THEN 'Productive'
-          WHEN v.is_productive = 0 THEN 'Non-Productive'
-          ELSE 'Not Specified'
+          WHEN COALESCE(s.total_sales, 0) > 0 THEN 'Productive'
+          ELSE 'Non-Productive'
         END as "visitOutcome",
         v.non_productive_reason as "remarks",
         v.visit_latitude as "latitude",
         v.visit_longitude as "longitude",
-        CASE WHEN v.is_productive = 1 THEN 1000 ELSE 0 END as "salesGenerated",
-        0 as "productsOrdered"
+        COALESCE(s.total_sales, 0) as "salesGenerated",
+        COALESCE(s.products_count, 0) as "productsOrdered"
       FROM flat_customer_visit v
+      LEFT JOIN (
+        SELECT
+          trx_usercode,
+          customer_code,
+          DATE(trx_trxdate) as sale_date,
+          SUM(CASE WHEN trx_totalamount > 0 THEN trx_totalamount ELSE 0 END) as total_sales,
+          COUNT(DISTINCT line_itemcode) as products_count
+        FROM flat_daily_sales_report
+        WHERE trx_trxtype = 1
+        GROUP BY trx_usercode, customer_code, DATE(trx_trxdate)
+      ) s ON v.user_code = s.trx_usercode
+        AND v.customer_code = s.customer_code
+        AND DATE(v.visit_date) = s.sale_date
       ${whereClause}
       ORDER BY v.visit_date DESC, v.arrival_time DESC
       LIMIT $${paramIndex}
@@ -190,12 +202,19 @@ export async function GET(request: NextRequest) {
         arrivalTime: row.arrivalTime,
         departureTime: row.departureTime,
         durationMinutes: row.durationMinutes,
-        salesGenerated: row.salesGenerated
+        salesGenerated: row.salesGenerated,
+        visitOutcome: row.visitOutcome
       })))
-      
+
       // Check for GPS data
       const withGPS = result.rows.filter(r => r.latitude && r.longitude).length
       console.log(`Visits with GPS: ${withGPS} / ${result.rows.length}`)
+
+      // Sales analysis
+      const withSales = result.rows.filter(r => parseFloat(r.salesGenerated) > 0).length
+      const totalSales = result.rows.reduce((sum, r) => sum + parseFloat(r.salesGenerated || '0'), 0)
+      console.log(`Productive visits (with sales): ${withSales} / ${result.rows.length}`)
+      console.log(`Total sales: AED ${totalSales.toLocaleString()}`)
 
       // Check unique users
       const uniqueUsers = new Set(result.rows.map(r => r.userCode)).size

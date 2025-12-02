@@ -312,9 +312,11 @@ export async function GET(request: NextRequest) {
       storeCode: searchParams.get('storeCode')
     }
 
-    // Check cache first - each unique filter combination gets its own cache entry
-    const cachedData = apiCache.get('/api/dashboard/filters', searchParams)
+    // Check cache first with longer TTL (2 hours) - each unique filter combination gets its own cache entry
+    const FILTERS_CACHE_TTL = 2 * 60 * 60 * 1000 // 2 hours
+    const cachedData = apiCache.get('/api/dashboard/filters', searchParams, FILTERS_CACHE_TTL)
     if (cachedData) {
+      console.log('✅ Filters cache HIT')
       return NextResponse.json(cachedData)
     }
 

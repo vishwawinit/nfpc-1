@@ -27,10 +27,10 @@ export function ReturnsWastage() {
   const [activeTab, setActiveTab] = useState('return-reasons')
   const [dateRange, setDateRange] = useState('lastMonth')
   const [areaCode, setAreaCode] = useState<string | null>(null)
-  const [subAreaCode, setSubAreaCode] = useState<string | null>(null)
+  const [subAreaCode, setSubAreaCode] = useState<string | null>('DXB') // Default to DXB for faster loading
   const [teamLeaderCode, setTeamLeaderCode] = useState<string | null>(null)
   const [fieldUserRole, setFieldUserRole] = useState<string | null>(null)
-  const [fieldUser, setFieldUser] = useState<string | null>('187219') // Default to a specific user for faster loading
+  const [fieldUser, setFieldUser] = useState<string | null>(null) // Removed default user, using subArea instead
   const [routeCode, setRouteCode] = useState<string | null>(null)
   const { isMobile} = useResponsive()
 

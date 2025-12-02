@@ -1,10 +1,10 @@
 'use client'
 
 import { useState, useEffect, useMemo } from 'react'
-import { 
-  TrendingUp, TrendingDown, Download, BarChart3, Package, 
-  Users, Store, Maximize, Minimize, RefreshCw, Filter, ChevronLeft, 
-  ChevronRight, IndianRupee, DollarSign, X, Info, Calendar
+import {
+  TrendingUp, TrendingDown, Download, BarChart3, Package,
+  Users, Store, Maximize, Minimize, RefreshCw, Filter, ChevronLeft,
+  ChevronRight, IndianRupee, DollarSign, X, Info, Calendar, MapPin
 } from 'lucide-react'
 import { 
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, 
@@ -97,6 +97,8 @@ export function LMTDSecondaryReport() {
   })
   const [teamLeaderCode, setTeamLeaderCode] = useState<string | null>(null)
   const [userCode, setUserCode] = useState<string | null>(null)
+  const [areaCode, setAreaCode] = useState<string | null>(null)
+  const [subAreaCode, setSubAreaCode] = useState<string | null>('DXB') // Default to DXB
   const [storeCode, setStoreCode] = useState<string | null>(null)
   const [chainName, setChainName] = useState<string | null>(null)
   const [productCode, setProductCode] = useState<string | null>(null)
@@ -106,6 +108,8 @@ export function LMTDSecondaryReport() {
   const [filterOptions, setFilterOptions] = useState<any>({
     teamLeaders: [],
     users: [],
+    areas: [],
+    subAreas: [],
     chains: [],
     stores: [],
     products: []
@@ -127,7 +131,7 @@ export function LMTDSecondaryReport() {
   // Load data when filters change
   useEffect(() => {
     fetchData()
-  }, [startDate, endDate, teamLeaderCode, userCode, storeCode, chainName, productCode])
+  }, [startDate, endDate, teamLeaderCode, userCode, areaCode, subAreaCode, storeCode, chainName, productCode])
 
   const fetchFilterOptions = async () => {
     try {
@@ -170,6 +174,8 @@ export function LMTDSecondaryReport() {
       setFilterOptions({
         teamLeaders: [],
         users: [],
+        areas: [],
+        subAreas: [],
         chains: [],
         stores: [],
         products: []
@@ -182,21 +188,21 @@ export function LMTDSecondaryReport() {
       if (retryCount === 0) {
         setLoading(true)
         setError(null)
-        // Add a small delay on initial load to prevent race condition with filter options
-        await new Promise(resolve => setTimeout(resolve, 100))
       }
 
-      console.log('LMTD Report - Fetching data with dates:', { startDate, endDate })
+      console.log('LMTD Report - Fetching data with dates:', { startDate, endDate, subAreaCode })
 
       const params = new URLSearchParams({
         startDate,
         endDate,
         ...(teamLeaderCode && { teamLeaderCode }),
         ...(userCode && { userCode }),
+        ...(areaCode && { areaCode }),
+        ...(subAreaCode && { subAreaCode }),
         ...(storeCode && { storeCode }),
         ...(chainName && { chainName }),
         ...(productCode && { productCode })
-        // No limit - fetch all data
+        // NO LIMIT - Fetch all data (database has indexes)
       })
 
       console.log('LMTD Report - API Request URL:', `/api/lmtd-secondary?${params.toString()}`)
@@ -475,6 +481,8 @@ export function LMTDSecondaryReport() {
                 setEndDate(new Date().toISOString().split('T')[0])
                 setTeamLeaderCode(null)
                 setUserCode(null)
+                setAreaCode(null)
+                setSubAreaCode('DXB') // Reset to default
                 setStoreCode(null)
                 setChainName(null)
                 setProductCode(null)
@@ -514,6 +522,22 @@ export function LMTDSecondaryReport() {
               placeholder={`All Field Users (Available: ${filterOptions.users.length})`}
               icon={<Users className="w-4 h-4 text-gray-500" />}
               label="Field User"
+            />
+            <SearchableSelect
+              value={areaCode}
+              onChange={setAreaCode}
+              options={filterOptions.areas || []}
+              placeholder={`All Areas (Available: ${filterOptions.areas?.length || 0})`}
+              icon={<MapPin className="w-4 h-4 text-gray-500" />}
+              label="Area"
+            />
+            <SearchableSelect
+              value={subAreaCode}
+              onChange={setSubAreaCode}
+              options={filterOptions.subAreas || []}
+              placeholder={`All Sub Areas (Available: ${filterOptions.subAreas?.length || 0})`}
+              icon={<MapPin className="w-4 h-4 text-gray-500" />}
+              label="Sub Area"
             />
             <SearchableSelect
               value={chainName}

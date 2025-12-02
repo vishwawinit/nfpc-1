@@ -27,15 +27,17 @@ export async function GET(request: NextRequest) {
     const endDate = searchParams.get('endDate')
     const teamLeaderCode = searchParams.get('teamLeaderCode')
     const userCode = searchParams.get('userCode')
+    const areaCode = searchParams.get('areaCode')
+    const subAreaCode = searchParams.get('subAreaCode')
     const storeCode = searchParams.get('storeCode')
     const chainName = searchParams.get('chainName')
     const productCategory = searchParams.get('productCategory')
     const productCode = searchParams.get('productCode')
 
-    // Pagination parameters - No limit, fetch all data
+    // Pagination parameters - NO DEFAULT LIMIT (database has indexes for fast queries)
     const page = parseInt(searchParams.get('page') || '1')
     const requestedLimit = searchParams.get('limit')
-    const limit = requestedLimit ? parseInt(requestedLimit) : 999999999 // No limit by default
+    const limit = requestedLimit ? parseInt(requestedLimit) : 999999999 // No limit - database has proper indexes
     const offset = (page - 1) * limit
 
     console.log('LMTD Secondary - Pagination:', { page, limit, offset })
@@ -67,6 +69,8 @@ export async function GET(request: NextRequest) {
       filters: {
         teamLeaderCode: teamLeaderCode || null,
         userCode: userCode || null,
+        areaCode: areaCode || null,
+        subAreaCode: subAreaCode || null,
         storeCode: storeCode || null,
         chainName: chainName || null,
         productCode: productCode || null
@@ -94,6 +98,18 @@ export async function GET(request: NextRequest) {
     if (userCode) {
       filterConditions.push(`trx_usercode = $${paramIndex}`)
       filterParams.push(userCode)
+      paramIndex++
+    }
+
+    if (areaCode) {
+      filterConditions.push(`route_areacode = $${paramIndex}`)
+      filterParams.push(areaCode)
+      paramIndex++
+    }
+
+    if (subAreaCode) {
+      filterConditions.push(`route_subareacode = $${paramIndex}`)
+      filterParams.push(subAreaCode)
       paramIndex++
     }
 
@@ -134,7 +150,7 @@ export async function GET(request: NextRequest) {
     // OPTIMIZED main query - Using LEFT JOIN instead of FULL OUTER JOIN for better performance
     // All data is preserved by using UNION to get all unique combinations first
     const mainQueryText = `
-      WITH mtd_data AS (
+      WITH mtd_data AS MATERIALIZED (
         SELECT
           trx_usercode,
           customer_code,
@@ -146,13 +162,14 @@ export async function GET(request: NextRequest) {
           SUM(ABS(COALESCE(line_quantitybu, 0))) as mtd_quantity,
           SUM(CASE WHEN trx_totalamount > 0 THEN trx_totalamount ELSE 0 END) as mtd_revenue
         FROM ${SALES_TABLE}
-        WHERE trx_trxdate >= $1::date
+        WHERE trx_trxtype = 1
+          AND trx_trxdate >= $1::date
           AND trx_trxdate <= $2::date
-          AND trx_trxtype = 1
           ${whereClause}
         GROUP BY trx_usercode, customer_code, line_itemcode
+        HAVING SUM(CASE WHEN trx_totalamount > 0 THEN trx_totalamount ELSE 0 END) > 0
       ),
-      lmtd_data AS (
+      lmtd_data AS MATERIALIZED (
         SELECT
           trx_usercode,
           customer_code,
@@ -160,13 +177,13 @@ export async function GET(request: NextRequest) {
           SUM(ABS(COALESCE(line_quantitybu, 0))) as lmtd_quantity,
           SUM(CASE WHEN trx_totalamount > 0 THEN trx_totalamount ELSE 0 END) as lmtd_revenue
         FROM ${SALES_TABLE}
-        WHERE trx_trxdate >= $3::date
+        WHERE trx_trxtype = 1
+          AND trx_trxdate >= $3::date
           AND trx_trxdate <= $4::date
-          AND trx_trxtype = 1
           ${whereClause}
         GROUP BY trx_usercode, customer_code, line_itemcode
       ),
-      all_keys AS (
+      all_keys AS MATERIALIZED (
         SELECT trx_usercode, customer_code, line_itemcode FROM mtd_data
         UNION
         SELECT trx_usercode, customer_code, line_itemcode FROM lmtd_data
@@ -214,9 +231,9 @@ export async function GET(request: NextRequest) {
       LIMIT ${limit}
     `
 
-    // HYPER-OPTIMIZED summary query
+    // HYPER-OPTIMIZED summary query with MATERIALIZED CTEs
     const summaryQueryText = `
-      WITH mtd_summary AS (
+      WITH mtd_summary AS MATERIALIZED (
         SELECT
           SUM(ABS(COALESCE(line_quantitybu, 0))) as quantity,
           SUM(CASE WHEN trx_totalamount > 0 THEN trx_totalamount ELSE 0 END) as revenue,
@@ -225,12 +242,12 @@ export async function GET(request: NextRequest) {
           COUNT(DISTINCT trx_usercode) as users,
           COUNT(DISTINCT route_salesmancode) as team_leaders
         FROM ${SALES_TABLE}
-        WHERE trx_trxdate >= $1::date
+        WHERE trx_trxtype = 1
+          AND trx_trxdate >= $1::date
           AND trx_trxdate <= $2::date
-          AND trx_trxtype = 1
           ${whereClause}
       ),
-      lmtd_summary AS (
+      lmtd_summary AS MATERIALIZED (
         SELECT
           SUM(ABS(COALESCE(line_quantitybu, 0))) as quantity,
           SUM(CASE WHEN trx_totalamount > 0 THEN trx_totalamount ELSE 0 END) as revenue,
@@ -239,9 +256,9 @@ export async function GET(request: NextRequest) {
           COUNT(DISTINCT trx_usercode) as users,
           COUNT(DISTINCT route_salesmancode) as team_leaders
         FROM ${SALES_TABLE}
-        WHERE trx_trxdate >= $3::date
+        WHERE trx_trxtype = 1
+          AND trx_trxdate >= $3::date
           AND trx_trxdate <= $4::date
-          AND trx_trxtype = 1
           ${whereClause}
       )
       SELECT
@@ -256,31 +273,31 @@ export async function GET(request: NextRequest) {
       FROM mtd_summary m, lmtd_summary l
     `
 
-    // OPTIMIZED daily trend query - Using LEFT JOIN for better performance
+    // OPTIMIZED daily trend query with MATERIALIZED CTEs
     const dailyTrendQueryText = `
-      WITH mtd_trend AS (
+      WITH mtd_trend AS MATERIALIZED (
         SELECT
           EXTRACT(DAY FROM trx_trxdate)::int as day,
           SUM(CASE WHEN trx_totalamount > 0 THEN trx_totalamount ELSE 0 END) as revenue
         FROM ${SALES_TABLE}
-        WHERE trx_trxdate >= $1::date
+        WHERE trx_trxtype = 1
+          AND trx_trxdate >= $1::date
           AND trx_trxdate <= $2::date
-          AND trx_trxtype = 1
           ${whereClause}
         GROUP BY EXTRACT(DAY FROM trx_trxdate)
       ),
-      lmtd_trend AS (
+      lmtd_trend AS MATERIALIZED (
         SELECT
           EXTRACT(DAY FROM trx_trxdate)::int as day,
           SUM(CASE WHEN trx_totalamount > 0 THEN trx_totalamount ELSE 0 END) as revenue
         FROM ${SALES_TABLE}
-        WHERE trx_trxdate >= $3::date
+        WHERE trx_trxtype = 1
+          AND trx_trxdate >= $3::date
           AND trx_trxdate <= $4::date
-          AND trx_trxtype = 1
           ${whereClause}
         GROUP BY EXTRACT(DAY FROM trx_trxdate)
       ),
-      all_days AS (
+      all_days AS MATERIALIZED (
         SELECT day FROM mtd_trend
         UNION
         SELECT day FROM lmtd_trend
@@ -296,31 +313,31 @@ export async function GET(request: NextRequest) {
       ORDER BY day
     `
 
-    // HYPER-OPTIMIZED top products query
+    // HYPER-OPTIMIZED top products query with MATERIALIZED CTEs
     const topProductsQueryText = `
-      WITH mtd_products AS (
+      WITH mtd_products AS MATERIALIZED (
         SELECT
           line_itemcode as product_code,
           MAX(line_itemdescription) as product_name,
           SUM(CASE WHEN trx_totalamount > 0 THEN trx_totalamount ELSE 0 END) as mtd_revenue
         FROM ${SALES_TABLE}
-        WHERE trx_trxdate >= $1::date
+        WHERE trx_trxtype = 1
+          AND trx_trxdate >= $1::date
           AND trx_trxdate <= $2::date
-          AND trx_trxtype = 1
           AND line_itemcode IS NOT NULL
           ${whereClause}
         GROUP BY line_itemcode
         ORDER BY mtd_revenue DESC
         LIMIT 10
       ),
-      lmtd_products AS (
+      lmtd_products AS MATERIALIZED (
         SELECT
           line_itemcode as product_code,
           SUM(CASE WHEN trx_totalamount > 0 THEN trx_totalamount ELSE 0 END) as lmtd_revenue
         FROM ${SALES_TABLE}
-        WHERE trx_trxdate >= $3::date
+        WHERE trx_trxtype = 1
+          AND trx_trxdate >= $3::date
           AND trx_trxdate <= $4::date
-          AND trx_trxtype = 1
           AND line_itemcode IN (SELECT product_code FROM mtd_products)
           ${whereClause}
         GROUP BY line_itemcode

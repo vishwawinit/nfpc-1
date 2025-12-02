@@ -124,6 +124,8 @@ async function fetchLMTDFiltersInternal(params: {
   const [
     teamLeadersResult,
     usersResult,
+    areasResult,
+    subAreasResult,
     chainsResult,
     storesResult,
     categoriesResult,
@@ -141,7 +143,6 @@ async function fetchLMTDFiltersInternal(params: {
           AND route_salesmancode IS NOT NULL
           AND route_salesmancode != ''
         ORDER BY route_salesmancode
-        LIMIT 50
       `
       const params = [lmtdStart, mtdEnd]
       try {
@@ -164,13 +165,56 @@ async function fetchLMTDFiltersInternal(params: {
           AND trx_usercode IS NOT NULL
           AND trx_usercode != ''
         ORDER BY trx_usercode
-        LIMIT 100
       `
       const params = [lmtdStart, mtdEnd]
       try {
         return await dbQuery(query, params)
       } catch (error) {
         console.error('Error fetching users:', error)
+        return { rows: [] }
+      }
+    })(),
+
+    (async () => {
+      const query = `
+        SELECT DISTINCT
+          route_areacode as "value",
+          route_areacode as "label"
+        FROM ${SALES_TABLE}
+        WHERE trx_trxdate >= $1::date
+          AND trx_trxdate <= $2::date
+          AND trx_trxtype = 1
+          AND route_areacode IS NOT NULL
+          AND route_areacode != ''
+        ORDER BY route_areacode
+      `
+      const params = [lmtdStart, mtdEnd]
+      try {
+        return await dbQuery(query, params)
+      } catch (error) {
+        console.error('Error fetching areas:', error)
+        return { rows: [] }
+      }
+    })(),
+
+    (async () => {
+      const query = `
+        SELECT DISTINCT
+          route_subareacode as "value",
+          route_subareacode as "label"
+        FROM ${SALES_TABLE}
+        WHERE trx_trxdate >= $1::date
+          AND trx_trxdate <= $2::date
+          AND trx_trxtype = 1
+          AND route_subareacode IS NOT NULL
+          AND route_subareacode != ''
+        ORDER BY route_subareacode
+      `
+      const params = [lmtdStart, mtdEnd]
+      try {
+        return await dbQuery(query, params)
+      } catch (error) {
+        console.error('Error fetching sub areas:', error)
         return { rows: [] }
       }
     })(),
@@ -187,7 +231,6 @@ async function fetchLMTDFiltersInternal(params: {
           AND customer_channel_description IS NOT NULL
           AND customer_channel_description != ''
         ORDER BY customer_channel_description
-        LIMIT 50
       `
       const params = [lmtdStart, mtdEnd]
       try {
@@ -210,7 +253,6 @@ async function fetchLMTDFiltersInternal(params: {
           AND customer_code IS NOT NULL
           AND customer_code != ''
         ORDER BY customer_code
-        LIMIT 100
       `
       const params = [lmtdStart, mtdEnd]
       try {
@@ -233,7 +275,6 @@ async function fetchLMTDFiltersInternal(params: {
           AND item_grouplevel1 IS NOT NULL
           AND item_grouplevel1 != ''
         ORDER BY item_grouplevel1
-        LIMIT 50
       `
       const params = [lmtdStart, mtdEnd]
       try {
@@ -256,7 +297,6 @@ async function fetchLMTDFiltersInternal(params: {
           AND line_itemcode IS NOT NULL
           AND line_itemcode != ''
         ORDER BY line_itemcode
-        LIMIT 100
       `
       const params = [lmtdStart, mtdEnd]
       try {
@@ -275,6 +315,16 @@ async function fetchLMTDFiltersInternal(params: {
   }))
 
   const users = usersResult.rows.map(row => ({
+    value: row.value,
+    label: row.label
+  }))
+
+  const areas = areasResult.rows.map(row => ({
+    value: row.value,
+    label: row.label
+  }))
+
+  const subAreas = subAreasResult.rows.map(row => ({
     value: row.value,
     label: row.label
   }))
@@ -303,6 +353,8 @@ async function fetchLMTDFiltersInternal(params: {
     filters: {
       teamLeaders,
       users,
+      areas,
+      subAreas,
       chains,
       stores,
       categories,

@@ -11,7 +11,8 @@ interface CacheEntry {
 
 class ClientCache {
   private cache: Map<string, CacheEntry> = new Map()
-  private defaultTTL = 5 * 60 * 1000 // 5 minutes default
+  private defaultTTL = 10 * 60 * 1000 // 10 minutes default (increased for better caching)
+  private maxEntries = 200 // Increased capacity
 
   /**
    * Generate cache key from URL and params
@@ -63,7 +64,7 @@ class ClientCache {
     console.log(`💾 Client cache SET for: ${key}`)
 
     // Clean up old entries if cache gets too large
-    if (this.cache.size > 100) {
+    if (this.cache.size > this.maxEntries) {
       this.cleanup()
     }
   }
@@ -115,5 +116,9 @@ class ClientCache {
   }
 }
 
-// Export singleton instance
-export const clientCache = new ClientCache()
+// Export singleton instance - make it persistent across hot reloads in development
+const globalForClientCache = globalThis as unknown as { clientCache: ClientCache }
+export const clientCache = globalForClientCache.clientCache || new ClientCache()
+if (typeof window === 'undefined' && process.env.NODE_ENV !== 'production') {
+  globalForClientCache.clientCache = clientCache
+}
