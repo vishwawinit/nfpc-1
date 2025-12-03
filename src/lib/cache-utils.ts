@@ -84,9 +84,9 @@ export function getCacheDuration(
 }
 
 /**
- * Standard cache duration for filters (30 minutes - increased for better performance)
+ * Standard cache duration for filters (1 hour - filters don't change frequently)
  */
-export const FILTERS_CACHE_DURATION = 1800
+export const FILTERS_CACHE_DURATION = 3600
 
 /**
  * Standard cache duration for static/configuration data (30 minutes)

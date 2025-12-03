@@ -153,10 +153,15 @@ function HomePageContent() {
               )
             })}
 
-            {/* AI Assistant - Under Orders Report */}
+            {/* Divider for AI Assistant section */}
+            {sidebarExpanded && (
+              <div className="my-3 border-t border-gray-700"></div>
+            )}
+
+            {/* AI Assistant - Separate Section */}
             <a
               href="/ask-ai"
-              className="w-full flex items-center gap-3 px-4 py-3 mb-1 rounded-lg transition-all duration-200 font-medium text-gray-300 border border-gray-600 hover:bg-violet-200 hover:text-slate-800"
+              className="w-full flex items-center gap-3 px-4 py-3 mb-1 rounded-lg transition-all duration-200 font-medium text-gray-300 border border-violet-700/50 hover:bg-gradient-to-r hover:from-violet-950 hover:via-purple-900 hover:to-violet-900 hover:text-white hover:border-violet-500 hover:shadow-lg hover:shadow-violet-900/50"
               title={!sidebarExpanded ? 'AI Assistant' : ''}
             >
               <svg className="flex-shrink-0" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -278,10 +283,13 @@ function HomePageContent() {
               )
             })}
 
-            {/* AI Assistant - Under Orders Report */}
+            {/* Divider for AI Assistant section */}
+            <div className="my-3 border-t border-gray-700"></div>
+
+            {/* AI Assistant - Separate Section */}
             <a
               href="/ask-ai"
-              className="w-full flex items-center gap-3 px-4 py-3 mb-1 rounded-lg transition-all font-medium text-gray-300 border border-gray-600 hover:bg-indigo-600 hover:text-slate-800"
+              className="w-full flex items-center gap-3 px-4 py-3 mb-1 rounded-lg transition-all font-medium text-gray-300 border border-violet-700/50 hover:bg-gradient-to-r hover:from-violet-950 hover:via-purple-900 hover:to-violet-900 hover:text-white hover:border-violet-500 hover:shadow-lg hover:shadow-violet-900/50"
               onClick={() => setMobileSidebarOpen(false)}
             >
               <svg className="flex-shrink-0" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">

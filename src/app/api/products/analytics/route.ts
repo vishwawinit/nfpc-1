@@ -70,6 +70,8 @@ export async function GET(request: NextRequest) {
     const dateRange = searchParams.get('range') || 'thisMonth'
     const customStartDate = searchParams.get('startDate')
     const customEndDate = searchParams.get('endDate')
+    const areaFilter = searchParams.get('areaCode')
+    const subAreaFilter = searchParams.get('subAreaCode')
     const channelFilter = searchParams.get('channel')
     const productCodeFilter = searchParams.get('productCode')
     const brandFilter = searchParams.get('brand')
@@ -78,6 +80,8 @@ export async function GET(request: NextRequest) {
       dateRange,
       customStartDate,
       customEndDate,
+      areaFilter,
+      subAreaFilter,
       channelFilter,
       productCodeFilter,
       brandFilter
@@ -109,6 +113,20 @@ export async function GET(request: NextRequest) {
 
     // Only include invoices/sales (TrxType = 1)
     conditions.push(`trx_trxtype = 1`)
+
+    // Area filter
+    if (areaFilter) {
+      conditions.push(`route_areacode = $${paramIndex}`)
+      params.push(areaFilter)
+      paramIndex++
+    }
+
+    // Sub-area filter
+    if (subAreaFilter) {
+      conditions.push(`route_subareacode = $${paramIndex}`)
+      params.push(subAreaFilter)
+      paramIndex++
+    }
 
     // Channel filter
     if (channelFilter) {

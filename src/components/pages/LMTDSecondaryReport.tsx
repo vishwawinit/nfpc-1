@@ -98,7 +98,7 @@ export function LMTDSecondaryReport() {
   const [teamLeaderCode, setTeamLeaderCode] = useState<string | null>(null)
   const [userCode, setUserCode] = useState<string | null>(null)
   const [areaCode, setAreaCode] = useState<string | null>(null)
-  const [subAreaCode, setSubAreaCode] = useState<string | null>('DXB') // Default to DXB
+  const [subAreaCode, setSubAreaCode] = useState<string | null>('MNA') // Default to MNA (fastest sub area with minimal data)
   const [storeCode, setStoreCode] = useState<string | null>(null)
   const [chainName, setChainName] = useState<string | null>(null)
   const [productCode, setProductCode] = useState<string | null>(null)
@@ -482,7 +482,7 @@ export function LMTDSecondaryReport() {
                 setTeamLeaderCode(null)
                 setUserCode(null)
                 setAreaCode(null)
-                setSubAreaCode('DXB') // Reset to default
+                setSubAreaCode('MNA') // Reset to default (fastest)
                 setStoreCode(null)
                 setChainName(null)
                 setProductCode(null)

@@ -70,6 +70,8 @@ export async function GET(request: NextRequest) {
     const dateRange = searchParams.get('range') || 'thisMonth'
     const customStartDate = searchParams.get('startDate')
     const customEndDate = searchParams.get('endDate')
+    const areaFilter = searchParams.get('areaCode')
+    const subAreaFilter = searchParams.get('subAreaCode')
     const channelFilter = searchParams.get('channel')
     const brandFilter = searchParams.get('brand')
 
@@ -100,6 +102,20 @@ export async function GET(request: NextRequest) {
     // Only include invoices/sales
     conditions.push(`trx_trxtype = 1`)
 
+    // Area filter
+    const areaCondition = areaFilter ? `route_areacode = $${paramIndex}` : ''
+    if (areaFilter) {
+      params.push(areaFilter)
+      paramIndex++
+    }
+
+    // Sub-area filter
+    const subAreaCondition = subAreaFilter ? `route_subareacode = $${paramIndex}` : ''
+    if (subAreaFilter) {
+      params.push(subAreaFilter)
+      paramIndex++
+    }
+
     // Channel filter (for products)
     const channelCondition = channelFilter ? `customer_channel_description = $${paramIndex}` : ''
     if (channelFilter) {
@@ -118,12 +134,50 @@ export async function GET(request: NextRequest) {
 
     // Build combined WHERE clause with additional filters
     const additionalFilters: string[] = []
+    if (areaCondition) additionalFilters.push(areaCondition)
+    if (subAreaCondition) additionalFilters.push(subAreaCondition)
     if (channelCondition) additionalFilters.push(channelCondition)
     if (brandCondition) additionalFilters.push(brandCondition)
 
     const channelWhereClause = additionalFilters.length > 0
       ? `${baseWhereClause} AND ${additionalFilters.join(' AND ')}`
       : baseWhereClause
+
+    // Build WHERE clause excluding area filter for cascading (areas should show all available areas)
+    const areaWhereClause = baseWhereClause + (channelCondition || brandCondition ?
+      ` AND ${[channelCondition, brandCondition].filter(c => c).join(' AND ')}` : '')
+
+    // Build WHERE clause excluding sub-area filter for cascading (sub-areas should be filtered by selected area)
+    const subAreaWhereClause = baseWhereClause + (areaCondition || channelCondition || brandCondition ?
+      ` AND ${[areaCondition, channelCondition, brandCondition].filter(c => c).join(' AND ')}` : '')
+
+    // Get unique areas - OPTIMIZED with LIMIT
+    const areasQuery = `
+      SELECT
+        route_areacode as code,
+        route_areacode as name
+      FROM ${SALES_TABLE}
+      ${areaWhereClause}
+        AND route_areacode IS NOT NULL
+        AND route_areacode != ''
+      GROUP BY route_areacode
+      ORDER BY COUNT(*) DESC
+      LIMIT 50
+    `
+
+    // Get unique sub-areas - OPTIMIZED with LIMIT
+    const subAreasQuery = `
+      SELECT
+        route_subareacode as code,
+        route_subareacode as name
+      FROM ${SALES_TABLE}
+      ${subAreaWhereClause}
+        AND route_subareacode IS NOT NULL
+        AND route_subareacode != ''
+      GROUP BY route_subareacode
+      ORDER BY COUNT(*) DESC
+      LIMIT 50
+    `
 
     // Get unique channels from flat_daily_sales_report - OPTIMIZED with LIMIT
     const channelsQuery = `
@@ -169,24 +223,37 @@ export async function GET(request: NextRequest) {
     `
 
     // Execute queries with appropriate params
-    const baseParams = params.slice(0, 2) // Only date params for channels
-    const filteredParams = (channelFilter || brandFilter) ? params : baseParams // All params if any filter is present
+    const baseParams = params.slice(0, 2) // Only date params
+
+    // Calculate params for each query based on which filters are applied
+    const getParamsForQuery = (excludeFilters: string[] = []) => {
+      const queryParams = [...baseParams]
+      if (areaFilter && !excludeFilters.includes('area')) queryParams.push(areaFilter)
+      if (subAreaFilter && !excludeFilters.includes('subArea')) queryParams.push(subAreaFilter)
+      if (channelFilter && !excludeFilters.includes('channel')) queryParams.push(channelFilter)
+      if (brandFilter && !excludeFilters.includes('brand')) queryParams.push(brandFilter)
+      return queryParams
+    }
 
     const queries = [
+      query(areasQuery, getParamsForQuery(['area'])),
+      query(subAreasQuery, getParamsForQuery(['subArea'])),
       query(channelsQuery, baseParams),
-      query(brandsQuery, filteredParams)
+      query(brandsQuery, getParamsForQuery())
     ]
 
     if (productsQuery) {
-      queries.push(query(productsQuery, filteredParams))
+      queries.push(query(productsQuery, getParamsForQuery()))
     }
 
     const results = await Promise.all(queries)
-    const [channelsResult, brandsResult, productsResult] = results
+    const [areasResult, subAreasResult, channelsResult, brandsResult, productsResult] = results
 
     return NextResponse.json({
       success: true,
       data: {
+        areas: areasResult.rows,
+        subAreas: subAreasResult.rows,
         channels: channelsResult.rows,
         brands: brandsResult.rows,
         products: productsResult?.rows || []

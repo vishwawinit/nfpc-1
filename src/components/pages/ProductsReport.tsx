@@ -95,6 +95,8 @@ interface DetailedProduct {
 }
 
 interface FilterOptions {
+  areas?: Array<{ code: string; name: string }>
+  subAreas?: Array<{ code: string; name: string }>
   channels: Array<{ code: string; name: string }>
   products?: Array<{ code: string; name: string }>
   brands?: Array<{ code: string; name: string }>
@@ -106,13 +108,16 @@ export function ProductsReport() {
   const [analytics, setAnalytics] = useState<ProductAnalyticsData | null>(null)
   const [filterOptions, setFilterOptions] = useState<FilterOptions | null>(null)
   const [analyticsLoading, setAnalyticsLoading] = useState(true)
+  const [filterOptionsLoading, setFilterOptionsLoading] = useState(true)
   const [detailsLoading, setDetailsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [isExpanded, setIsExpanded] = useState(true)
 
-  // Filters state
+  // Filters state - Default to BDX sub-area for faster load (27.9x faster than DXB)
   const [filters, setFilters] = useState({
     dateRange: 'lastMonth',
+    areaCode: 'all',
+    subAreaCode: 'BDX', // Default to BDX for faster initial load
     channel: 'all',
     searchTerm: 'all',
     brand: 'all'
@@ -122,8 +127,15 @@ export function ProductsReport() {
   const [customStartDate, setCustomStartDate] = useState('')
   const [customEndDate, setCustomEndDate] = useState('')
 
-  // Applied filters state
-  const [appliedFilters, setAppliedFilters] = useState(filters)
+  // Applied filters state - Initialize with same defaults as filters
+  const [appliedFilters, setAppliedFilters] = useState({
+    dateRange: 'lastMonth',
+    areaCode: 'all',
+    subAreaCode: 'BDX', // Default to BDX for faster load
+    channel: 'all',
+    searchTerm: 'all',
+    brand: 'all'
+  })
   const [appliedCustomDates, setAppliedCustomDates] = useState({ start: '', end: '' })
 
   // Detailed view state
@@ -143,16 +155,25 @@ export function ProductsReport() {
         range: appliedFilters.dateRange,
         ...(appliedCustomDates.start && { startDate: appliedCustomDates.start }),
         ...(appliedCustomDates.end && { endDate: appliedCustomDates.end }),
+        ...(appliedFilters.areaCode !== 'all' && { areaCode: appliedFilters.areaCode }),
+        ...(appliedFilters.subAreaCode !== 'all' && { subAreaCode: appliedFilters.subAreaCode }),
         ...(appliedFilters.channel !== 'all' && { channel: appliedFilters.channel }),
         ...(appliedFilters.searchTerm !== 'all' && { productCode: appliedFilters.searchTerm }),
         ...(appliedFilters.brand !== 'all' && { brand: appliedFilters.brand }),
       })
 
+      console.log('📊 Fetching analytics with params:', Object.fromEntries(params))
+      console.log('📊 Applied filters:', appliedFilters)
+
       // Check client cache first
       const cached = clientCache.get('/api/products/analytics', params)
       if (cached) {
         if (cached.success) {
-          console.log('📊 Setting analytics data from cache:', cached.data)
+          console.log('📊 Analytics from cache:', {
+            totalRevenue: cached.data?.metrics?.totalRevenue,
+            totalOrders: cached.data?.metrics?.totalOrders,
+            uniqueCustomers: cached.data?.metrics?.uniqueCustomers
+          })
           setAnalytics(cached.data)
           setError(null)
         } else {
@@ -166,14 +187,18 @@ export function ProductsReport() {
       const response = await fetch(`/api/products/analytics?${params}`)
       const result = await response.json()
 
-      console.log('📊 Products Analytics Response:', result)
+      console.log('📊 Analytics API response:', {
+        success: result.success,
+        totalRevenue: result.data?.metrics?.totalRevenue,
+        totalOrders: result.data?.metrics?.totalOrders,
+        uniqueCustomers: result.data?.metrics?.uniqueCustomers
+      })
 
       // Store in client cache
       clientCache.set('/api/products/analytics', result, params, 5 * 60 * 1000)
 
       if (result.success) {
-        console.log('📊 Setting analytics data:', result.data)
-        console.log('📊 Metrics:', result.data?.metrics)
+        console.log('📊 Setting new analytics data')
         setAnalytics(result.data)
         setError(null)
       } else {
@@ -191,35 +216,49 @@ export function ProductsReport() {
   // Fetch filter options
   const fetchFilterOptions = async () => {
     try {
+      setFilterOptionsLoading(true)
+      // For filter options, we pass areaCode to cascade sub-areas, but NOT subAreaCode
+      // because we want to show all available sub-areas for the selected area
       const params = new URLSearchParams({
         range: appliedFilters.dateRange,
         includeProducts: 'true',
         ...(appliedCustomDates.start && { startDate: appliedCustomDates.start }),
         ...(appliedCustomDates.end && { endDate: appliedCustomDates.end }),
+        ...(appliedFilters.areaCode !== 'all' && { areaCode: appliedFilters.areaCode }),
+        // NOTE: We don't pass subAreaCode here - we want to see all sub-areas for the selected area
         ...(appliedFilters.channel !== 'all' && { channel: appliedFilters.channel }),
         ...(appliedFilters.brand !== 'all' && { brand: appliedFilters.brand }),
       })
+
+      console.log('🔍 Fetching filter options with params:', Object.fromEntries(params))
 
       // Check client cache first
       const cached = clientCache.get('/api/products/filters', params)
       if (cached) {
         if (cached.success) {
+          console.log('🔍 Filter options from cache:', cached.data)
           setFilterOptions(cached.data)
         }
+        setFilterOptionsLoading(false)
         return
       }
 
       const response = await fetch(`/api/products/filters?${params}`)
       const result = await response.json()
 
+      console.log('🔍 Filter options response:', result)
+
       // Store in client cache
       clientCache.set('/api/products/filters', result, params, 5 * 60 * 1000)
 
       if (result.success) {
+        console.log('🔍 Setting filter options:', result.data)
         setFilterOptions(result.data)
       }
     } catch (err) {
       console.error('Error fetching filter options:', err)
+    } finally {
+      setFilterOptionsLoading(false)
     }
   }
 
@@ -234,6 +273,8 @@ export function ProductsReport() {
         sortOrder: 'DESC',
         ...(appliedCustomDates.start && { startDate: appliedCustomDates.start }),
         ...(appliedCustomDates.end && { endDate: appliedCustomDates.end }),
+        ...(appliedFilters.areaCode !== 'all' && { areaCode: appliedFilters.areaCode }),
+        ...(appliedFilters.subAreaCode !== 'all' && { subAreaCode: appliedFilters.subAreaCode }),
         ...(appliedFilters.channel !== 'all' && { channel: appliedFilters.channel }),
         ...(appliedFilters.searchTerm !== 'all' && { productCode: appliedFilters.searchTerm }),
         ...(appliedFilters.brand !== 'all' && { brand: appliedFilters.brand }),
@@ -281,6 +322,8 @@ export function ProductsReport() {
   const resetFilters = () => {
     const initialFilters = {
       dateRange: 'lastMonth',
+      areaCode: 'all',
+      subAreaCode: 'BDX', // Default to BDX for faster load
       channel: 'all',
       searchTerm: 'all',
       brand: 'all'
@@ -299,17 +342,33 @@ export function ProductsReport() {
     ([key, value]) => value && value !== 'all' && key !== 'dateRange'
   ).length
 
+  // Clear cache on mount to ensure fresh data
   useEffect(() => {
+    console.log('🔄 Component mounted - Initial state:', {
+      filters,
+      appliedFilters
+    })
+    // Note: We don't clear cache here anymore to allow fast page switches
+  }, [])
+
+  // Fetch analytics when any filter changes (including sub-area)
+  useEffect(() => {
+    console.log('🔄 Analytics useEffect triggered with appliedFilters:', appliedFilters)
     fetchAnalytics()
+  }, [appliedFilters.dateRange, appliedFilters.areaCode, appliedFilters.subAreaCode, appliedFilters.channel, appliedFilters.searchTerm, appliedFilters.brand, appliedCustomDates.start, appliedCustomDates.end])
+
+  // Fetch filter options when date/area changes (NOT sub-area, because we want to show all sub-areas)
+  useEffect(() => {
+    console.log('🔄 Filter options useEffect triggered')
     fetchFilterOptions()
-  }, [appliedFilters.dateRange, appliedFilters.channel, appliedFilters.searchTerm, appliedFilters.brand, appliedCustomDates.start, appliedCustomDates.end])
+  }, [appliedFilters.dateRange, appliedFilters.areaCode, appliedCustomDates.start, appliedCustomDates.end])
 
   useEffect(() => {
     // Only fetch detailed products when on detailed tab and when filters change
     if (activeTab === 'detailed') {
       fetchDetailedProducts()
     }
-  }, [activeTab, appliedFilters.dateRange, appliedFilters.channel, appliedFilters.searchTerm, appliedFilters.brand, appliedCustomDates.start, appliedCustomDates.end])
+  }, [activeTab, appliedFilters.dateRange, appliedFilters.areaCode, appliedFilters.subAreaCode, appliedFilters.channel, appliedFilters.searchTerm, appliedFilters.brand, appliedCustomDates.start, appliedCustomDates.end])
 
   // Frontend pagination and sorting logic
   useEffect(() => {
@@ -526,7 +585,7 @@ export function ProductsReport() {
                 {activeFilterCount} active
               </span>
             )}
-            {(analyticsLoading || detailsLoading) && (
+            {(analyticsLoading || detailsLoading || filterOptionsLoading) && (
               <RefreshCw className="w-4 h-4 text-gray-500 animate-spin" />
             )}
           </div>
@@ -615,7 +674,45 @@ export function ProductsReport() {
             </div>
 
             {/* Main Filters */}
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+              {/* Area Filter */}
+              <SearchableSelect
+                value={filters.areaCode === 'all' ? '' : filters.areaCode}
+                onChange={(value) => {
+                  const newFilters = { ...filters, areaCode: value || 'all', subAreaCode: 'all' }
+                  setFilters(newFilters)
+                  setAppliedFilters(newFilters)
+                  setCurrentPage(1)
+                }}
+                options={[
+                  ...(filterOptions?.areas || []).map(a => ({
+                    value: a.code,
+                    label: a.name
+                  }))
+                ]}
+                placeholder="All Areas"
+                label="Area"
+              />
+
+              {/* Sub-Area Filter */}
+              <SearchableSelect
+                value={filters.subAreaCode === 'all' ? '' : filters.subAreaCode}
+                onChange={(value) => {
+                  const newFilters = { ...filters, subAreaCode: value || 'all' }
+                  setFilters(newFilters)
+                  setAppliedFilters(newFilters)
+                  setCurrentPage(1)
+                }}
+                options={[
+                  ...(filterOptions?.subAreas || []).map(s => ({
+                    value: s.code,
+                    label: s.name
+                  }))
+                ]}
+                placeholder="All Sub-Areas"
+                label="Sub-Area"
+              />
+
               {/* Product Brand Filter */}
               <SearchableSelect
                 value={filters.brand === 'all' ? '' : filters.brand}
@@ -669,7 +766,7 @@ export function ProductsReport() {
                   onClick={resetFilters}
                   variant="outline"
                   className="flex items-center gap-2"
-                  disabled={activeFilterCount === 0 || analyticsLoading || detailsLoading}
+                  disabled={activeFilterCount === 0 || analyticsLoading || detailsLoading || filterOptionsLoading}
                 >
                   <X className="w-4 h-4" />
                   Reset All Filters
@@ -684,6 +781,21 @@ export function ProductsReport() {
       {error && (
         <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg">
           {error}
+        </div>
+      )}
+
+      {/* Loading Overlay */}
+      {(analyticsLoading || filterOptionsLoading) && (
+        <div className="bg-blue-50 border border-blue-200 text-blue-700 px-4 py-3 rounded-lg flex items-center gap-3">
+          <RefreshCw className="w-5 h-5 animate-spin" />
+          <div>
+            <p className="font-semibold">Loading data...</p>
+            <p className="text-sm text-blue-600">
+              {filterOptionsLoading && analyticsLoading && 'Fetching filter options and analytics data'}
+              {filterOptionsLoading && !analyticsLoading && 'Fetching filter options'}
+              {!filterOptionsLoading && analyticsLoading && 'Fetching analytics data'}
+            </p>
+          </div>
         </div>
       )}
 

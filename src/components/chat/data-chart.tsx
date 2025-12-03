@@ -19,6 +19,7 @@ import {
     ResponsiveContainer,
     Cell,
     ComposedChart,
+    ReferenceLine,
 } from "recharts";
 
 interface ChartConfig {
@@ -45,19 +46,24 @@ interface DataChartProps {
 
 // Format value based on format type
 const formatValue = (value: number, format?: string) => {
-    if (format === '%') return `${value.toFixed(2)}%`;
-    if (format === '#') return value.toLocaleString('en-US');
+    // Handle negative values
+    const isNegative = value < 0;
+    const absValue = Math.abs(value);
+    const sign = isNegative ? '-' : '';
+
+    if (format === '%') return `${sign}${absValue.toFixed(2)}%`;
+    if (format === '#') return `${sign}${absValue.toLocaleString('en-US')}`;
     if (format === 'AED') {
-        return `AED ${value.toLocaleString("en-US", {
+        return `${sign}AED ${absValue.toLocaleString("en-US", {
             minimumFractionDigits: 2,
             maximumFractionDigits: 2,
         })}`;
     }
     // Default to number format
-    return value.toLocaleString('en-US', {
+    return `${sign}${absValue.toLocaleString('en-US', {
         minimumFractionDigits: 2,
         maximumFractionDigits: 2,
-    });
+    })}`;
 };
 
 // Custom tooltip styling with name, code, and dynamic formatting
@@ -99,24 +105,29 @@ const formatNumber = (value: unknown, format?: string) => {
     const num = typeof value === 'number' ? value : parseFloat(String(value));
     if (isNaN(num) || !isFinite(num)) return String(value);
 
+    // Handle negative values
+    const isNegative = num < 0;
+    const absNum = Math.abs(num);
+    const sign = isNegative ? '-' : '';
+
     // Percentage format
     if (format === '%') {
-        return `${num.toFixed(0)}%`;
+        return `${sign}${absNum.toFixed(0)}%`;
     }
 
     // Number/Count format
     if (format === '#') {
-        if (num >= 1000000000) return `${(num / 1000000000).toFixed(0)}B`;
-        if (num >= 1000000) return `${(num / 1000000).toFixed(0)}M`;
-        if (num >= 1000) return `${(num / 1000).toFixed(0)}K`;
-        return num.toFixed(0);
+        if (absNum >= 1000000000) return `${sign}${(absNum / 1000000000).toFixed(0)}B`;
+        if (absNum >= 1000000) return `${sign}${(absNum / 1000000).toFixed(0)}M`;
+        if (absNum >= 1000) return `${sign}${(absNum / 1000).toFixed(0)}K`;
+        return `${sign}${absNum.toFixed(0)}`;
     }
 
     // AED currency format (default)
-    if (num >= 1000000000) return `AED ${(num / 1000000000).toFixed(0)}B`;
-    if (num >= 1000000) return `AED ${(num / 1000000).toFixed(0)}M`;
-    if (num >= 1000) return `AED ${(num / 1000).toFixed(0)}K`;
-    return `AED ${num.toFixed(0)}`;
+    if (absNum >= 1000000000) return `${sign}AED ${(absNum / 1000000000).toFixed(0)}B`;
+    if (absNum >= 1000000) return `${sign}AED ${(absNum / 1000000).toFixed(0)}M`;
+    if (absNum >= 1000) return `${sign}AED ${(absNum / 1000).toFixed(0)}K`;
+    return `${sign}AED ${absNum.toFixed(0)}`;
 };
 
 // Get Y-axis label based on format
@@ -125,6 +136,18 @@ const getYAxisLabel = (format?: string) => {
     if (format === '#') return 'Count';
     if (format === 'AED') return 'Value (AED)';
     return 'Value'; // Default
+};
+
+// Get X-axis label from key name
+const getXAxisLabel = (key?: string) => {
+    if (!key) return '';
+    // Convert snake_case or camelCase to Title Case
+    return key
+        .replace(/_/g, ' ')
+        .replace(/([A-Z])/g, ' $1')
+        .split(' ')
+        .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+        .join(' ');
 };
 
 // Validate domain before passing to Recharts
@@ -186,6 +209,87 @@ const calculateYAxisDomain = (data: any[], dataKeys: string[], format?: string):
         // Calculate Y-axis domain with exactly 5 tick marks covering the data range
         if (maxValue === 0 || !isFinite(maxValue)) return [0, 100];
 
+        // SPECIAL HANDLING FOR NEGATIVE VALUES
+        if (minValue < 0) {
+            // Handle edge case when all negative values are the same or very close
+            const range = maxValue - minValue;
+            const avgValue = (maxValue + minValue) / 2;
+            const minRangePercent = 0.05;
+            const minRange = Math.abs(avgValue) * minRangePercent;
+
+            if (range < minRange && Math.abs(avgValue) > 0) {
+                console.warn(`⚠️ Negative Y-axis range too small (${range.toFixed(2)}), expanding to minimum ${minRange.toFixed(2)}`);
+                // Expand range symmetrically around the average
+                const halfRange = minRange / 2;
+                const expandedMin = avgValue - halfRange;
+                const expandedMax = avgValue + halfRange;
+
+                // Recalculate with expanded range
+                const absMax = Math.max(Math.abs(expandedMin), Math.abs(expandedMax));
+                const rawInterval = absMax / 3;
+
+                const magnitude = Math.pow(10, Math.floor(Math.log10(rawInterval)));
+                const normalized = rawInterval / magnitude;
+                let niceInterval;
+                if (normalized <= 1) niceInterval = 1 * magnitude;
+                else if (normalized <= 2) niceInterval = 2 * magnitude;
+                else if (normalized <= 5) niceInterval = 5 * magnitude;
+                else niceInterval = 10 * magnitude;
+
+                let roundedMin = Math.floor(expandedMin / niceInterval) * niceInterval;
+                let roundedMax = Math.ceil(expandedMax / niceInterval) * niceInterval;
+
+                if (roundedMax < 0) roundedMax = 0;
+                if (roundedMin > 0) roundedMin = 0;
+
+                return [roundedMin, roundedMax];
+            }
+
+            // Calculate intervals suitable for the data range
+            const absMax = Math.max(Math.abs(minValue), Math.abs(maxValue));
+            const rawInterval = absMax / 3; // Aim for ~3-4 intervals on each side of zero
+
+            // Find nice interval (1, 2, 5, 10, 20, 50, 100, etc.)
+            const magnitude = Math.pow(10, Math.floor(Math.log10(rawInterval)));
+            const normalized = rawInterval / magnitude;
+            let niceInterval;
+            if (normalized <= 1) niceInterval = 1 * magnitude;
+            else if (normalized <= 2) niceInterval = 2 * magnitude;
+            else if (normalized <= 5) niceInterval = 5 * magnitude;
+            else niceInterval = 10 * magnitude;
+
+            // Calculate domain such that 0 is at an interval boundary
+            let roundedMin = Math.floor(minValue / niceInterval) * niceInterval;
+            let roundedMax = Math.ceil(maxValue / niceInterval) * niceInterval;
+
+            // FORCE: Ensure max is at least 0 if we have negative data
+            if (roundedMax < 0) roundedMax = 0;
+
+            // FORCE: Ensure min is at most 0 if we have positive data
+            if (roundedMin > 0) roundedMin = 0;
+
+            // Ensure at least 4 intervals
+            while ((roundedMax - roundedMin) / niceInterval < 4) {
+                if (Math.abs(roundedMin) > Math.abs(roundedMax)) {
+                    roundedMax += niceInterval;
+                } else {
+                    roundedMin -= niceInterval;
+                }
+            }
+
+            console.log('🎯 NEGATIVE VALUE DOMAIN:', {
+                minValue,
+                maxValue,
+                niceInterval,
+                roundedMin,
+                roundedMax,
+                numTicks: (roundedMax - roundedMin) / niceInterval + 1
+            });
+
+            return [roundedMin, roundedMax];
+        }
+
+        // ALL POSITIVE DATA - original logic
         // Add 10% padding to min and max for better visualization
         const padding = (maxValue - minValue) * 0.1;
         const paddedMin = Math.max(0, minValue - padding);
@@ -234,6 +338,21 @@ const calculateYAxisDomain = (data: any[], dataKeys: string[], format?: string):
         console.error('Error calculating Y-axis domain:', e);
         return [0, 100];
     }
+};
+
+// Helper to detect if data contains negative values
+const hasNegativeValues = (data: any[], dataKeys: string[]) => {
+    if (!data || data.length === 0) return false;
+
+    for (const item of data) {
+        for (const key of dataKeys) {
+            const value = parseFloat(item[key]);
+            if (!isNaN(value) && value < 0) {
+                return true;
+            }
+        }
+    }
+    return false;
 };
 
 export function DataChart({ config, data }: DataChartProps) {
@@ -411,7 +530,7 @@ export function DataChart({ config, data }: DataChartProps) {
 
                     return (
                         <ResponsiveContainer width="100%" height={isFullscreen ? "100%" : 400}>
-                            <BarChart data={chartData} margin={{ top: 20, right: 30, left: 60, bottom: 60 }}>
+                            <BarChart data={chartData} margin={{ top: 50, right: 30, left: 60, bottom: 60 }}>
                                 {showGrid && <CartesianGrid strokeDasharray="3 3" opacity={0.3} />}
                                 <XAxis
                                     dataKey={barXAxisKey}
@@ -425,10 +544,18 @@ export function DataChart({ config, data }: DataChartProps) {
                                     tickFormatter={(value) => formatNumber(value, config.yAxisFormat)}
                                     tick={{ fontSize: 12, fill: '#666' }}
                                     stroke="#666"
-                                    label={{ value: getYAxisLabel(config.yAxisFormat), angle: -90, position: 'insideLeft', style: { textAnchor: 'middle' } }}
                                 />
                                 <Tooltip content={<CustomTooltip config={config} />} />
-                                {showLegend && <Legend />}
+                                {showLegend && <Legend verticalAlign="top" height={36} />}
+                                {/* Add zero reference line for negative values */}
+                                {hasNegativeValues(chartData, [barDataKey]) && (
+                                    <ReferenceLine
+                                        y={0}
+                                        stroke="#000"
+                                        strokeWidth={2}
+                                        strokeDasharray="3 3"
+                                    />
+                                )}
                                 <Bar
                                     dataKey={barDataKey}
                                     fill={colors[0] || "#3B82F6"}
@@ -482,7 +609,7 @@ export function DataChart({ config, data }: DataChartProps) {
                     const lineDomain = validateDomain(calculateYAxisDomain(chartData, lineDataKeys.length > 0 ? lineDataKeys : [sanitizedConfig.yAxisKey || sanitizedConfig.dataKey || sanitizedConfig.valueKey || "value"], config.yAxisFormat));
 
                     // Margins for line chart
-                    const lineMargin = { top: 20, right: 30, left: 35, bottom: 80 };
+                    const lineMargin = { top: 50, right: 30, left: 35, bottom: 80 };
 
                     console.log("🎨 LINE MARGIN:", lineMargin);
                     console.log("📊 LINE DOMAIN:", lineDomain);
@@ -505,11 +632,19 @@ export function DataChart({ config, data }: DataChartProps) {
                                   stroke="#666"
                                   tick={{ fontSize: 12, fill: '#000' }}
                                   tickFormatter={(value) => formatNumber(value, config.yAxisFormat)}
-                                  label={{ value: getYAxisLabel(config.yAxisFormat), angle: -90, position: 'insideLeft', style: { textAnchor: 'middle' } }}
                                 />
 
                                 <Tooltip content={<CustomTooltip config={config} />} />
-                                {showLegend && <Legend />}
+                                {showLegend && <Legend verticalAlign="top" height={36} />}
+                                {/* Add zero reference line for negative values */}
+                                {hasNegativeValues(chartData, lineDataKeys.length > 0 ? lineDataKeys : [sanitizedConfig.yAxisKey || sanitizedConfig.dataKey || sanitizedConfig.valueKey || "value"]) && (
+                                    <ReferenceLine
+                                        y={0}
+                                        stroke="#000"
+                                        strokeWidth={2}
+                                        strokeDasharray="3 3"
+                                    />
+                                )}
 
                                 {/* Support multiple lines for combined charts */}
                                 {lineDataKeys.length > 0 ? (
@@ -592,7 +727,7 @@ export function DataChart({ config, data }: DataChartProps) {
                                     ))}
                                 </Pie>
                                 <Tooltip content={<CustomTooltip config={config} />} />
-                                {showLegend && <Legend />}
+                                {showLegend && <Legend verticalAlign="top" height={36} />}
                             </PieChart>
                         </ResponsiveContainer>
                     );
@@ -616,7 +751,7 @@ export function DataChart({ config, data }: DataChartProps) {
 
                     return (
                         <ResponsiveContainer width="100%" height={isFullscreen ? "100%" : 400}>
-                            <AreaChart data={chartData} margin={{ top: 20, right: 30, left: 60, bottom: 60 }}>
+                            <AreaChart data={chartData} margin={{ top: 50, right: 30, left: 60, bottom: 60 }}>
                                 {showGrid && <CartesianGrid strokeDasharray="3 3" opacity={0.3} />}
                                 <XAxis
                                     dataKey={areaXAxisKey}
@@ -629,10 +764,18 @@ export function DataChart({ config, data }: DataChartProps) {
                                     domain={areaDomain}
                                     tickFormatter={(value) => formatNumber(value, config.yAxisFormat)}
                                     tick={{ fontSize: 12 }}
-                                    label={{ value: getYAxisLabel(config.yAxisFormat), angle: -90, position: 'insideLeft', style: { textAnchor: 'middle' } }}
                                 />
                                 <Tooltip content={<CustomTooltip config={config} />} />
-                                {showLegend && <Legend />}
+                                {showLegend && <Legend verticalAlign="top" height={36} />}
+                                {/* Add zero reference line for negative values */}
+                                {hasNegativeValues(chartData, [areaDataKey]) && (
+                                    <ReferenceLine
+                                        y={0}
+                                        stroke="#000"
+                                        strokeWidth={2}
+                                        strokeDasharray="3 3"
+                                    />
+                                )}
                                 <Area
                                     type="monotone"
                                     dataKey={areaDataKey}
@@ -670,8 +813,8 @@ export function DataChart({ config, data }: DataChartProps) {
 
                     // Increase margins for multi-metric charts (Y-axis ticks need space)
                     const composedMargin = composedUseDualAxis && composedDataKeys.length > 1
-                        ? { top: 20, right: 90, left: 50, bottom: 80 }  // Dual axes need more space on both sides
-                        : { top: 20, right: 30, left: 50, bottom: 80 }; // Single axis needs left space for Y-axis ticks
+                        ? { top: 50, right: 90, left: 50, bottom: 80 }  // Dual axes need more space on both sides
+                        : { top: 50, right: 30, left: 50, bottom: 80 }; // Single axis needs left space for Y-axis ticks
 
                     console.log("🎨 COMPOSED MARGIN:", composedMargin);
                     console.log("📊 COMPOSED DOMAIN:", composedDomain);
@@ -696,11 +839,19 @@ export function DataChart({ config, data }: DataChartProps) {
                                     tickFormatter={(value) => formatNumber(value, config.yAxisFormat)}
                                     stroke="#666"
                                     tick={{ fontSize: 12, fill: '#000' }}
-                                    label={{ value: getYAxisLabel(config.yAxisFormat), angle: -90, position: 'insideLeft', style: { textAnchor: 'middle' } }}
                                 />
 
                                 <Tooltip content={<CustomTooltip config={config} />} />
-                                {showLegend && <Legend />}
+                                {showLegend && <Legend verticalAlign="top" height={36} />}
+                                {/* Add zero reference line for negative values */}
+                                {hasNegativeValues(chartData, composedDataKeys.length > 0 ? composedDataKeys : [sanitizedConfig.yAxisKey || sanitizedConfig.dataKey || sanitizedConfig.valueKey || "value"]) && (
+                                    <ReferenceLine
+                                        y={0}
+                                        stroke="#000"
+                                        strokeWidth={2}
+                                        strokeDasharray="3 3"
+                                    />
+                                )}
 
                                 {/* Render multiple lines with different colors */}
                                 {composedDataKeys.length > 0 ? (
@@ -758,6 +909,25 @@ export function DataChart({ config, data }: DataChartProps) {
                         {isFullscreen ? <Minimize2 className="h-5 w-5" /> : <Maximize2 className="h-5 w-5" />}
                     </button>
                 </div>
+
+                {/* Axis Labels - Show X and Y axis names at the top */}
+                {chartType !== 'pie' && (
+                    <div className="mb-4 flex items-center justify-center gap-8 text-sm">
+                        <div className="flex items-center gap-2">
+                            <span className="font-semibold text-gray-700 dark:text-gray-300">X-Axis:</span>
+                            <span className="text-gray-600 dark:text-gray-400 capitalize">
+                                {(sanitizedConfig.xAxisKey || sanitizedConfig.nameKey || 'Category')?.replace(/_/g, ' ')}
+                            </span>
+                        </div>
+                        <div className="h-4 w-px bg-gray-300 dark:bg-gray-600"></div>
+                        <div className="flex items-center gap-2">
+                            <span className="font-semibold text-gray-700 dark:text-gray-300">Y-Axis:</span>
+                            <span className="text-gray-600 dark:text-gray-400">
+                                {getYAxisLabel(config.yAxisFormat)}
+                            </span>
+                        </div>
+                    </div>
+                )}
 
                 {/* Chart */}
                 <div className={`w-full ${isFullscreen ? 'h-[calc(100vh-200px)]' : ''}`}>{renderChart()}</div>
