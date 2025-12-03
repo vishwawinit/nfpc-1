@@ -363,12 +363,10 @@ export function ProductsReport() {
     fetchFilterOptions()
   }, [appliedFilters.dateRange, appliedFilters.areaCode, appliedCustomDates.start, appliedCustomDates.end])
 
+  // Fetch detailed products whenever filters change (not just when on detailed tab)
   useEffect(() => {
-    // Only fetch detailed products when on detailed tab and when filters change
-    if (activeTab === 'detailed') {
-      fetchDetailedProducts()
-    }
-  }, [activeTab, appliedFilters.dateRange, appliedFilters.areaCode, appliedFilters.subAreaCode, appliedFilters.channel, appliedFilters.searchTerm, appliedFilters.brand, appliedCustomDates.start, appliedCustomDates.end])
+    fetchDetailedProducts()
+  }, [appliedFilters.dateRange, appliedFilters.areaCode, appliedFilters.subAreaCode, appliedFilters.channel, appliedFilters.searchTerm, appliedFilters.brand, appliedCustomDates.start, appliedCustomDates.end])
 
   // Frontend pagination and sorting logic
   useEffect(() => {
