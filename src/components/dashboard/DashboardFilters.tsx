@@ -26,6 +26,8 @@ interface DashboardFiltersProps {
   showChainFilter?: boolean
   showStoreFilter?: boolean
   showCityFilter?: boolean
+  showTeamLeaderFilter?: boolean
+  showFieldUserRoleFilter?: boolean
   hierarchyInfo?: HierarchyInfo
 }
 
@@ -41,6 +43,8 @@ export const DashboardFilters: React.FC<DashboardFiltersProps> = ({
   showChainFilter = false,
   showStoreFilter = false,
   showCityFilter = true,
+  showTeamLeaderFilter = true,
+  showFieldUserRoleFilter = true,
   hierarchyInfo
 }) => {
   const [isExpanded, setIsExpanded] = useState(false)
@@ -171,41 +175,45 @@ export const DashboardFilters: React.FC<DashboardFiltersProps> = ({
               )}
 
               {/* 3. Team Leader Filter */}
-              <div>
-                <SearchableSelect
-                  value={filters.teamLeaderCode || null}
-                  onChange={(value) => onFilterChange('teamLeaderCode', value)}
-                  options={filterOptions.teamLeaders}
-                  placeholder={`All Team Leaders (Available: ${filterOptions.teamLeaders.length})`}
-                  icon={<User className="w-4 h-4 text-gray-500" />}
-                  label="Team Leader"
-                  disabled={loading || (hierarchyInfo?.isTeamLeader && filterOptions.teamLeaders.length === 1)}
-                  formatOptionLabel={(option) => {
-                    const opt = option as FilterOption
-                    if (opt.subordinateCount) {
-                      return `${opt.label} (${opt.subordinateCount} subordinates)`
-                    }
-                    return formatOptionLabel(option)
-                  }}
-                />
-                {hierarchyInfo?.isTeamLeader && filterOptions.teamLeaders.length === 1 && (
-                  <p className="text-xs text-blue-600 mt-1">
-                    Fixed to your team
-                  </p>
-                )}
-              </div>
+              {showTeamLeaderFilter && (
+                <div>
+                  <SearchableSelect
+                    value={filters.teamLeaderCode || null}
+                    onChange={(value) => onFilterChange('teamLeaderCode', value)}
+                    options={filterOptions.teamLeaders}
+                    placeholder={`All Team Leaders (Available: ${filterOptions.teamLeaders.length})`}
+                    icon={<User className="w-4 h-4 text-gray-500" />}
+                    label="Team Leader"
+                    disabled={loading || (hierarchyInfo?.isTeamLeader && filterOptions.teamLeaders.length === 1)}
+                    formatOptionLabel={(option) => {
+                      const opt = option as FilterOption
+                      if (opt.subordinateCount) {
+                        return `${opt.label} (${opt.subordinateCount} subordinates)`
+                      }
+                      return formatOptionLabel(option)
+                    }}
+                  />
+                  {hierarchyInfo?.isTeamLeader && filterOptions.teamLeaders.length === 1 && (
+                    <p className="text-xs text-blue-600 mt-1">
+                      Fixed to your team
+                    </p>
+                  )}
+                </div>
+              )}
 
               {/* 4. Field User Role Filter */}
-              <SearchableSelect
-                value={filters.fieldUserRole || null}
-                onChange={(value) => onFilterChange('fieldUserRole', value)}
-                options={filterOptions.fieldUserRoles}
-                placeholder={`All Roles (Available: ${filterOptions.fieldUserRoles.length})`}
-                icon={<Users className="w-4 h-4 text-gray-500" />}
-                label="Field User Role"
-                disabled={loading}
-                formatOptionLabel={(option) => option.label}
-              />
+              {showFieldUserRoleFilter && (
+                <SearchableSelect
+                  value={filters.fieldUserRole || null}
+                  onChange={(value) => onFilterChange('fieldUserRole', value)}
+                  options={filterOptions.fieldUserRoles}
+                  placeholder={`All Roles (Available: ${filterOptions.fieldUserRoles.length})`}
+                  icon={<Users className="w-4 h-4 text-gray-500" />}
+                  label="Field User Role"
+                  disabled={loading}
+                  formatOptionLabel={(option) => option.label}
+                />
+              )}
 
               {/* 5. Field User Filter */}
               <SearchableSelect

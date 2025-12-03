@@ -231,7 +231,6 @@ export const getFilterOptions = async (filters: any = {}) => {
           AND trx_trxdate < ($2::timestamp + INTERVAL '1 day')
           AND trx_trxtype = 1
         ORDER BY label
-        LIMIT 500
       `, [startDateStr, endDateStr]),
 
       // Chains
@@ -258,7 +257,6 @@ export const getFilterOptions = async (filters: any = {}) => {
           AND trx_trxdate < ($2::timestamp + INTERVAL '1 day')
           AND trx_trxtype = 1
         ORDER BY label
-        LIMIT 500
       `, [startDateStr, endDateStr])
     ])
 
@@ -607,7 +605,7 @@ export const getTransactionDetails = async (filters: any = {}) => {
     const endDateStr = endDate.toISOString().split('T')[0]
 
     const page = parseInt(filters.page) || 1
-    const limit = Math.min(parseInt(filters.limit) || 50, 500)
+    const limit = parseInt(filters.limit) || 50
     const offset = (page - 1) * limit
 
     const params: any[] = [startDateStr, endDateStr]

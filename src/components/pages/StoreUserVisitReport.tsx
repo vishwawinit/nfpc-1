@@ -11,7 +11,7 @@ import { Badge } from '@/components/ui/badge'
 import { LoadingBar } from '@/components/ui/LoadingBar'
 import { InfoTooltip } from '@/components/ui/InfoTooltip'
 import { DashboardFilters } from '@/components/dashboard/DashboardFilters'
-import { useDashboardFilters } from '@/hooks/useDashboardFilters'
+import { useStoreUserVisitFilters } from '@/hooks/useStoreUserVisitFilters'
 import * as XLSX from 'xlsx'
 import { clientCache } from '@/lib/clientCache'
 
@@ -65,8 +65,9 @@ export function StoreUserVisitReport() {
     updateFilter,
     setDateRange,
     resetFilters,
-    getQueryParams
-  } = useDashboardFilters()
+    getQueryParams,
+    activeFilterCount
+  } = useStoreUserVisitFilters()
 
   // View mode: 'summary' | 'map' | 'detailed'
   const [viewMode, setViewMode] = useState<'summary' | 'map' | 'detailed'>('summary')
@@ -168,13 +169,10 @@ export function StoreUserVisitReport() {
     }
   }, [isInitialized, selectedDateRange])
 
-  // Build query params with ONLY date filters - ignore all other dashboard filters
+  // Build query params dynamically from all active filters
   const queryParams = useMemo(() => {
-    const params = new URLSearchParams()
-    if (filters.startDate) params.append('startDate', filters.startDate)
-    if (filters.endDate) params.append('endDate', filters.endDate)
-    return params.toString()
-  }, [filters.startDate, filters.endDate])
+    return getQueryParams().toString()
+  }, [getQueryParams])
 
   // Fetch data when filters change
   useEffect(() => {
@@ -822,8 +820,15 @@ export function StoreUserVisitReport() {
         loading={filtersLoading}
         selectedDateRange={selectedDateRange}
         onDateRangeSelect={handleDateRangeSelect}
-        showChainFilter={true}
+        showAreaFilter={true}
+        showSubAreaFilter={true}
+        showRouteFilter={false}
+        showTeamLeaderFilter={false}
+        showFieldUserRoleFilter={false}
+        showFieldUserFilter={true}
         showStoreFilter={true}
+        showChainFilter={false}
+        showStoreClassFilter={false}
       />
 
       {/* Summary Cards */}

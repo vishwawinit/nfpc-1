@@ -192,7 +192,6 @@ async function fetchDashboardFiltersInternal(params: {
       HAVING customer_code IS NOT NULL
       AND MAX(customer_description) IS NOT NULL
       ORDER BY MAX(customer_description)
-      LIMIT 500
     `),
 
     // Get date range

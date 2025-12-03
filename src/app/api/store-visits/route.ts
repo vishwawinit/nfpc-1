@@ -80,8 +80,12 @@ export async function GET(request: NextRequest) {
       paramIndex++
     }
 
-    // City filter
-    if (searchParams.has('cityCode')) {
+    // Sub-Area/City filter (support both subAreaCode and cityCode)
+    if (searchParams.has('subAreaCode')) {
+      conditions.push(`v.sub_area_code = $${paramIndex}`)
+      params.push(searchParams.get('subAreaCode'))
+      paramIndex++
+    } else if (searchParams.has('cityCode')) {
       conditions.push(`v.city_code = $${paramIndex}`)
       params.push(searchParams.get('cityCode'))
       paramIndex++
@@ -112,10 +116,21 @@ export async function GET(request: NextRequest) {
       paramIndex++
     }
 
-    // Region filter
-    if (searchParams.has('regionCode')) {
+    // Area/Region filter (support both areaCode and regionCode)
+    if (searchParams.has('areaCode')) {
+      conditions.push(`v.region_code = $${paramIndex}`)
+      params.push(searchParams.get('areaCode'))
+      paramIndex++
+    } else if (searchParams.has('regionCode')) {
       conditions.push(`v.region_code = $${paramIndex}`)
       params.push(searchParams.get('regionCode'))
+      paramIndex++
+    }
+
+    // Route filter
+    if (searchParams.has('routeCode')) {
+      conditions.push(`v.route_code = $${paramIndex}`)
+      params.push(searchParams.get('routeCode'))
       paramIndex++
     }
 

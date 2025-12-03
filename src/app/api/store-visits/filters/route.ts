@@ -51,45 +51,59 @@ export async function GET(request: NextRequest) {
       paramIndex++
     }
 
+    // Area/Region filter
+    if (searchParams.has('areaCode')) {
+      conditions.push(`region_code = $${paramIndex}`)
+      params.push(searchParams.get('areaCode'))
+      paramIndex++
+    }
+
+    // Sub-Area filter
+    if (searchParams.has('subAreaCode')) {
+      conditions.push(`sub_area_code = $${paramIndex}`)
+      params.push(searchParams.get('subAreaCode'))
+      paramIndex++
+    }
+
+    // Route/TL Code filter
+    if (searchParams.has('routeCode')) {
+      conditions.push(`route_code = $${paramIndex}`)
+      params.push(searchParams.get('routeCode'))
+      paramIndex++
+    }
+
     // Team Leader filter (for cascading)
     if (searchParams.has('teamLeaderCode')) {
-      conditions.push(`tl_code = $${paramIndex}`)
+      conditions.push(`route_code = $${paramIndex}`)
       params.push(searchParams.get('teamLeaderCode'))
       paramIndex++
     }
 
     // User filter
     if (searchParams.has('userCode')) {
-      conditions.push(`field_user_code = $${paramIndex}`)
+      conditions.push(`user_code = $${paramIndex}`)
       params.push(searchParams.get('userCode'))
       paramIndex++
     }
 
     // Store filter
     if (searchParams.has('storeCode')) {
-      conditions.push(`store_code = $${paramIndex}`)
+      conditions.push(`customer_code = $${paramIndex}`)
       params.push(searchParams.get('storeCode'))
       paramIndex++
     }
 
     // Chain filter
-    if (searchParams.has('chainCode')) {
-      conditions.push(`chain_code = $${paramIndex}`)
-      params.push(searchParams.get('chainCode'))
-      paramIndex++
-    }
-
-    // Region filter
-    if (searchParams.has('regionCode')) {
-      conditions.push(`region_code = $${paramIndex}`)
-      params.push(searchParams.get('regionCode'))
+    if (searchParams.has('chainName')) {
+      conditions.push(`channel_name = $${paramIndex}`)
+      params.push(searchParams.get('chainName'))
       paramIndex++
     }
 
     // Hierarchy filter - apply if allowedUserCodes is provided
     if (allowedUserCodes.length > 0) {
       const placeholders = allowedUserCodes.map((_, index) => `$${paramIndex + index}`).join(', ')
-      conditions.push(`field_user_code IN (${placeholders})`)
+      conditions.push(`user_code IN (${placeholders})`)
       params.push(...allowedUserCodes)
       paramIndex += allowedUserCodes.length
     }
@@ -113,35 +127,45 @@ export async function GET(request: NextRequest) {
       // Hierarchy filter
       if (allowedUserCodes.length > 0) {
         const placeholders = allowedUserCodes.map((_, index) => `$${availParamIndex + index}`).join(', ')
-        availConditions.push(`field_user_code IN (${placeholders})`)
+        availConditions.push(`user_code IN (${placeholders})`)
         availParams.push(...allowedUserCodes)
         availParamIndex += allowedUserCodes.length
       }
 
       // Add other filters (excluding the field being fetched)
+      if (searchParams.has('areaCode') && excludeField !== 'area' && excludeField !== 'region') {
+        availConditions.push(`region_code = $${availParamIndex}`)
+        availParams.push(searchParams.get('areaCode'))
+        availParamIndex++
+      }
+      if (searchParams.has('subAreaCode') && excludeField !== 'subArea' && excludeField !== 'city') {
+        availConditions.push(`sub_area_code = $${availParamIndex}`)
+        availParams.push(searchParams.get('subAreaCode'))
+        availParamIndex++
+      }
+      if (searchParams.has('routeCode') && excludeField !== 'route') {
+        availConditions.push(`route_code = $${availParamIndex}`)
+        availParams.push(searchParams.get('routeCode'))
+        availParamIndex++
+      }
       if (searchParams.has('teamLeaderCode') && excludeField !== 'teamLeader') {
-        availConditions.push(`tl_code = $${availParamIndex}`)
+        availConditions.push(`route_code = $${availParamIndex}`)
         availParams.push(searchParams.get('teamLeaderCode'))
         availParamIndex++
       }
       if (searchParams.has('userCode') && excludeField !== 'user') {
-        availConditions.push(`field_user_code = $${availParamIndex}`)
+        availConditions.push(`user_code = $${availParamIndex}`)
         availParams.push(searchParams.get('userCode'))
         availParamIndex++
       }
       if (searchParams.has('storeCode') && excludeField !== 'store') {
-        availConditions.push(`store_code = $${availParamIndex}`)
+        availConditions.push(`customer_code = $${availParamIndex}`)
         availParams.push(searchParams.get('storeCode'))
         availParamIndex++
       }
-      if (searchParams.has('chainCode') && excludeField !== 'chain') {
-        availConditions.push(`chain_code = $${availParamIndex}`)
-        availParams.push(searchParams.get('chainCode'))
-        availParamIndex++
-      }
-      if (searchParams.has('regionCode') && excludeField !== 'region') {
-        availConditions.push(`region_code = $${availParamIndex}`)
-        availParams.push(searchParams.get('regionCode'))
+      if (searchParams.has('chainName') && excludeField !== 'chain') {
+        availConditions.push(`channel_name = $${availParamIndex}`)
+        availParams.push(searchParams.get('chainName'))
         availParamIndex++
       }
 
@@ -151,171 +175,184 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    // Get base WHERE for all options (with hierarchy)
-    const baseWhere = buildAvailabilityWhere()
+    // Helper to build WHERE clause excluding certain fields for cascading
+    const buildWhereExcluding = (...excludeFields: string[]) => {
+      const filteredConditions = []
+      const filteredParams = []
+      let pIndex = 1
 
-    // Get distinct users, stores, cities, purposes, chains, and regions with counts
-    const [usersResult, storesResult, citiesResult, purposesResult, outcomesResult, chainsResult, regionsResult] = await Promise.all([
-      // Users with counts
+      // Date filters
+      if (searchParams.has('startDate') && searchParams.has('endDate')) {
+        filteredConditions.push(`visit_date >= $${pIndex}::date`)
+        filteredParams.push(searchParams.get('startDate'))
+        pIndex++
+        filteredConditions.push(`visit_date <= $${pIndex}::date`)
+        filteredParams.push(searchParams.get('endDate'))
+        pIndex++
+      }
+
+      // Area filter
+      if (searchParams.has('areaCode') && !excludeFields.includes('area')) {
+        filteredConditions.push(`region_code = $${pIndex}`)
+        filteredParams.push(searchParams.get('areaCode'))
+        pIndex++
+      }
+
+      // Sub-Area filter
+      if (searchParams.has('subAreaCode') && !excludeFields.includes('subArea')) {
+        filteredConditions.push(`sub_area_code = $${pIndex}`)
+        filteredParams.push(searchParams.get('subAreaCode'))
+        pIndex++
+      }
+
+      // Route filter
+      if (searchParams.has('routeCode') && !excludeFields.includes('route')) {
+        filteredConditions.push(`route_code = $${pIndex}`)
+        filteredParams.push(searchParams.get('routeCode'))
+        pIndex++
+      }
+
+      // Team Leader filter
+      if (searchParams.has('teamLeaderCode') && !excludeFields.includes('teamLeader')) {
+        filteredConditions.push(`route_code = $${pIndex}`)
+        filteredParams.push(searchParams.get('teamLeaderCode'))
+        pIndex++
+      }
+
+      // User filter
+      if (searchParams.has('userCode') && !excludeFields.includes('user')) {
+        filteredConditions.push(`user_code = $${pIndex}`)
+        filteredParams.push(searchParams.get('userCode'))
+        pIndex++
+      }
+
+      // Store filter
+      if (searchParams.has('storeCode') && !excludeFields.includes('store')) {
+        filteredConditions.push(`customer_code = $${pIndex}`)
+        filteredParams.push(searchParams.get('storeCode'))
+        pIndex++
+      }
+
+      // Chain filter
+      if (searchParams.has('chainName') && !excludeFields.includes('chain')) {
+        filteredConditions.push(`channel_name = $${pIndex}`)
+        filteredParams.push(searchParams.get('chainName'))
+        pIndex++
+      }
+
+      // Hierarchy filter
+      if (allowedUserCodes.length > 0) {
+        const placeholders = allowedUserCodes.map((_, index) => `$${pIndex + index}`).join(', ')
+        filteredConditions.push(`user_code IN (${placeholders})`)
+        filteredParams.push(...allowedUserCodes)
+        pIndex += allowedUserCodes.length
+      }
+
+      return {
+        whereClause: filteredConditions.length > 0 ? `WHERE ${filteredConditions.join(' AND ')}` : '',
+        params: filteredParams
+      }
+    }
+
+    // Get distinct areas, subAreas, routes, teamLeaders, fieldUsers, stores, chains, and store classes with counts
+    const areasWhere = buildWhereExcluding('area')
+    const subAreasWhere = buildWhereExcluding('subArea', 'route', 'user', 'store')
+    const routesWhere = buildWhereExcluding('route', 'user', 'store')
+    const usersWhere = buildWhereExcluding('user', 'store')
+    const storesWhere = buildWhereExcluding('store')
+    const chainsWhere = buildWhereExcluding('chain', 'store')
+
+    const [areasResult, subAreasResult, routesResult, fieldUsersResult, storesResult, chainsResult, storeClassesResult] = await Promise.all([
+      // Areas (Regions) with counts
       query(`
         SELECT
-          u.field_user_code as "value",
-          u.field_user_name as "label",
-          COALESCE(counts.visit_count, 0) as "available"
-        FROM (
-          SELECT DISTINCT field_user_code, field_user_name
-          FROM flat_store_visits
-          ${baseWhere.whereClause}
-          AND field_user_code IS NOT NULL
-        ) u
-        LEFT JOIN (
-          SELECT
-            field_user_code,
-            COUNT(*) as visit_count
-          FROM flat_store_visits
-          ${buildAvailabilityWhere('user').whereClause}
-          GROUP BY field_user_code
-        ) counts ON u.field_user_code = counts.field_user_code
-        ORDER BY u.field_user_name
-      `, baseWhere.params.concat(buildAvailabilityWhere('user').params)),
-      
+          region_code as "value",
+          region_code as "label",
+          COUNT(*) as "visitCount"
+        FROM flat_customer_visit
+        ${areasWhere.whereClause}
+        AND region_code IS NOT NULL
+        GROUP BY region_code
+        ORDER BY region_code
+      `, areasWhere.params),
+
+      // Sub-Areas with counts
+      query(`
+        SELECT
+          sub_area_code as "value",
+          sub_area_code as "label",
+          COUNT(*) as "visitCount"
+        FROM flat_customer_visit
+        ${subAreasWhere.whereClause}
+        AND sub_area_code IS NOT NULL
+        GROUP BY sub_area_code
+        ORDER BY sub_area_code
+      `, subAreasWhere.params),
+
+      // Routes (Route Codes) with counts
+      query(`
+        SELECT
+          route_code as "value",
+          MAX(sub_area_code) as "label",
+          COUNT(*) as "visitCount"
+        FROM flat_customer_visit
+        ${routesWhere.whereClause}
+        AND route_code IS NOT NULL
+        GROUP BY route_code
+        ORDER BY MAX(sub_area_code)
+      `, routesWhere.params),
+
+      // Field Users with counts
+      query(`
+        SELECT
+          user_code as "value",
+          MAX(user_name) as "label",
+          COUNT(*) as "visitCount",
+          COUNT(DISTINCT customer_code) as "storeCount"
+        FROM flat_customer_visit
+        ${usersWhere.whereClause}
+        AND user_code IS NOT NULL
+        GROUP BY user_code
+        ORDER BY MAX(user_name)
+      `, usersWhere.params),
+
       // Stores with counts
       query(`
         SELECT
-          s.store_code as "value",
-          s.store_name as "label",
-          COALESCE(counts.visit_count, 0) as "available"
-        FROM (
-          SELECT DISTINCT store_code, store_name
-          FROM flat_store_visits
-          ${baseWhere.whereClause}
-          AND store_code IS NOT NULL
-        ) s
-        LEFT JOIN (
-          SELECT
-            store_code,
-            COUNT(*) as visit_count
-          FROM flat_store_visits
-          ${buildAvailabilityWhere('store').whereClause}
-          GROUP BY store_code
-        ) counts ON s.store_code = counts.store_code
-        ORDER BY s.store_name
-      `, baseWhere.params.concat(buildAvailabilityWhere('store').params)),
-      
-      // Cities with counts
-      query(`
-        SELECT
-          c.city_code as "value",
-          c.city_code as "label",
-          COALESCE(counts.visit_count, 0) as "available"
-        FROM (
-          SELECT DISTINCT city_code
-          FROM flat_store_visits
-          ${baseWhere.whereClause}
-          AND city_code IS NOT NULL
-        ) c
-        LEFT JOIN (
-          SELECT
-            city_code,
-            COUNT(*) as visit_count
-          FROM flat_store_visits
-          ${buildAvailabilityWhere('city').whereClause}
-          GROUP BY city_code
-        ) counts ON c.city_code = counts.city_code
-        ORDER BY c.city_code
-      `, baseWhere.params.concat(buildAvailabilityWhere('city').params)),
-      
-      // Purposes with counts
-      query(`
-        SELECT
-          p.visit_purpose as "value",
-          p.visit_purpose as "label",
-          COALESCE(counts.visit_count, 0) as "available"
-        FROM (
-          SELECT DISTINCT visit_purpose
-          FROM flat_store_visits
-          ${baseWhere.whereClause}
-          AND visit_purpose IS NOT NULL
-        ) p
-        LEFT JOIN (
-          SELECT
-            visit_purpose,
-            COUNT(*) as visit_count
-          FROM flat_store_visits
-          ${buildAvailabilityWhere('purpose').whereClause}
-          GROUP BY visit_purpose
-        ) counts ON p.visit_purpose = counts.visit_purpose
-        ORDER BY p.visit_purpose
-      `, baseWhere.params.concat(buildAvailabilityWhere('purpose').params)),
-      
-      // Outcomes with counts
-      query(`
-        SELECT
-          o.visit_status as "value",
-          o.visit_status as "label",
-          COALESCE(counts.visit_count, 0) as "available"
-        FROM (
-          SELECT DISTINCT visit_status
-          FROM flat_store_visits
-          ${baseWhere.whereClause}
-          AND visit_status IS NOT NULL
-        ) o
-        LEFT JOIN (
-          SELECT
-            visit_status,
-            COUNT(*) as visit_count
-          FROM flat_store_visits
-          ${buildAvailabilityWhere('outcome').whereClause}
-          GROUP BY visit_status
-        ) counts ON o.visit_status = counts.visit_status
-        ORDER BY o.visit_status
-      `, baseWhere.params.concat(buildAvailabilityWhere('outcome').params)),
-      
+          customer_code as "value",
+          MAX(customer_name) as "label",
+          COUNT(*) as "visitCount",
+          COUNT(DISTINCT user_code) as "userCount"
+        FROM flat_customer_visit
+        ${storesWhere.whereClause}
+        AND customer_code IS NOT NULL
+        GROUP BY customer_code
+        ORDER BY MAX(customer_name)
+      `, storesWhere.params),
+
       // Chains with counts
       query(`
         SELECT
-          c.chain_code as "value",
-          c.chain_name as "label",
-          COALESCE(counts.visit_count, 0) as "available"
-        FROM (
-          SELECT DISTINCT chain_code, chain_name
-          FROM flat_store_visits
-          ${baseWhere.whereClause}
-          AND chain_code IS NOT NULL
-        ) c
-        LEFT JOIN (
-          SELECT
-            chain_code,
-            COUNT(*) as visit_count
-          FROM flat_store_visits
-          ${buildAvailabilityWhere('chain').whereClause}
-          GROUP BY chain_code
-        ) counts ON c.chain_code = counts.chain_code
-        ORDER BY c.chain_name
-      `, baseWhere.params.concat(buildAvailabilityWhere('chain').params)),
-      
-      // Regions with counts
+          channel_code as "value",
+          MAX(channel_name) as "label",
+          COUNT(*) as "visitCount",
+          COUNT(DISTINCT customer_code) as "storeCount"
+        FROM flat_customer_visit
+        ${chainsWhere.whereClause}
+        AND channel_code IS NOT NULL
+        GROUP BY channel_code
+        ORDER BY MAX(channel_name)
+      `, chainsWhere.params),
+
+      // Store Classes - return empty result
       query(`
         SELECT
-          r.region_code as "value",
-          r.region_code as "label",
-          COALESCE(counts.visit_count, 0) as "available"
-        FROM (
-          SELECT DISTINCT region_code
-          FROM flat_store_visits
-          ${baseWhere.whereClause}
-          AND region_code IS NOT NULL
-        ) r
-        LEFT JOIN (
-          SELECT
-            region_code,
-            COUNT(*) as visit_count
-          FROM flat_store_visits
-          ${buildAvailabilityWhere('region').whereClause}
-          GROUP BY region_code
-        ) counts ON r.region_code = counts.region_code
-        ORDER BY r.region_code
-      `, baseWhere.params.concat(buildAvailabilityWhere('region').params))
+          'N/A' as "value",
+          'N/A' as "label",
+          0 as "visitCount",
+          0 as "storeCount"
+        WHERE 1=0
+      `, [])
     ])
 
     // Get hierarchy filter options from the users hierarchy API
@@ -345,75 +382,116 @@ export async function GET(request: NextRequest) {
       // Continue without hierarchy data if there's an error
     }
 
-    // Format results - filter out options with 0 availability
-    const users = usersResult.rows
+    // Format results - filter out options with 0 visit count
+    const areas = areasResult.rows
       .map((row: any) => ({
         value: row.value,
         label: row.label,
-        available: parseInt(row.available) || 0
+        visitCount: parseInt(row.visitCount) || 0
       }))
-      .filter((u: any) => u.available > 0 || u.value === searchParams.get('userCode'))
+      .filter((a: any) => a.visitCount > 0 || a.value === searchParams.get('areaCode'))
+
+    const subAreas = subAreasResult.rows
+      .map((row: any) => ({
+        value: row.value,
+        label: row.label,
+        visitCount: parseInt(row.visitCount) || 0
+      }))
+      .filter((sa: any) => sa.visitCount > 0 || sa.value === searchParams.get('subAreaCode'))
+
+    const routes = routesResult.rows
+      .map((row: any) => ({
+        value: row.value,
+        label: row.label,
+        visitCount: parseInt(row.visitCount) || 0
+      }))
+      .filter((r: any) => r.visitCount > 0 || r.value === searchParams.get('routeCode'))
+
+    const fieldUsers = fieldUsersResult.rows
+      .map((row: any) => ({
+        value: row.value,
+        label: row.label,
+        visitCount: parseInt(row.visitCount) || 0,
+        storeCount: parseInt(row.storeCount) || 0
+      }))
+      .filter((u: any) => u.visitCount > 0 || u.value === searchParams.get('userCode'))
 
     const stores = storesResult.rows
       .map((row: any) => ({
         value: row.value,
         label: row.label,
-        available: parseInt(row.available) || 0
+        visitCount: parseInt(row.visitCount) || 0,
+        userCount: parseInt(row.userCount) || 0
       }))
-      .filter((s: any) => s.available > 0 || s.value === searchParams.get('storeCode'))
-
-    const cities = citiesResult.rows
-      .map((row: any) => ({
-        value: row.value,
-        label: row.label,
-        available: parseInt(row.available) || 0
-      }))
-      .filter((c: any) => c.available > 0 || c.value === searchParams.get('cityCode'))
-
-    const purposes = purposesResult.rows
-      .map((row: any) => ({
-        value: row.value,
-        label: row.label,
-        available: parseInt(row.available) || 0
-      }))
-      .filter((p: any) => p.available > 0 || p.value === searchParams.get('visitPurpose'))
-
-    const outcomes = outcomesResult.rows
-      .map((row: any) => ({
-        value: row.value,
-        label: row.label,
-        available: parseInt(row.available) || 0
-      }))
-      .filter((o: any) => o.available > 0 || o.value === searchParams.get('visitOutcome'))
+      .filter((s: any) => s.visitCount > 0 || s.value === searchParams.get('storeCode'))
 
     const chains = chainsResult.rows
       .map((row: any) => ({
         value: row.value,
         label: row.label,
-        available: parseInt(row.available) || 0
+        visitCount: parseInt(row.visitCount) || 0,
+        storeCount: parseInt(row.storeCount) || 0
       }))
-      .filter((c: any) => c.available > 0 || c.value === searchParams.get('chainCode'))
+      .filter((c: any) => c.visitCount > 0 || c.value === searchParams.get('chainName'))
 
-    const regions = regionsResult.rows
+    const storeClasses = storeClassesResult.rows
       .map((row: any) => ({
         value: row.value,
         label: row.label,
-        available: parseInt(row.available) || 0
+        visitCount: parseInt(row.visitCount) || 0,
+        storeCount: parseInt(row.storeCount) || 0
       }))
-      .filter((r: any) => r.available > 0 || r.value === searchParams.get('regionCode'))
+      .filter((sc: any) => sc.visitCount > 0 || sc.value === searchParams.get('storeClass'))
+
+    // Calculate summary statistics
+    const totalVisits = fieldUsers.reduce((sum, u) => sum + u.visitCount, 0)
+    const totalUsers = fieldUsers.length
+    const totalStores = stores.length
+    const totalRoutes = routes.length
+
+    // Get date range from the visits data (use all filters)
+    const allFiltersWhere = buildWhereExcluding()
+    let dateRangeQuery
+    try {
+      dateRangeQuery = await query(`
+        SELECT
+          MIN(visit_date::text) as min_date,
+          MAX(visit_date::text) as max_date,
+          COUNT(DISTINCT visit_date) as days_with_data
+        FROM flat_customer_visit
+        ${allFiltersWhere.whereClause}
+      `, allFiltersWhere.params)
+    } catch (err) {
+      console.warn('Failed to fetch date range:', err)
+      dateRangeQuery = { rows: [{ min_date: '', max_date: '', days_with_data: 0 }] }
+    }
 
     const responseJson = {
       success: true,
       data: {
-        users,
+        areas,
+        subAreas,
+        routes,
+        teamLeaders: teamLeaders.map(tl => ({
+          value: tl.value,
+          label: tl.label,
+          role: tl.role
+        })),
+        fieldUsers,
         stores,
-        cities,
-        purposes,
-        outcomes,
         chains,
-        regions,
-        teamLeaders,
-        assistantLeaders
+        storeClasses,
+        summary: {
+          totalVisits,
+          totalUsers,
+          totalStores,
+          totalRoutes,
+          dateRange: {
+            min: dateRangeQuery.rows[0]?.min_date || '',
+            max: dateRangeQuery.rows[0]?.max_date || '',
+            daysWithData: parseInt(dateRangeQuery.rows[0]?.days_with_data) || 0
+          }
+        }
       },
       timestamp: new Date().toISOString(),
       cached: false

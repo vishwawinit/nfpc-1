@@ -94,12 +94,12 @@ export const useDashboardFilters = () => {
     startDate: defaultDates.startDate,
     endDate: defaultDates.endDate,
     areaCode: null,
-    subAreaCode: 'ALN', // Default filter for dashboard: SUB AREA = ALN
+    subAreaCode: 'MLN', // Default filter for dashboard: SUB AREA = MLN
     regionCode: null, // Keep for backward compatibility
-    cityCode: 'ALN', // Keep for backward compatibility (sync with subAreaCode)
+    cityCode: 'MLN', // Keep for backward compatibility (sync with subAreaCode)
     fieldUserRole: null,
     teamLeaderCode: null,
-    userCode: '187219', // Default filter for dashboard: FIELD USER = ABDULLAH AL HARUN
+    userCode: null, // No default user filter
     chainName: null,
     storeCode: null
   })
@@ -284,19 +284,19 @@ export const useDashboardFilters = () => {
     }))
   }, [])
 
-  // Reset all filters - reset to default date range, default sub area (ALN), and default user (187219)
+  // Reset all filters - reset to default date range and default sub area (MLN)
   const resetFilters = useCallback(() => {
     const defaultDates = getDefaultDateRange()
     setFilters({
       startDate: defaultDates.startDate,
       endDate: defaultDates.endDate,
       areaCode: null,
-      subAreaCode: 'ALN', // Default filter for dashboard: SUB AREA = ALN
+      subAreaCode: 'MLN', // Default filter for dashboard: SUB AREA = MLN
       regionCode: null, // Keep for backward compatibility
-      cityCode: 'ALN', // Keep for backward compatibility (sync with subAreaCode)
+      cityCode: 'MLN', // Keep for backward compatibility (sync with subAreaCode)
       fieldUserRole: null,
       teamLeaderCode: null,
-      userCode: '187219', // Default filter for dashboard: FIELD USER = ABDULLAH AL HARUN
+      userCode: null, // No default user filter
       chainName: null,
       storeCode: null
     })

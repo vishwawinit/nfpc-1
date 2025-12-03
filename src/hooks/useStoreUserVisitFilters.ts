@@ -13,8 +13,11 @@ export interface StoreUserVisitFilters {
   endDate: string | null
   areaCode: string | null
   subAreaCode: string | null
+  regionCode: string | null // Alias for areaCode (backward compatibility)
+  cityCode: string | null // Alias for subAreaCode (backward compatibility)
   routeCode: string | null
   teamLeaderCode: string | null
+  fieldUserRole: string | null // Not used in store visits, but needed for compatibility
   userCode: string | null
   storeCode: string | null
   chainName: string | null
@@ -24,9 +27,12 @@ export interface StoreUserVisitFilters {
 export interface StoreVisitFilterOptions {
   areas: StoreVisitFilterOption[]
   subAreas: StoreVisitFilterOption[]
+  regions: StoreVisitFilterOption[] // Alias for areas
+  cities: StoreVisitFilterOption[] // Alias for subAreas
   routes: StoreVisitFilterOption[]
   teamLeaders: StoreVisitFilterOption[]
   fieldUsers: StoreVisitFilterOption[]
+  fieldUserRoles: StoreVisitFilterOption[] // Empty array for compatibility
   stores: StoreVisitFilterOption[]
   chains: StoreVisitFilterOption[]
   storeClasses: StoreVisitFilterOption[]
@@ -35,6 +41,10 @@ export interface StoreVisitFilterOptions {
     totalUsers: number
     totalStores: number
     totalRoutes: number
+    totalAreas: number
+    totalSubAreas: number
+    totalRegions: number
+    totalChains: number
     dateRange: {
       min: string
       max: string
@@ -70,8 +80,11 @@ export const useStoreUserVisitFilters = () => {
     endDate: defaultDates.endDate,
     areaCode: null,
     subAreaCode: null,
+    regionCode: null, // Alias for areaCode
+    cityCode: null, // Alias for subAreaCode
     routeCode: null,
     teamLeaderCode: null,
+    fieldUserRole: null, // Not used, but needed for compatibility
     userCode: null,
     storeCode: null,
     chainName: null,
@@ -81,9 +94,12 @@ export const useStoreUserVisitFilters = () => {
   const [filterOptions, setFilterOptions] = useState<StoreVisitFilterOptions>({
     areas: [],
     subAreas: [],
+    regions: [], // Alias for areas
+    cities: [], // Alias for subAreas
     routes: [],
     teamLeaders: [],
     fieldUsers: [],
+    fieldUserRoles: [], // Empty array for compatibility
     stores: [],
     chains: [],
     storeClasses: [],
@@ -92,6 +108,10 @@ export const useStoreUserVisitFilters = () => {
       totalUsers: 0,
       totalStores: 0,
       totalRoutes: 0,
+      totalAreas: 0,
+      totalSubAreas: 0,
+      totalRegions: 0,
+      totalChains: 0,
       dateRange: {
         min: '',
         max: '',
@@ -127,21 +147,31 @@ export const useStoreUserVisitFilters = () => {
       const result = await response.json()
 
       if (result.success && result.data) {
+        const areas = result.data.areas || []
+        const subAreas = result.data.subAreas || []
+
         setFilterOptions({
-          areas: result.data.areas || [],
-          subAreas: result.data.subAreas || [],
+          areas,
+          subAreas,
+          regions: areas, // Alias for backward compatibility
+          cities: subAreas, // Alias for backward compatibility
           routes: result.data.routes || [],
           teamLeaders: result.data.teamLeaders || [],
           fieldUsers: result.data.fieldUsers || [],
+          fieldUserRoles: [], // Empty array - Store visits don't have roles
           stores: result.data.stores || [],
           chains: result.data.chains || [],
           storeClasses: result.data.storeClasses || [],
-          summary: result.data.summary || {
-            totalVisits: 0,
-            totalUsers: 0,
-            totalStores: 0,
-            totalRoutes: 0,
-            dateRange: { min: '', max: '', daysWithData: 0 }
+          summary: {
+            totalVisits: result.data.summary?.totalVisits || 0,
+            totalUsers: result.data.summary?.totalUsers || 0,
+            totalStores: result.data.summary?.totalStores || 0,
+            totalRoutes: result.data.summary?.totalRoutes || 0,
+            totalAreas: areas.length,
+            totalSubAreas: subAreas.length,
+            totalRegions: areas.length,
+            totalChains: (result.data.chains || []).length,
+            dateRange: result.data.summary?.dateRange || { min: '', max: '', daysWithData: 0 }
           }
         })
       } else {
@@ -171,10 +201,21 @@ export const useStoreUserVisitFilters = () => {
     setFilters(prev => {
       const updated = { ...prev, [key]: value }
 
-      // Cascading filter logic
+      // Sync aliases for backward compatibility
       if (key === 'areaCode') {
-        // Area change clears all dependent filters
+        updated.regionCode = value
         updated.subAreaCode = null
+        updated.cityCode = null
+        updated.routeCode = null
+        updated.teamLeaderCode = null
+        updated.userCode = null
+        updated.storeCode = null
+      }
+
+      if (key === 'regionCode') {
+        updated.areaCode = value
+        updated.subAreaCode = null
+        updated.cityCode = null
         updated.routeCode = null
         updated.teamLeaderCode = null
         updated.userCode = null
@@ -182,7 +223,15 @@ export const useStoreUserVisitFilters = () => {
       }
 
       if (key === 'subAreaCode') {
-        // Sub-area change clears route and dependent filters
+        updated.cityCode = value
+        updated.routeCode = null
+        updated.teamLeaderCode = null
+        updated.userCode = null
+        updated.storeCode = null
+      }
+
+      if (key === 'cityCode') {
+        updated.subAreaCode = value
         updated.routeCode = null
         updated.teamLeaderCode = null
         updated.userCode = null
@@ -217,6 +266,11 @@ export const useStoreUserVisitFilters = () => {
         updated.storeCode = null
       }
 
+      // fieldUserRole is not used in store visits, just ignore it
+      if (key === 'fieldUserRole') {
+        // Do nothing, this filter is not applicable
+      }
+
       return updated
     })
   }, [])
@@ -238,8 +292,11 @@ export const useStoreUserVisitFilters = () => {
       endDate: defaultDates.endDate,
       areaCode: null,
       subAreaCode: null,
+      regionCode: null,
+      cityCode: null,
       routeCode: null,
       teamLeaderCode: null,
+      fieldUserRole: null,
       userCode: null,
       storeCode: null,
       chainName: null,
@@ -270,7 +327,7 @@ export const useStoreUserVisitFilters = () => {
     return params
   }, [filters])
 
-  // Get active filter count (excluding date range)
+  // Get active filter count (excluding date range and aliases)
   const activeFilterCount = useMemo(() => {
     let count = 0
     if (filters.areaCode) count++
@@ -281,8 +338,18 @@ export const useStoreUserVisitFilters = () => {
     if (filters.storeCode) count++
     if (filters.chainName) count++
     if (filters.storeClass) count++
+    // Don't count aliases (regionCode, cityCode, fieldUserRole)
     return count
-  }, [filters])
+  }, [
+    filters.areaCode,
+    filters.subAreaCode,
+    filters.routeCode,
+    filters.teamLeaderCode,
+    filters.userCode,
+    filters.storeCode,
+    filters.chainName,
+    filters.storeClass
+  ])
 
   return {
     filters,

@@ -4,7 +4,7 @@ import React, { useState, useEffect, useMemo, useCallback } from 'react'
 import { Package, ShoppingCart, TrendingUp, Store, DollarSign, BarChart3, Maximize, Minimize, RefreshCw, ZoomIn, ZoomOut, X } from 'lucide-react'
 import {
   LineChart, Line, BarChart, Bar, PieChart, Pie, Cell,
-  XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, ComposedChart
+  XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, ComposedChart, LabelList
 } from 'recharts'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -316,7 +316,7 @@ export const DailyStockSaleReport: React.FC = () => {
     } finally {
       setLoading(false)
     }
-  }, [filters.startDate, filters.endDate, getQueryParams])
+  }, [filters.startDate, filters.endDate, getQueryParams, currentPage, itemsPerPage])
 
   // Reset to page 1 when filters change (but not when only pagination changes)
   useEffect(() => {
@@ -351,14 +351,14 @@ export const DailyStockSaleReport: React.FC = () => {
     }).format(validAmount)
   }
 
-  // Get top products for chart - keep full info for tooltips
+  // Get top products for chart - show product code on Y-axis, full details on hover
   const topProductsChart = useMemo(() => {
     if (!Array.isArray(productsData) || productsData.length === 0) return []
 
     const result = productsData
       .filter(p => p && p.productCode) // Filter out invalid items
       .map(p => ({
-        name: (p.productName?.substring(0, 30) || p.productCode?.substring(0, 30)) + ((p.productName?.length || p.productCode?.length || 0) > 30 ? '...' : '') || 'Unknown Product',
+        name: p.productCode || 'N/A', // Show product code on Y-axis
         fullName: p.productName || p.productCode || 'Unknown Product',
         productCode: p.productCode || 'N/A',
         value: parseFloat(p.netSales) || 0
@@ -624,19 +624,20 @@ export const DailyStockSaleReport: React.FC = () => {
                   </div>
                 </div>
               ) : (
-                <ResponsiveContainer width="100%" height={350}>
-                  <ComposedChart data={trendChartData} margin={{ top: 10, right: 50, left: 20, bottom: 40 }}>
+                <ResponsiveContainer width="100%" height={400}>
+                  <ComposedChart data={trendChartData} margin={{ top: 20, right: 60, left: 70, bottom: 60 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
                     <XAxis
                       dataKey="date"
-                      label={{ value: 'Date', position: 'insideBottom', offset: -5, style: { fontSize: 13, fill: '#1f2937', fontWeight: 700 } }}
+                      label={{ value: 'Date', position: 'insideBottom', offset: -15, style: { fontSize: 13, fill: '#1f2937', fontWeight: 700 } }}
                       tick={{ fontSize: isMobile ? 10 : 12, fill: '#6b7280' }}
+                      height={70}
                     />
-                    {/* Left Y-Axis for Sales Amount in INR */}
+                    {/* Left Y-Axis for Sales Amount in AED */}
                     <YAxis
                       yAxisId="left"
                       tickFormatter={(value) => `AED${(value / 1000).toFixed(0)}K`}
-                      label={{ value: 'Sales (AED)', angle: -90, position: 'insideLeft', offset: -5, style: { fontSize: 12, fill: '#1f2937', fontWeight: 700, textAnchor: 'middle' } }}
+                      label={{ value: 'Sales (AED)', angle: -90, position: 'insideLeft', offset: -16, style: { fontSize: 12, fill: '#1f2937', fontWeight: 700, textAnchor: 'middle' } }}
                       tick={{ fontSize: isMobile ? 10 : 12, fill: '#6b7280' }}
                     />
                     {/* Right Y-Axis for Orders, Customers */}
@@ -644,7 +645,7 @@ export const DailyStockSaleReport: React.FC = () => {
                       yAxisId="right"
                       orientation="right"
                       tickFormatter={(value) => value >= 1000 ? `${(value / 1000).toFixed(0)}K` : value.toString()}
-                      label={{ value: 'Orders/Customers', angle: 90, position: 'insideRight', offset: 5, style: { fontSize: 12, fill: '#1f2937', fontWeight: 700, textAnchor: 'middle' } }}
+                      label={{ value: 'Orders / Customers', angle: 90, position: 'insideRight', offset: 15, style: { fontSize: 12, fill: '#1f2937', fontWeight: 700, textAnchor: 'middle' } }}
                       tick={{ fontSize: isMobile ? 10 : 12, fill: '#6b7280' }}
                     />
                     <Tooltip
@@ -737,18 +738,20 @@ export const DailyStockSaleReport: React.FC = () => {
                 </div>
               ) : (
                 <ResponsiveContainer width="100%" height={300}>
-                  <BarChart data={topProductsChart} layout="vertical">
+                  <BarChart data={topProductsChart} layout="vertical" margin={{ top: 5, right: 30, left: 5, bottom: 30 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" horizontal={true} vertical={false} />
                     <XAxis
                       type="number"
                       tickFormatter={(value) => `AED${(value / 1000).toFixed(0)}K`}
                       style={{ fontSize: '12px', fill: '#6b7280' }}
+                      label={{ value: 'Sales Amount (AED)', position: 'bottom', offset: 10, style: { fontSize: '12px', fill: '#374151', fontWeight: '600' } }}
                     />
                     <YAxis
                       dataKey="name"
                       type="category"
-                      width={150}
+                      width={100}
                       style={{ fontSize: '11px', fill: '#374151' }}
+                      label={{ value: 'Product Code', angle: -90, position: 'insideLeft', offset: 1, style: { fontSize: '12px', fill: '#374151', fontWeight: '600' } }}
                     />
                     <Tooltip
                       content={({ active, payload, label }) => {
@@ -761,16 +764,21 @@ export const DailyStockSaleReport: React.FC = () => {
                               borderRadius: '8px',
                               fontSize: '13px',
                               padding: '12px 16px',
-                              boxShadow: '0 4px 12px rgba(0, 0, 0, 0.1)'
+                              boxShadow: '0 4px 12px rgba(0, 0, 0, 0.1)',
+                              minWidth: '250px'
                             }}>
                               <div style={{ marginBottom: '8px' }}>
-                                <div style={{ fontWeight: '600', color: '#374151', marginBottom: '4px' }}>{data.fullName}</div>
-                                {data.productCode && <div style={{ fontSize: '11px', color: '#6b7280' }}>Code: {data.productCode}</div>}
+                                <div style={{ fontSize: '11px', color: '#6b7280', fontWeight: '500', marginBottom: '4px' }}>
+                                  Product Code: {data.productCode}
+                                </div>
+                                <div style={{ fontWeight: '600', color: '#374151', lineHeight: '1.4' }}>
+                                  {data.fullName}
+                                </div>
                               </div>
-                              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', paddingTop: '8px', borderTop: '1px solid #e5e7eb' }}>
                                 <span style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: '#10b981', display: 'inline-block' }}></span>
                                 <span style={{ fontWeight: '600', color: '#1f2937' }}>
-                                  AED{Number(payload[0].value).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                  AED {Number(payload[0].value).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                                 </span>
                               </div>
                             </div>

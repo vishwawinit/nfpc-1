@@ -2902,19 +2902,18 @@ export function ReturnsWastage() {
                 </div>
               </CardHeader>
               <CardContent>
-                <div className="overflow-x-auto">
-                  <div className="max-h-[500px] overflow-y-auto">
-                    <Table>
-                      <TableHeader className="sticky top-0 bg-white z-10">
-                        <TableRow>
-                          <TableHead className="min-w-[50px] text-center">Rank</TableHead>
-                          <TableHead className="min-w-[100px]">Category</TableHead>
-                          <TableHead className="min-w-[200px]">Product</TableHead>
-                          <TableHead className="min-w-[150px]">Reason</TableHead>
-                          <TableHead className="text-right min-w-[100px]">Quantity</TableHead>
-                          <TableHead className="text-right min-w-[120px]">Value</TableHead>
-                        </TableRow>
-                      </TableHeader>
+                <div className="max-h-[500px] overflow-auto">
+                  <Table>
+                    <TableHeader className="sticky top-0 bg-white z-20 shadow-md border-b-2 border-gray-300">
+                      <TableRow>
+                        <TableHead className="min-w-[50px] text-center bg-white">Rank</TableHead>
+                        <TableHead className="min-w-[100px] bg-white">Category</TableHead>
+                        <TableHead className="min-w-[200px] bg-white">Product</TableHead>
+                        <TableHead className="min-w-[150px] bg-white">Reason</TableHead>
+                        <TableHead className="text-right min-w-[100px] bg-white">Quantity</TableHead>
+                        <TableHead className="text-right min-w-[120px] bg-white">Value</TableHead>
+                      </TableRow>
+                    </TableHeader>
                       <TableBody>
                         {data?.returnReasons?.byProduct?.map((item: any, idx: number) => (
                           <TableRow key={idx}>
@@ -2950,7 +2949,6 @@ export function ReturnsWastage() {
                         ))}
                       </TableBody>
                     </Table>
-                  </div>
                 </div>
               </CardContent>
             </Card>
@@ -3243,22 +3241,21 @@ export function ReturnsWastage() {
                 </div>
               </CardHeader>
               <CardContent>
-                <div className="overflow-x-auto -mx-6 md:mx-0">
-                  <div className="max-h-[500px] overflow-y-auto">
-                    <Table>
-                      <TableHeader className="sticky top-0 bg-white z-10">
-                        <TableRow>
-                          <TableHead className="min-w-[50px] text-center">Rank</TableHead>
-                          <TableHead className="min-w-[200px]">Product</TableHead>
-                          <TableHead className="min-w-[120px]">Brand</TableHead>
-                          <TableHead className="min-w-[120px]">Customer Channel</TableHead>
-                          <TableHead className="text-right min-w-[100px]">Qty Returned</TableHead>
-                          <TableHead className="text-right min-w-[110px]">Total Return Value</TableHead>
-                          <TableHead className="text-right min-w-[110px] text-green-700">Good Returns</TableHead>
-                          <TableHead className="text-right min-w-[110px] text-orange-700">Bad Returns</TableHead>
-                          <TableHead className="text-right min-w-[100px]">Transactions</TableHead>
-                        </TableRow>
-                      </TableHeader>
+                <div className="max-h-[500px] overflow-auto -mx-6 md:mx-0">
+                  <Table>
+                    <TableHeader className="sticky top-0 bg-white z-20 shadow-md border-b-2 border-gray-300">
+                      <TableRow>
+                        <TableHead className="min-w-[50px] text-center bg-white">Rank</TableHead>
+                        <TableHead className="min-w-[200px] bg-white">Product</TableHead>
+                        <TableHead className="min-w-[120px] bg-white">Brand</TableHead>
+                        <TableHead className="min-w-[120px] bg-white">Customer Channel</TableHead>
+                        <TableHead className="text-right min-w-[100px] bg-white">Qty Returned</TableHead>
+                        <TableHead className="text-right min-w-[110px] bg-white">Total Return Value</TableHead>
+                        <TableHead className="text-right min-w-[110px] text-green-700 bg-white">Good Returns</TableHead>
+                        <TableHead className="text-right min-w-[110px] text-orange-700 bg-white">Bad Returns</TableHead>
+                        <TableHead className="text-right min-w-[100px] bg-white">Transactions</TableHead>
+                      </TableRow>
+                    </TableHeader>
                       <TableBody>
                         {data?.periodReturns?.byProduct?.map((item: any, idx: number) => (
                           <TableRow key={idx}>
@@ -3297,7 +3294,6 @@ export function ReturnsWastage() {
                         ))}
                       </TableBody>
                     </Table>
-                  </div>
                 </div>
               </CardContent>
             </Card>
