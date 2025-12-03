@@ -94,9 +94,9 @@ export const useDashboardFilters = () => {
     startDate: defaultDates.startDate,
     endDate: defaultDates.endDate,
     areaCode: null,
-    subAreaCode: 'MLN', // Default filter for dashboard: SUB AREA = MLN
+    subAreaCode: 'TRF', // Default filter for dashboard: SUB AREA = TRF
     regionCode: null, // Keep for backward compatibility
-    cityCode: 'MLN', // Keep for backward compatibility (sync with subAreaCode)
+    cityCode: 'TRF', // Keep for backward compatibility (sync with subAreaCode)
     fieldUserRole: null,
     teamLeaderCode: null,
     userCode: null, // No default user filter
@@ -284,16 +284,16 @@ export const useDashboardFilters = () => {
     }))
   }, [])
 
-  // Reset all filters - reset to default date range and default sub area (MLN)
+  // Reset all filters - reset to default date range and default sub area (TRF)
   const resetFilters = useCallback(() => {
     const defaultDates = getDefaultDateRange()
     setFilters({
       startDate: defaultDates.startDate,
       endDate: defaultDates.endDate,
       areaCode: null,
-      subAreaCode: 'MLN', // Default filter for dashboard: SUB AREA = MLN
+      subAreaCode: 'TRF', // Default filter for dashboard: SUB AREA = TRF
       regionCode: null, // Keep for backward compatibility
-      cityCode: 'MLN', // Keep for backward compatibility (sync with subAreaCode)
+      cityCode: 'TRF', // Keep for backward compatibility (sync with subAreaCode)
       fieldUserRole: null,
       teamLeaderCode: null,
       userCode: null, // No default user filter
