@@ -127,7 +127,8 @@ export function ProductsReport() {
   const [appliedCustomDates, setAppliedCustomDates] = useState({ start: '', end: '' })
 
   // Detailed view state
-  const [detailedProducts, setDetailedProducts] = useState<DetailedProduct[]>([])
+  const [allProducts, setAllProducts] = useState<DetailedProduct[]>([]) // Store all products
+  const [detailedProducts, setDetailedProducts] = useState<DetailedProduct[]>([]) // Visible products for current page
   const [currentPage, setCurrentPage] = useState(1)
   const [totalProducts, setTotalProducts] = useState(0)
   const [pageSize, setPageSize] = useState(25)
@@ -222,16 +223,15 @@ export function ProductsReport() {
     }
   }
 
-  // Fetch detailed products
+  // Fetch detailed products - Fetch ALL products at once for frontend pagination
   const fetchDetailedProducts = async () => {
     try {
       setDetailsLoading(true)
       const params = new URLSearchParams({
         range: appliedFilters.dateRange,
-        page: currentPage.toString(),
-        limit: pageSize.toString(),
-        sortBy,
-        sortOrder,
+        limit: '999999', // Fetch all products
+        sortBy: 'total_sales', // Default sort from backend
+        sortOrder: 'DESC',
         ...(appliedCustomDates.start && { startDate: appliedCustomDates.start }),
         ...(appliedCustomDates.end && { endDate: appliedCustomDates.end }),
         ...(appliedFilters.channel !== 'all' && { channel: appliedFilters.channel }),
@@ -243,8 +243,8 @@ export function ProductsReport() {
       const cached = clientCache.get('/api/products/details', params)
       if (cached) {
         if (cached.success) {
-          setDetailedProducts(cached.data.products)
-          setTotalProducts(cached.data.pagination.totalCount)
+          setAllProducts(cached.data.products)
+          setTotalProducts(cached.data.products.length)
         } else {
           setError(cached.error || 'Failed to fetch products')
         }
@@ -259,8 +259,8 @@ export function ProductsReport() {
       clientCache.set('/api/products/details', result, params, 5 * 60 * 1000)
 
       if (result.success) {
-        setDetailedProducts(result.data.products)
-        setTotalProducts(result.data.pagination.totalCount)
+        setAllProducts(result.data.products)
+        setTotalProducts(result.data.products.length)
       } else {
         setError(result.error || 'Failed to fetch products')
       }
@@ -305,30 +305,113 @@ export function ProductsReport() {
   }, [appliedFilters.dateRange, appliedFilters.channel, appliedFilters.searchTerm, appliedFilters.brand, appliedCustomDates.start, appliedCustomDates.end])
 
   useEffect(() => {
-    // Only fetch detailed products when on detailed tab
+    // Only fetch detailed products when on detailed tab and when filters change
     if (activeTab === 'detailed') {
       fetchDetailedProducts()
     }
-  }, [activeTab, currentPage, pageSize, sortBy, sortOrder, appliedFilters.dateRange, appliedFilters.channel, appliedFilters.searchTerm, appliedFilters.brand, appliedCustomDates.start, appliedCustomDates.end])
+  }, [activeTab, appliedFilters.dateRange, appliedFilters.channel, appliedFilters.searchTerm, appliedFilters.brand, appliedCustomDates.start, appliedCustomDates.end])
 
-  // Export to Excel
+  // Frontend pagination and sorting logic
+  useEffect(() => {
+    if (allProducts.length === 0) {
+      setDetailedProducts([])
+      return
+    }
+
+    // Sort products on the frontend
+    const sortedProducts = [...allProducts].sort((a, b) => {
+      let aValue: any
+      let bValue: any
+
+      switch (sortBy) {
+        case 'product_code':
+          aValue = a.productCode
+          bValue = b.productCode
+          break
+        case 'product_name':
+          aValue = a.productName
+          bValue = b.productName
+          break
+        case 'total_quantity':
+          aValue = a.totalQuantity
+          bValue = b.totalQuantity
+          break
+        case 'avg_price':
+          aValue = a.avgPrice
+          bValue = b.avgPrice
+          break
+        case 'total_sales':
+          aValue = a.totalSales
+          bValue = b.totalSales
+          break
+        default:
+          aValue = a.totalSales
+          bValue = b.totalSales
+      }
+
+      if (typeof aValue === 'string') {
+        return sortOrder === 'ASC'
+          ? aValue.localeCompare(bValue)
+          : bValue.localeCompare(aValue)
+      } else {
+        return sortOrder === 'ASC'
+          ? aValue - bValue
+          : bValue - aValue
+      }
+    })
+
+    // Paginate on the frontend
+    const startIndex = (currentPage - 1) * pageSize
+    const endIndex = startIndex + pageSize
+    const paginatedProducts = sortedProducts.slice(startIndex, endIndex)
+
+    setDetailedProducts(paginatedProducts)
+  }, [allProducts, currentPage, pageSize, sortBy, sortOrder])
+
+  // Export to Excel - Use allProducts array with frontend sorting
   const exportToExcel = async () => {
     try {
-      const params = new URLSearchParams({
-        range: appliedFilters.dateRange,
-        limit: '999999',
-        sortBy,
-        sortOrder,
-        ...(appliedCustomDates.start && { startDate: appliedCustomDates.start }),
-        ...(appliedCustomDates.end && { endDate: appliedCustomDates.end }),
-        ...(appliedFilters.channel !== 'all' && { channel: appliedFilters.channel }),
-        ...(appliedFilters.searchTerm !== 'all' && { productCode: appliedFilters.searchTerm }),
-        ...(appliedFilters.brand !== 'all' && { brand: appliedFilters.brand }),
-      })
+      // Sort products same as current view
+      const sortedProducts = [...allProducts].sort((a, b) => {
+        let aValue: any
+        let bValue: any
 
-      const response = await fetch(`/api/products/details?${params}`)
-      const result = await response.json()
-      const allProducts = result.data?.products || []
+        switch (sortBy) {
+          case 'product_code':
+            aValue = a.productCode
+            bValue = b.productCode
+            break
+          case 'product_name':
+            aValue = a.productName
+            bValue = b.productName
+            break
+          case 'total_quantity':
+            aValue = a.totalQuantity
+            bValue = b.totalQuantity
+            break
+          case 'avg_price':
+            aValue = a.avgPrice
+            bValue = b.avgPrice
+            break
+          case 'total_sales':
+            aValue = a.totalSales
+            bValue = b.totalSales
+            break
+          default:
+            aValue = a.totalSales
+            bValue = b.totalSales
+        }
+
+        if (typeof aValue === 'string') {
+          return sortOrder === 'ASC'
+            ? aValue.localeCompare(bValue)
+            : bValue.localeCompare(aValue)
+        } else {
+          return sortOrder === 'ASC'
+            ? aValue - bValue
+            : bValue - aValue
+        }
+      })
 
       const workbook = new ExcelJS.Workbook()
       const worksheet = workbook.addWorksheet('Products Report')
@@ -342,7 +425,7 @@ export function ProductsReport() {
         { header: 'Total Amount', key: 'totalSales', width: 18 },
       ]
 
-      worksheet.addRows(allProducts.map((p: DetailedProduct) => ({
+      worksheet.addRows(sortedProducts.map((p: DetailedProduct) => ({
         productCode: p.productCode,
         productName: p.productName,
         brand: p.brand || 'No Brand',

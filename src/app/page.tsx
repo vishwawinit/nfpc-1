@@ -156,7 +156,7 @@ function HomePageContent() {
             {/* AI Assistant - Under Orders Report */}
             <a
               href="/ask-ai"
-              className="w-full flex items-center gap-3 px-4 py-3 mb-1 rounded-lg transition-all duration-200 font-medium text-gray-300 hover:bg-slate-700/50"
+              className="w-full flex items-center gap-3 px-4 py-3 mb-1 rounded-lg transition-all duration-200 font-medium text-gray-300 border border-gray-600 hover:bg-violet-200 hover:text-slate-800"
               title={!sidebarExpanded ? 'AI Assistant' : ''}
             >
               <svg className="flex-shrink-0" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -281,7 +281,7 @@ function HomePageContent() {
             {/* AI Assistant - Under Orders Report */}
             <a
               href="/ask-ai"
-              className="w-full flex items-center gap-3 px-4 py-3 mb-1 rounded-lg transition-all font-medium text-gray-300 hover:bg-slate-700/50"
+              className="w-full flex items-center gap-3 px-4 py-3 mb-1 rounded-lg transition-all font-medium text-gray-300 border border-gray-600 hover:bg-violet-200 hover:text-slate-800"
               onClick={() => setMobileSidebarOpen(false)}
             >
               <svg className="flex-shrink-0" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
