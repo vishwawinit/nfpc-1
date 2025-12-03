@@ -1936,20 +1936,27 @@ export function ReturnsWastage() {
 
       // Filter info
       const dateRangeLabels: { [key: string]: string } = {
-        'today': 'Today', 'yesterday': 'Yesterday', 'thisWeek': 'This Week',
+        'today': 'Today', 'yesterday': 'Yesterday', 'thisWeek': 'Last 7 Days',
         'thisMonth': 'This Month', 'lastMonth': 'Last Month', 'thisQuarter': 'This Quarter',
         'lastQuarter': 'Last Quarter', 'thisYear': 'This Year'
       }
-      const selectedSalesmanName = selectedSalesman === 'all' ? 'All Salesmen' :
-        filters.salesmen.find((s: any) => s.code === selectedSalesman)?.name || selectedSalesman
-      const selectedRouteName = selectedRoute === 'all' ? 'All Routes' :
-        filters.routes.find((r: any) => r.code === selectedRoute)?.name || selectedRoute
-      const selectedRegionName = getRegionName(selectedRegion)
+      const selectedFieldUserName = !fieldUser ? 'All Field Users' :
+        filters.fieldUsers.find((u: any) => u.value === fieldUser)?.label || fieldUser
+      const selectedRouteName = !routeCode ? 'All Routes' :
+        filters.routes.find((r: any) => r.value === routeCode)?.label || routeCode
+      const selectedAreaName = !areaCode ? 'All Areas' :
+        filters.areas.find((a: any) => a.value === areaCode)?.label || areaCode
+      const selectedSubAreaName = !subAreaCode ? 'All Sub Areas' :
+        filters.subAreas.find((s: any) => s.value === subAreaCode)?.label || subAreaCode
+      const selectedTeamLeaderName = !teamLeaderCode ? 'All Team Leaders' :
+        filters.teamLeaders.find((t: any) => t.value === teamLeaderCode)?.label || teamLeaderCode
 
       summarySheet.addRow(['Generated:', new Date().toLocaleString()])
       summarySheet.addRow(['Date Range:', dateRangeLabels[dateRange] || dateRange])
-      summarySheet.addRow(['Region:', selectedRegionName])
-      summarySheet.addRow(['Salesman Filter:', selectedSalesmanName])
+      summarySheet.addRow(['Area:', selectedAreaName])
+      summarySheet.addRow(['Sub Area:', selectedSubAreaName])
+      summarySheet.addRow(['Team Leader:', selectedTeamLeaderName])
+      summarySheet.addRow(['Field User Filter:', selectedFieldUserName])
       summarySheet.addRow(['Route Filter:', selectedRouteName])
       summarySheet.addRow([])
 
@@ -2084,33 +2091,40 @@ export function ReturnsWastage() {
       const titleRow = summarySheet.addRow(['BAD RETURNS (WASTAGE) - SUMMARY REPORT'])
       titleRow.font = { size: 16, bold: true, color: { argb: 'FFFFFFFF' } }
       titleRow.alignment = { horizontal: 'center' }
-      titleRow.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFDC2626' } }
+      titleRow.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFEA580C' } }
       titleRow.height = 35
       summarySheet.mergeCells('A1:B1')
 
       // Filter info
       const dateRangeLabels: { [key: string]: string } = {
-        'today': 'Today', 'yesterday': 'Yesterday', 'thisWeek': 'This Week',
+        'today': 'Today', 'yesterday': 'Yesterday', 'thisWeek': 'Last 7 Days',
         'thisMonth': 'This Month', 'lastMonth': 'Last Month', 'thisQuarter': 'This Quarter',
         'lastQuarter': 'Last Quarter', 'thisYear': 'This Year'
       }
-      const selectedSalesmanName = selectedSalesman === 'all' ? 'All Salesmen' :
-        filters.salesmen.find((s: any) => s.code === selectedSalesman)?.name || selectedSalesman
-      const selectedRouteName = selectedRoute === 'all' ? 'All Routes' :
-        filters.routes.find((r: any) => r.code === selectedRoute)?.name || selectedRoute
-      const selectedRegionName = getRegionName(selectedRegion)
+      const selectedFieldUserName = !fieldUser ? 'All Field Users' :
+        filters.fieldUsers.find((u: any) => u.value === fieldUser)?.label || fieldUser
+      const selectedRouteName = !routeCode ? 'All Routes' :
+        filters.routes.find((r: any) => r.value === routeCode)?.label || routeCode
+      const selectedAreaName = !areaCode ? 'All Areas' :
+        filters.areas.find((a: any) => a.value === areaCode)?.label || areaCode
+      const selectedSubAreaName = !subAreaCode ? 'All Sub Areas' :
+        filters.subAreas.find((s: any) => s.value === subAreaCode)?.label || subAreaCode
+      const selectedTeamLeaderName = !teamLeaderCode ? 'All Team Leaders' :
+        filters.teamLeaders.find((t: any) => t.value === teamLeaderCode)?.label || teamLeaderCode
 
       summarySheet.addRow(['Generated:', new Date().toLocaleString()])
       summarySheet.addRow(['Date Range:', dateRangeLabels[dateRange] || dateRange])
-      summarySheet.addRow(['Region:', selectedRegionName])
-      summarySheet.addRow(['Salesman Filter:', selectedSalesmanName])
+      summarySheet.addRow(['Area:', selectedAreaName])
+      summarySheet.addRow(['Sub Area:', selectedSubAreaName])
+      summarySheet.addRow(['Team Leader:', selectedTeamLeaderName])
+      summarySheet.addRow(['Field User Filter:', selectedFieldUserName])
       summarySheet.addRow(['Route Filter:', selectedRouteName])
       summarySheet.addRow([])
 
       // Key Metrics
       const metricsHeader = summarySheet.addRow(['KEY METRICS', ''])
       metricsHeader.font = { size: 12, bold: true, color: { argb: 'FFFFFFFF' } }
-      metricsHeader.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFDC2626' } }
+      metricsHeader.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFEA580C' } }
       metricsHeader.height = 25
 
       summarySheet.addRow(['Total Transactions', formatNumber(transactions.length)])
@@ -2124,8 +2138,8 @@ export function ReturnsWastage() {
       // Add note
       summarySheet.addRow([])
       const noteRow = summarySheet.addRow(['WARNING: Bad returns are damaged/expired products that cannot be resold. This represents direct loss.'])
-      noteRow.font = { italic: true, bold: true, color: { argb: 'FFDC2626' } }
-      noteRow.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFECACA' } }
+      noteRow.font = { italic: true, bold: true, color: { argb: 'FFEA580C' } }
+      noteRow.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFED7AA' } }
       summarySheet.mergeCells(`A${noteRow.number}:B${noteRow.number}`)
 
       // ===== SHEET 2: DETAILED TRANSACTIONS =====
@@ -2150,7 +2164,7 @@ export function ReturnsWastage() {
       // Style header row
       const headerRow = detailSheet.getRow(1)
       headerRow.font = { bold: true, color: { argb: 'FFFFFFFF' } }
-      headerRow.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFDC2626' } }
+      headerRow.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFEA580C' } }
       headerRow.alignment = { horizontal: 'center', vertical: 'middle' }
       headerRow.height = 25
 
@@ -2902,10 +2916,10 @@ export function ReturnsWastage() {
                 </div>
               </CardHeader>
               <CardContent>
-                <div className="max-h-[500px] overflow-auto">
+                <div className="overflow-x-auto">
                   <Table>
-                    <TableHeader className="sticky top-0 bg-white z-20 shadow-md border-b-2 border-gray-300">
-                      <TableRow>
+                    <TableHeader className="bg-white border-b-2 border-gray-300">
+                      <TableRow className="bg-white">
                         <TableHead className="min-w-[50px] text-center bg-white">Rank</TableHead>
                         <TableHead className="min-w-[100px] bg-white">Category</TableHead>
                         <TableHead className="min-w-[200px] bg-white">Product</TableHead>
@@ -2914,10 +2928,13 @@ export function ReturnsWastage() {
                         <TableHead className="text-right min-w-[120px] bg-white">Value</TableHead>
                       </TableRow>
                     </TableHeader>
+                  </Table>
+                  <div className="max-h-[450px] overflow-y-auto">
+                    <Table>
                       <TableBody>
                         {data?.returnReasons?.byProduct?.map((item: any, idx: number) => (
                           <TableRow key={idx}>
-                            <TableCell className="text-center">
+                            <TableCell className="text-center min-w-[50px]">
                               <Badge
                                 variant={idx < 3 ? "default" : "outline"}
                                 className={`text-xs font-bold ${idx === 0 ? 'bg-amber-500' : idx === 1 ? 'bg-gray-400' : idx === 2 ? 'bg-orange-600' : ''}`}
@@ -2925,7 +2942,7 @@ export function ReturnsWastage() {
                                 {idx + 1}
                               </Badge>
                             </TableCell>
-                            <TableCell>
+                            <TableCell className="min-w-[100px]">
                               <Badge
                                 variant="outline"
                                 className={item.return_category === 'GOOD'
@@ -2936,19 +2953,20 @@ export function ReturnsWastage() {
                                 {item.return_category}
                               </Badge>
                             </TableCell>
-                            <TableCell>
+                            <TableCell className="min-w-[200px]">
                               <div className="font-medium text-sm max-sm:text-xs">{item.product_name}</div>
                               <div className="text-xs text-slate-500">{item.product_code}</div>
                             </TableCell>
-                            <TableCell className="text-sm max-sm:text-xs">{item.reason}</TableCell>
-                            <TableCell className="text-right text-sm max-sm:text-xs">{formatNumber(item.return_qty)}</TableCell>
-                            <TableCell className={`text-right font-medium text-sm max-sm:text-xs ${item.return_category === 'GOOD' ? 'text-green-600' : 'text-orange-600'}`}>
+                            <TableCell className="text-sm max-sm:text-xs min-w-[150px]">{item.reason}</TableCell>
+                            <TableCell className="text-right text-sm max-sm:text-xs min-w-[100px]">{formatNumber(item.return_qty)}</TableCell>
+                            <TableCell className={`text-right font-medium text-sm max-sm:text-xs min-w-[120px] ${item.return_category === 'GOOD' ? 'text-green-600' : 'text-orange-600'}`}>
                               {formatValue(item.return_value)}
                             </TableCell>
                           </TableRow>
                         ))}
                       </TableBody>
                     </Table>
+                  </div>
                 </div>
               </CardContent>
             </Card>
@@ -3241,10 +3259,10 @@ export function ReturnsWastage() {
                 </div>
               </CardHeader>
               <CardContent>
-                <div className="max-h-[500px] overflow-auto -mx-6 md:mx-0">
+                <div className="overflow-x-auto -mx-6 md:mx-0">
                   <Table>
-                    <TableHeader className="sticky top-0 bg-white z-20 shadow-md border-b-2 border-gray-300">
-                      <TableRow>
+                    <TableHeader className="bg-white border-b-2 border-gray-300">
+                      <TableRow className="bg-white">
                         <TableHead className="min-w-[50px] text-center bg-white">Rank</TableHead>
                         <TableHead className="min-w-[200px] bg-white">Product</TableHead>
                         <TableHead className="min-w-[120px] bg-white">Brand</TableHead>
@@ -3256,10 +3274,13 @@ export function ReturnsWastage() {
                         <TableHead className="text-right min-w-[100px] bg-white">Transactions</TableHead>
                       </TableRow>
                     </TableHeader>
+                  </Table>
+                  <div className="max-h-[450px] overflow-y-auto">
+                    <Table>
                       <TableBody>
                         {data?.periodReturns?.byProduct?.map((item: any, idx: number) => (
                           <TableRow key={idx}>
-                            <TableCell className="text-center">
+                            <TableCell className="text-center min-w-[50px]">
                               <Badge
                                 variant={idx < 3 ? "default" : "outline"}
                                 className={`text-xs font-bold ${idx === 0 ? 'bg-amber-500' : idx === 1 ? 'bg-gray-400' : idx === 2 ? 'bg-orange-600' : ''}`}
@@ -3267,33 +3288,34 @@ export function ReturnsWastage() {
                                 {idx + 1}
                               </Badge>
                             </TableCell>
-                            <TableCell>
+                            <TableCell className="min-w-[200px]">
                               <div className="font-medium text-sm max-sm:text-xs">{item.product_name}</div>
                               <div className="text-xs text-slate-500">{item.product_code}</div>
                             </TableCell>
-                            <TableCell className="text-sm max-sm:text-xs">
+                            <TableCell className="text-sm max-sm:text-xs min-w-[120px]">
                               <Badge variant="outline" className="text-xs font-normal">{item.brand}</Badge>
                             </TableCell>
-                            <TableCell className="text-sm max-sm:text-xs">{item.customer_channel}</TableCell>
-                            <TableCell className="text-right text-sm max-sm:text-xs">{formatNumber(item.return_qty)}</TableCell>
-                            <TableCell className="text-right font-medium text-blue-600 text-sm max-sm:text-xs">
+                            <TableCell className="text-sm max-sm:text-xs min-w-[120px]">{item.customer_channel}</TableCell>
+                            <TableCell className="text-right text-sm max-sm:text-xs min-w-[100px]">{formatNumber(item.return_qty)}</TableCell>
+                            <TableCell className="text-right font-medium text-blue-600 text-sm max-sm:text-xs min-w-[110px]">
                               {formatValue(item.return_value)}
                             </TableCell>
-                            <TableCell className="text-right text-sm max-sm:text-xs">
+                            <TableCell className="text-right text-sm max-sm:text-xs min-w-[110px]">
                               <div className="text-green-600 font-medium">{formatValue(item.good_return_value || 0)}</div>
                               <div className="text-xs text-green-500">{formatNumber(item.good_return_count || 0)} txns</div>
                             </TableCell>
-                            <TableCell className="text-right text-sm max-sm:text-xs">
+                            <TableCell className="text-right text-sm max-sm:text-xs min-w-[110px]">
                               <div className="text-orange-600 font-medium">{formatValue(item.bad_return_value || 0)}</div>
                               <div className="text-xs text-orange-500">{formatNumber(item.bad_return_count || 0)} txns</div>
                             </TableCell>
-                            <TableCell className="text-right text-sm max-sm:text-xs">
+                            <TableCell className="text-right text-sm max-sm:text-xs min-w-[100px]">
                               <Badge variant="secondary" className="text-xs">{item.return_count}</Badge>
                             </TableCell>
                           </TableRow>
                         ))}
                       </TableBody>
                     </Table>
+                  </div>
                 </div>
               </CardContent>
             </Card>
