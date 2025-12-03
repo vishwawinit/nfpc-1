@@ -867,27 +867,97 @@ export function OrdersReport() {
             </CardHeader>
             <CardContent>
               {data?.charts?.brandWise && data.charts.brandWise.length > 0 ? (
-                <ResponsiveContainer width="100%" height={420}>
-                  <BarChart data={data.charts.brandWise.slice(0, 10)} margin={{ top: 10, right: 20, left: 55, bottom: 10 }}>
-                    <CartesianGrid strokeDasharray="3 3" className="stroke-gray-200" />
-                    <XAxis
-                      dataKey="brand"
-                      angle={-45}
-                      textAnchor="end"
-                      height={80}
-                      tick={{ fontSize: 11 }}
-                      label={{ value: 'Brand', position: 'insideBottom', offset: -5, style: { fontSize: 12, fill: '#1f2937', fontWeight: 600 } }}
-                    />
-                    <YAxis
-                      tickFormatter={(value) => `${(value / 1000).toFixed(0)}K`}
-                      tick={{ fontSize: 11 }}
-                      width={60}
-                      label={{ value: 'Sales (AED)', angle: -90, position: 'left', style: { fontSize: 12, fill: '#1f2937', fontWeight: 600, textAnchor: 'middle' } }}
-                    />
-                    <Tooltip formatter={(value: any) => formatCurrency(value)} />
-                    <Bar dataKey="totalSales" fill="#8b5cf6" radius={[4, 4, 0, 0]} />
-                  </BarChart>
-                </ResponsiveContainer>
+                (() => {
+                  // Calculate total sales across all brands
+                  const totalSales = data.charts.brandWise.reduce((sum: number, item: any) => sum + (item.totalSales || 0), 0)
+
+                  // Separate brands into above and below 10% threshold
+                  const significantBrands: any[] = []
+                  const smallBrands: any[] = []
+
+                  data.charts.brandWise.forEach((item: any) => {
+                    const percentage = (item.totalSales / totalSales) * 100
+                    if (percentage >= 10) {
+                      significantBrands.push(item)
+                    } else {
+                      smallBrands.push(item)
+                    }
+                  })
+
+                  // Create pie chart data - significant brands + "Others"
+                  const pieChartData = [...significantBrands]
+                  if (smallBrands.length > 0) {
+                    const othersTotal = smallBrands.reduce((sum: number, item: any) => sum + (item.totalSales || 0), 0)
+                    pieChartData.push({
+                      brand: 'Others',
+                      totalSales: othersTotal,
+                      orderCount: smallBrands.reduce((sum: number, item: any) => sum + (item.orderCount || 0), 0)
+                    })
+                  }
+
+                  // Sort by totalSales descending
+                  const sortedPieData = pieChartData.sort((a: any, b: any) => b.totalSales - a.totalSales)
+
+                  return (
+                    <ResponsiveContainer width="100%" height={420}>
+                      <PieChart>
+                        <Pie
+                          data={sortedPieData}
+                          cx="35%"
+                          cy="50%"
+                          labelLine={false}
+                          outerRadius={100}
+                          fill="#8884d8"
+                          dataKey="totalSales"
+                          nameKey="brand"
+                        >
+                          {sortedPieData.map((entry: any, index: number) => (
+                            <Cell key={`cell-${index}`} fill={CHART_COLORS[index % CHART_COLORS.length]} />
+                          ))}
+                        </Pie>
+                        <Tooltip
+                          formatter={(value: any) => formatCurrency(value)}
+                          labelFormatter={(label) => `Brand: ${label}`}
+                        />
+                        <Legend
+                          layout="vertical"
+                          align="right"
+                          verticalAlign="middle"
+                          iconType="circle"
+                          content={({ payload }: any) => {
+                            // Show all brands in legend (including those in "Others")
+                            const allBrands = [...data.charts.brandWise].sort((a: any, b: any) => b.totalSales - a.totalSales)
+
+                            return (
+                              <div className="flex flex-col gap-1 text-xs max-h-[380px] overflow-y-auto pr-2">
+                                {allBrands.map((item: any, index: number) => {
+                                  const percentage = ((item.totalSales / totalSales) * 100).toFixed(1)
+                                  const isInOthers = parseFloat(percentage) < 10
+
+                                  return (
+                                    <div key={index} className="flex items-center gap-2">
+                                      <div
+                                        className="w-3 h-3 rounded-full flex-shrink-0"
+                                        style={{
+                                          backgroundColor: isInOthers
+                                            ? CHART_COLORS[(significantBrands.length) % CHART_COLORS.length] // "Others" color
+                                            : CHART_COLORS[significantBrands.findIndex((b: any) => b.brand === item.brand) % CHART_COLORS.length]
+                                        }}
+                                      />
+                                      <span className={isInOthers ? 'text-gray-500 text-[10px]' : 'text-gray-700'}>
+                                        {item.brand} ({percentage}%)
+                                      </span>
+                                    </div>
+                                  )
+                                })}
+                              </div>
+                            )
+                          }}
+                        />
+                      </PieChart>
+                    </ResponsiveContainer>
+                  )
+                })()
               ) : (
                 <div className="flex items-center justify-center h-[420px] text-gray-500">
                   No brand data available for the selected period
@@ -896,92 +966,6 @@ export function OrdersReport() {
             </CardContent>
           </Card>
 
-          {/* Orders by Chain */}
-          {data?.charts?.chainWise && (
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <Store className="h-5 w-5" />
-                  Orders by Chain
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <ResponsiveContainer width="100%" height={420}>
-                  <BarChart data={data.charts.chainWise.slice(0, 10)} margin={{ top: 10, right: 20, left: 15, bottom: 10 }}>
-                    <CartesianGrid strokeDasharray="3 3" className="stroke-gray-200" />
-                    <XAxis
-                      dataKey="chain"
-                      angle={-45}
-                      textAnchor="end"
-                      height={80}
-                      tick={{ fontSize: 11 }}
-                      label={{ value: 'Chain', position: 'insideBottom', offset: -5, style: { fontSize: 12, fill: '#1f2937', fontWeight: 600 } }}
-                    />
-                    <YAxis
-                      tickFormatter={(value) => `${(value / 1000).toFixed(0)}K`}
-                      tick={{ fontSize: 11 }}
-                      label={{ value: 'Sales (AED)', angle: -90, position: 'insideLeft', offset: 10, style: { fontSize: 12, fill: '#1f2937', fontWeight: 600, textAnchor: 'middle' } }}
-                    />
-                    <Tooltip formatter={(value: any) => formatCurrency(value)} />
-                    <Bar dataKey="totalSales" fill="#f59e0b" radius={[4, 4, 0, 0]} />
-                  </BarChart>
-                </ResponsiveContainer>
-              </CardContent>
-            </Card>
-          )}
-          
-          {/* Orders by Products Category */}
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Package className="h-5 w-5" />
-                Orders by Products Category
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              {data?.charts?.categoryWise && data.charts.categoryWise.length > 0 ? (
-                <ResponsiveContainer width="100%" height={420}>
-                  <PieChart>
-                    <Pie
-                      data={[...data.charts.categoryWise].sort((a: any, b: any) => b.totalSales - a.totalSales)}
-                      cx="35%"
-                      cy="50%"
-                      labelLine={false}
-                      outerRadius={100}
-                      fill="#8884d8"
-                      dataKey="totalSales"
-                      nameKey="category"
-                    >
-                      {[...data.charts.categoryWise].sort((a: any, b: any) => b.totalSales - a.totalSales).map((entry: any, index: number) => (
-                        <Cell key={`cell-${index}`} fill={CHART_COLORS[index % CHART_COLORS.length]} />
-                      ))}
-                    </Pie>
-                    <Tooltip
-                      formatter={(value: any) => formatCurrency(value)}
-                      labelFormatter={(label) => `Product Category: ${label}`}
-                    />
-                    <Legend
-                      layout="vertical"
-                      align="right"
-                      verticalAlign="middle"
-                      iconType="circle"
-                      formatter={(value: string, entry: any) => {
-                        const sortedData = [...data.charts.categoryWise].sort((a: any, b: any) => b.totalSales - a.totalSales)
-                        const item = sortedData.find((cat: any) => cat.category === value)
-                        const percentage = item ? ((item.totalSales / metrics.totalSales) * 100).toFixed(1) : '0'
-                        return `${value} (${percentage}%)`
-                      }}
-                    />
-                  </PieChart>
-                </ResponsiveContainer>
-              ) : (
-                <div className="flex items-center justify-center h-[300px] text-gray-500">
-                  <p>No product category data available for the selected period</p>
-                </div>
-              )}
-            </CardContent>
-          </Card>
-          
           {/* Top 10 Customers */}
           {data?.charts?.topCustomers && (
             <Card>
