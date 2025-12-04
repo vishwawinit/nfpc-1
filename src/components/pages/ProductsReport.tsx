@@ -783,7 +783,7 @@ export function ProductsReport() {
       )}
 
       {/* Loading Overlay */}
-      {(analyticsLoading || filterOptionsLoading) && (
+      {/* {(analyticsLoading || filterOptionsLoading) && (
         <div className="bg-blue-50 border border-blue-200 text-blue-700 px-4 py-3 rounded-lg flex items-center gap-3">
           <RefreshCw className="w-5 h-5 animate-spin" />
           <div>
@@ -795,7 +795,7 @@ export function ProductsReport() {
             </p>
           </div>
         </div>
-      )}
+      )} */}
 
       {/* Tabs */}
       <div className="flex justify-center mb-6">
