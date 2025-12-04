@@ -152,6 +152,208 @@ export const CustomerTransactionsModal: React.FC<CustomerTransactionsModalProps>
 
   const exportToExcel = async () => {
     try {
+      // Export based on active tab
+      if (activeTab === 'detailed') {
+        await exportDetailedTransactions()
+      } else {
+        await exportDailyTransactions()
+      }
+    } catch (error) {
+      console.error('Error exporting to Excel:', error)
+      alert('Failed to export data. Please try again.')
+    }
+  }
+
+  const exportDetailedTransactions = async () => {
+    try {
+      // Fetch all detailed transactions without pagination
+      const params = new URLSearchParams({
+        customerCode: customer.customerCode,
+        range: dateRange,
+        page: '1',
+        limit: '100000'
+      })
+
+      const response = await fetch(`/api/customers/transactions/details?${params.toString()}`)
+      const result = await response.json()
+
+      if (!result.success || !result.data) {
+        alert('Failed to fetch detailed transactions for export')
+        return
+      }
+
+      const allTransactions = result.data.transactions
+
+      const workbook = new ExcelJS.Workbook()
+      const worksheet = workbook.addWorksheet('Transaction Details')
+
+      // Set column widths
+      worksheet.columns = [
+        { width: 15 },  // Transaction ID
+        { width: 15 },  // Date
+        { width: 18 },  // Transaction Total
+        { width: 15 },  // Product Code
+        { width: 35 },  // Product Name
+        { width: 12 },  // Quantity
+        { width: 15 },  // Unit Price
+        { width: 15 },  // Line Total
+        { width: 15 },  // Discount
+        { width: 15 }   // Line Net Amount
+      ]
+
+      let currentRow = 1
+
+      // Title
+      worksheet.mergeCells(`A${currentRow}:J${currentRow}`)
+      const titleCell = worksheet.getCell(`A${currentRow}`)
+      titleCell.value = 'Customer Detailed Transactions Report'
+      titleCell.font = { size: 18, bold: true, color: { argb: 'FF1E40AF' } }
+      titleCell.alignment = { horizontal: 'center', vertical: 'middle' }
+      titleCell.fill = {
+        type: 'pattern',
+        pattern: 'solid',
+        fgColor: { argb: 'FFE0E7FF' }
+      }
+      worksheet.getRow(currentRow).height = 30
+      currentRow++
+
+      // Customer info
+      worksheet.mergeCells(`A${currentRow}:J${currentRow}`)
+      const customerCell = worksheet.getCell(`A${currentRow}`)
+      customerCell.value = `Customer: ${customer.customerName} (${customer.customerCode})`
+      customerCell.font = { size: 12, bold: true }
+      customerCell.alignment = { horizontal: 'center', vertical: 'middle' }
+      customerCell.fill = {
+        type: 'pattern',
+        pattern: 'solid',
+        fgColor: { argb: 'FFF3F4F6' }
+      }
+      worksheet.getRow(currentRow).height = 25
+      currentRow++
+
+      // Period
+      worksheet.mergeCells(`A${currentRow}:J${currentRow}`)
+      const dateCell = worksheet.getCell(`A${currentRow}`)
+      const periodLabels: {[key: string]: string} = {
+        'today': 'Today',
+        'yesterday': 'Yesterday',
+        'thisWeek': 'This Week',
+        'thisMonth': 'This Month',
+        'lastMonth': 'Last Month',
+        'thisQuarter': 'This Quarter',
+        'lastQuarter': 'Last Quarter',
+        'thisYear': 'This Year'
+      }
+      dateCell.value = `Period: ${periodLabels[dateRange] || dateRange} | Generated: ${new Date().toLocaleString('en-GB')}`
+      dateCell.font = { size: 11 }
+      dateCell.alignment = { horizontal: 'center', vertical: 'middle' }
+      worksheet.getRow(currentRow).height = 20
+      currentRow++
+
+      currentRow++
+
+      // Header row
+      const headerRow = worksheet.getRow(currentRow)
+      headerRow.values = [
+        'Transaction ID',
+        'Date',
+        'Trx Total',
+        'Product Code',
+        'Product Name',
+        'Quantity',
+        'Unit Price',
+        'Line Total',
+        'Discount',
+        'Line Net'
+      ]
+      headerRow.font = { bold: true, color: { argb: 'FFFFFFFF' }, size: 10 }
+      headerRow.fill = {
+        type: 'pattern',
+        pattern: 'solid',
+        fgColor: { argb: 'FF1E40AF' }
+      }
+      headerRow.alignment = { horizontal: 'center', vertical: 'middle' }
+      headerRow.height = 25
+      headerRow.eachCell((cell) => {
+        cell.border = {
+          top: { style: 'thin', color: { argb: 'FF9CA3AF' } },
+          left: { style: 'thin', color: { argb: 'FF9CA3AF' } },
+          bottom: { style: 'thin', color: { argb: 'FF9CA3AF' } },
+          right: { style: 'thin', color: { argb: 'FF9CA3AF' } }
+        }
+      })
+      currentRow++
+
+      // Data rows
+      allTransactions.forEach((transaction: any, index: number) => {
+        const row = worksheet.getRow(currentRow)
+        row.values = [
+          transaction.transactionId,
+          new Date(transaction.date).toLocaleDateString('en-GB'),
+          transaction.transactionTotal,
+          transaction.productCode,
+          transaction.productName,
+          transaction.quantity,
+          transaction.unitPrice,
+          transaction.lineTotal,
+          transaction.lineDiscount,
+          transaction.lineNetAmount
+        ]
+
+        const bgColor = index % 2 === 0 ? 'FFFFFFFF' : 'FFF9FAFB'
+        row.eachCell((cell, colNumber) => {
+          cell.fill = {
+            type: 'pattern',
+            pattern: 'solid',
+            fgColor: { argb: bgColor }
+          }
+          cell.border = {
+            top: { style: 'thin', color: { argb: 'FFE5E7EB' } },
+            left: { style: 'thin', color: { argb: 'FFE5E7EB' } },
+            bottom: { style: 'thin', color: { argb: 'FFE5E7EB' } },
+            right: { style: 'thin', color: { argb: 'FFE5E7EB' } }
+          }
+          cell.alignment = { vertical: 'middle' }
+
+          // Format currency columns (Transaction Total, Unit Price, Line Total, Discount, Line Net)
+          if ([3, 7, 8, 9, 10].includes(colNumber)) {
+            cell.numFmt = '#,##0.00'
+          }
+
+          // Format quantity column
+          if (colNumber === 6) {
+            cell.numFmt = '#,##0.00'
+          }
+
+          // Center align transaction ID and product code
+          if ([1, 4].includes(colNumber)) {
+            cell.alignment = { horizontal: 'center', vertical: 'middle' }
+          }
+        })
+
+        row.height = 20
+        currentRow++
+      })
+
+      // Generate file
+      const buffer = await workbook.xlsx.writeBuffer()
+      const blob = new Blob([buffer], {
+        type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+      })
+      const url = window.URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = url
+      link.download = `Customer_Detailed_Transactions_${customer.customerCode}_${dateRange}_${new Date().toISOString().split('T')[0]}.xlsx`
+      link.click()
+      window.URL.revokeObjectURL(url)
+    } catch (error) {
+      console.error('Error exporting detailed transactions:', error)
+      alert('Failed to export detailed transactions. Please try again.')
+    }
+  }
+
+  const exportDailyTransactions = async () => {
+    try {
       // Fetch all data without pagination
       const params = new URLSearchParams({
         customerCode: customer.customerCode,

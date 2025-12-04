@@ -62,7 +62,8 @@ export function OrdersReport() {
   const [categoryFilter, setCategoryFilter] = useState('')
   const [brandFilter, setBrandFilter] = useState('')
   const [searchQuery, setSearchQuery] = useState('')
-  
+  const [initialChannelSet, setInitialChannelSet] = useState(false)
+
   const [currentPage, setCurrentPage] = useState(1)
   const [itemsPerPage] = useState(50)
   const [isFullscreen, setIsFullscreen] = useState(false)
@@ -214,7 +215,20 @@ export function OrdersReport() {
   useEffect(() => {
     fetchFilterOptions()
   }, [fetchFilterOptions])
-  
+
+  // Set default channel filter after options are loaded
+  useEffect(() => {
+    if (filterOptions?.channels && !initialChannelSet) {
+      const horecaChannel = filterOptions.channels.find((ch: any) =>
+        ch.value === 'HORECA - FS' || ch.label?.includes('HORECA') && ch.label?.includes('FS')
+      )
+      if (horecaChannel) {
+        setChannelFilter(horecaChannel.value)
+        setInitialChannelSet(true)
+      }
+    }
+  }, [filterOptions, initialChannelSet])
+
   useEffect(() => {
     fetchOrdersData()
   }, [fetchOrdersData])
@@ -223,7 +237,11 @@ export function OrdersReport() {
     setAreaFilter('')
     setSubAreaFilter('')
     setFieldUserFilter('')
-    setChannelFilter('')
+    // Reset channel to HORECA - FS if it exists in filter options
+    const horecaChannel = filterOptions?.channels?.find((ch: any) =>
+      ch.value === 'HORECA - FS' || (ch.label?.includes('HORECA') && ch.label?.includes('FS'))
+    )
+    setChannelFilter(horecaChannel?.value || '')
     setCustomerFilter('')
     setCategoryFilter('')
     setBrandFilter('')
@@ -236,9 +254,14 @@ export function OrdersReport() {
     setCustomEndDate(new Date().toISOString().split('T')[0])
     setCurrentPage(1)
   }
-  
+
+  // Determine default channel value from filter options
+  const defaultChannelValue = filterOptions?.channels?.find((ch: any) =>
+    ch.value === 'HORECA - FS' || (ch.label?.includes('HORECA') && ch.label?.includes('FS'))
+  )?.value || ''
+
   const hasActiveFilters = areaFilter || subAreaFilter || fieldUserFilter ||
-    channelFilter || customerFilter || categoryFilter || brandFilter || searchQuery
+    (channelFilter && channelFilter !== defaultChannelValue) || customerFilter || categoryFilter || brandFilter || searchQuery
   
   const exportOrderDetails = async (orderDetails: any) => {
     try {
